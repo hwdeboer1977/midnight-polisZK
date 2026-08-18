@@ -1,29 +1,15 @@
 import "dotenv/config";
-import * as readline from "readline/promises";
-import { WalletBuilder } from "@midnight-ntwrk/wallet";
 import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
-import {
-  NetworkId,
-  setNetworkId,
-  getZswapNetworkId,
-  getLedgerNetworkId,
-} from "@midnight-ntwrk/midnight-js-network-id";
-import { createBalancedTx } from "@midnight-ntwrk/midnight-js-types";
-import { Transaction } from "@midnight-ntwrk/ledger";
-import { Transaction as ZswapTransaction } from "@midnight-ntwrk/zswap";
-import { WebSocket } from "ws";
-import * as path from "path";
+import { CompiledContract } from "@midnight-ntwrk/compact-js";
+import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
+import { pipe } from "effect";
 import * as fs from "fs";
-import * as Rx from "rxjs";
+import * as path from "path";
+import * as readline from "readline/promises";
+import chalk from "chalk";
 import { MidnightProviders } from "./providers/midnight-providers.js";
 import { EnvironmentManager } from "./utils/environment.js";
-
-// Fix WebSocket for Node.js environment
-// @ts-ignore
-globalThis.WebSocket = WebSocket;
-
-// Configure for Midnight Testnet
-setNetworkId(NetworkId.TestNet);
+import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js";
 
 async function main() {
   const rl = readline.createInterface({
@@ -31,108 +17,69 @@ async function main() {
     output: process.stdout,
   });
 
-  console.log("🌙 midnight-payroll CLI\n");
+  console.log();
+  console.log(chalk.blue.bold("🌙  midnight-polisZK CLI"));
+  console.log();
+
+  if (!fs.existsSync("deployment.json")) {
+    console.error(
+      chalk.red("❌ No deployment.json found. Run: npm run deploy")
+    );
+    rl.close();
+    process.exit(1);
+  }
+  const deployment = JSON.parse(fs.readFileSync("deployment.json", "utf8"));
+
+  EnvironmentManager.validateEnvironment();
+  const network = EnvironmentManager.getNetworkConfig();
+  const contractName = process.env.CONTRACT_NAME || "hello-world";
+  const seed = EnvironmentManager.getWalletSeed();
+
+  setNetworkId(network.networkId);
+
+  console.log(chalk.gray("Building wallet..."));
+  const wallet = await buildWallet(seed, network);
 
   try {
-    // Validate environment
-    EnvironmentManager.validateEnvironment();
+    console.log(chalk.gray("Syncing..."));
+    await waitForSync(wallet, (line) => console.log(chalk.gray(`   ${line}`)));
 
-    // Check for deployment file
-    if (!fs.existsSync("deployment.json")) {
-      console.error("❌ No deployment.json found! Run npm run deploy first.");
-      process.exit(1);
-    }
-
-    const deployment = JSON.parse(fs.readFileSync("deployment.json", "utf-8"));
-    console.log(`Contract: ${deployment.contractAddress}\n`);
-
-    const networkConfig = EnvironmentManager.getNetworkConfig();
-    const contractName =
-      deployment.contractName || process.env.CONTRACT_NAME || "hello-world";
-    const walletSeed = process.env.WALLET_SEED!;
-
-    console.log("Connecting to Midnight network...");
-
-    // Build wallet
-    const wallet = await WalletBuilder.buildFromSeed(
-      networkConfig.indexer,
-      networkConfig.indexerWS,
-      networkConfig.proofServer,
-      networkConfig.node,
-      walletSeed,
-      getZswapNetworkId(),
-      "info"
-    );
-
-    wallet.start();
-
-    // Wait for sync
-    await Rx.firstValueFrom(
-      wallet.state().pipe(Rx.filter((s) => s.syncProgress?.synced === true))
-    );
-
-    // Load contract
-    const contractPath = path.join(process.cwd(), "contracts");
-    const contractModulePath = path.join(
-      contractPath,
+    const managedPath = path.join(
+      process.cwd(),
+      "contracts",
       "managed",
-      contractName,
-      "contract",
-      "index.cjs"
+      contractName
     );
-    const HelloWorldModule = await import(contractModulePath);
-    const contractInstance = new HelloWorldModule.Contract({});
+    const contractModule = await import(
+      path.join(managedPath, "contract", "index.js")
+    );
 
-    // Create wallet provider
-    const walletState = await Rx.firstValueFrom(wallet.state());
+    const compiledContract = pipe(
+      CompiledContract.make(contractName, contractModule.Contract),
+      CompiledContract.withVacantWitnesses,
+      CompiledContract.withCompiledFileAssets(managedPath)
+    );
 
-    const walletProvider = {
-      coinPublicKey: walletState.coinPublicKey,
-      encryptionPublicKey: walletState.encryptionPublicKey,
-      balanceTx(tx: any, newCoins: any) {
-        return wallet
-          .balanceTransaction(
-            ZswapTransaction.deserialize(
-              tx.serialize(getLedgerNetworkId()),
-              getZswapNetworkId()
-            ),
-            newCoins
-          )
-          .then((tx) => wallet.proveTransaction(tx))
-          .then((zswapTx) =>
-            Transaction.deserialize(
-              zswapTx.serialize(getZswapNetworkId()),
-              getLedgerNetworkId()
-            )
-          )
-          .then(createBalancedTx);
-      },
-      submitTx(tx: any) {
-        return wallet.submitTransaction(tx);
-      },
-    };
-
-    // Configure providers
+    const { walletProvider, midnightProvider } = makeWalletProviders(wallet);
     const providers = MidnightProviders.create({
       contractName,
       walletProvider,
-      networkConfig,
+      midnightProvider,
+      networkConfig: network,
+      accountId: wallet.unshieldedAddress,
     });
 
-    // Connect to contract
-    const deployed: any = await findDeployedContract(providers, {
+    const deployed: any = await findDeployedContract(providers as any, {
+      compiledContract: compiledContract as any,
       contractAddress: deployment.contractAddress,
-      contract: contractInstance,
-      privateStateId: "helloWorldState",
-      initialPrivateState: {},
     });
 
-    console.log("✅ Connected to contract\n");
+    console.log(chalk.green("✅ Connected to contract"));
+    console.log();
 
-    // Main menu loop
     let running = true;
     while (running) {
-      console.log("--- Menu ---");
+      console.log(chalk.cyan("--- Menu ---"));
       console.log("1. Store message");
       console.log("2. Read current message");
       console.log("3. Exit");
@@ -140,37 +87,37 @@ async function main() {
       const choice = await rl.question("\nYour choice: ");
 
       switch (choice) {
-        case "1":
-          console.log("\nStoring custom message...");
+        case "1": {
           const customMessage = await rl.question("Enter your message: ");
           try {
             const tx = await deployed.callTx.storeMessage(customMessage);
-            console.log("✅ Success!");
+            console.log(chalk.green("✅ Success!"));
             console.log(`Message: "${customMessage}"`);
             console.log(`Transaction ID: ${tx.public.txId}`);
             console.log(`Block height: ${tx.public.blockHeight}\n`);
           } catch (error) {
-            console.error("❌ Failed to store message:", error);
+            console.error(chalk.red("❌ Failed to store message:"), error);
           }
           break;
+        }
 
-        case "2":
+        case "2": {
           console.log("\nReading message from blockchain...");
           try {
             const state = await providers.publicDataProvider.queryContractState(
               deployment.contractAddress
             );
             if (state) {
-              const ledger = HelloWorldModule.ledger(state.data);
-              const message = Buffer.from(ledger.message).toString();
-              console.log(`📋 Current message: "${message}"\n`);
+              const ledger = contractModule.ledger(state.data);
+              console.log(`📋 Current message: "${ledger.message}"\n`);
             } else {
               console.log("📋 No message found\n");
             }
           } catch (error) {
-            console.error("❌ Failed to read message:", error);
+            console.error(chalk.red("❌ Failed to read message:"), error);
           }
           break;
+        }
 
         case "3":
           running = false;
@@ -178,17 +125,17 @@ async function main() {
           break;
 
         default:
-          console.log("❌ Invalid choice. Please enter 1, 2, or 3.\n");
+          console.log(chalk.red("❌ Invalid choice. Please enter 1, 2, or 3.\n"));
       }
     }
-
-    // Clean up
-    await wallet.close();
-  } catch (error) {
-    console.error("\n❌ Error:", error);
   } finally {
+    await wallet.facade.stop();
     rl.close();
   }
+  process.exit(0);
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(chalk.red("\n❌ Error:"), error);
+  process.exit(1);
+});

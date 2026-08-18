@@ -50,3 +50,9 @@ coverage/
 # Temporary files
 tmp/
 temp/
+
+# Local probes/scratch
+.scratch/
+
+# Private state store (LevelDB)
+midnight-level-db/

@@ -1,189 +1,137 @@
 import "dotenv/config";
-import { WalletBuilder } from "@midnight-ntwrk/wallet";
 import { deployContract } from "@midnight-ntwrk/midnight-js-contracts";
-import { httpClientProofProvider } from "@midnight-ntwrk/midnight-js-http-client-proof-provider";
-import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
-import { NodeZkConfigProvider } from "@midnight-ntwrk/midnight-js-node-zk-config-provider";
-import { levelPrivateStateProvider } from "@midnight-ntwrk/midnight-js-level-private-state-provider";
-import {
-  NetworkId,
-  setNetworkId,
-  getZswapNetworkId,
-  getLedgerNetworkId,
-} from "@midnight-ntwrk/midnight-js-network-id";
-import { createBalancedTx } from "@midnight-ntwrk/midnight-js-types";
-import { nativeToken, Transaction } from "@midnight-ntwrk/ledger";
-import { Transaction as ZswapTransaction } from "@midnight-ntwrk/zswap";
-import { WebSocket } from "ws";
+import { CompiledContract } from "@midnight-ntwrk/compact-js";
+import { pipe } from "effect";
+import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
+import { nativeToken } from "@midnight-ntwrk/ledger-v8";
 import * as fs from "fs";
 import * as path from "path";
-import * as Rx from "rxjs";
-import { type Wallet } from "@midnight-ntwrk/wallet-api";
 import chalk from "chalk";
 import { MidnightProviders } from "./providers/midnight-providers.js";
 import { EnvironmentManager } from "./utils/environment.js";
-
-// Fix WebSocket for Node.js environment
-// @ts-ignore
-globalThis.WebSocket = WebSocket;
-
-// Configure for Midnight Testnet
-setNetworkId(NetworkId.TestNet);
-
-const waitForFunds = (wallet: Wallet) =>
-  Rx.firstValueFrom(
-    wallet.state().pipe(
-      Rx.tap((state) => {
-        if (state.syncProgress) {
-          console.log(
-            `Sync progress: synced=${state.syncProgress.synced}, sourceGap=${state.syncProgress.lag.sourceGap}, applyGap=${state.syncProgress.lag.applyGap}`
-          );
-        }
-      }),
-      Rx.filter((state) => state.syncProgress?.synced === true),
-      Rx.map((s) => s.balances[nativeToken()] ?? 0n),
-      Rx.filter((balance) => balance > 0n),
-      Rx.tap((balance) => console.log(`Wallet funded with balance: ${balance}`))
-    )
-  );
+import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js";
 
 async function main() {
   console.log();
   console.log(chalk.blue.bold("━".repeat(60)));
-  console.log(chalk.blue.bold("🌙  midnight-payroll Deployment"));
+  console.log(chalk.blue.bold("🌙  midnight-polisZK Deployment"));
   console.log(chalk.blue.bold("━".repeat(60)));
   console.log();
 
+  EnvironmentManager.validateEnvironment();
+
+  const network = EnvironmentManager.getNetworkConfig();
+  const contractName = process.env.CONTRACT_NAME || "hello-world";
+  const seed = EnvironmentManager.getWalletSeed();
+
+  setNetworkId(network.networkId);
+
+  if (!EnvironmentManager.checkContractCompiled(contractName)) {
+    console.error(chalk.red("❌ Contract not compiled! Run: npm run compile"));
+    process.exit(1);
+  }
+
+  // A compiler/runtime mismatch only surfaces as an opaque `Version mismatch`
+  // when the contract module is imported, well after the wallet has synced.
+  const runtime = EnvironmentManager.checkRuntimeVersion(contractName);
+  if (!runtime.ok) {
+    console.error(
+      chalk.red(
+        `❌ contracts/managed was compiled for compact-runtime ${runtime.compiled}, ` +
+          `but ${runtime.installed} is installed.`
+      )
+    );
+    console.error(
+      chalk.cyan("   Pin the matching compiler and recompile: ") +
+        chalk.yellow.bold("compact update <version> && npm run reset")
+    );
+    process.exit(1);
+  }
+
+  console.log(chalk.gray("Building wallet..."));
+  const wallet = await buildWallet(seed, network);
+
   try {
-    // Validate environment
-    EnvironmentManager.validateEnvironment();
+    console.log(chalk.gray("Syncing (a fresh wallet syncs from genesis)..."));
+    const state = await waitForSync(wallet, (line) =>
+      console.log(chalk.gray(`   ${line}`))
+    );
 
-    const networkConfig = EnvironmentManager.getNetworkConfig();
-    const contractName = process.env.CONTRACT_NAME || "hello-world";
+    console.log();
+    console.log(chalk.cyan.bold("📍 Unshielded address:"));
+    console.log(chalk.white(`   ${wallet.unshieldedAddress}`));
+    console.log();
 
-    // Check if contract is compiled
-    if (!EnvironmentManager.checkContractCompiled(contractName)) {
-      console.error("❌ Contract not compiled! Run: npm run compile");
+    const night = state.unshielded.balances[nativeToken().raw] ?? 0n;
+    const dust = state.dust.balance(new Date());
+
+    console.log(chalk.yellow.bold("💰 tNIGHT: ") + chalk.white(`${night}`));
+    console.log(chalk.yellow.bold("💨 tDUST:  ") + chalk.white(`${dust}`));
+    console.log();
+
+    if (dust === 0n) {
+      console.log(chalk.red.bold("❌ No tDUST — fees cannot be paid."));
+      console.log();
+      if (EnvironmentManager.isLocal()) {
+        console.log(
+          chalk.cyan(
+            "   The devnet mints DUST a few blocks after genesis. Wait ~30s and retry."
+          )
+        );
+      } else if (night === 0n) {
+        console.log(
+          chalk.cyan("   Fund the address above at: ") +
+            chalk.underline(network.faucet)
+        );
+      } else {
+        console.log(
+          chalk.cyan(
+            "   You hold tNIGHT but no tDUST. It must be registered for DUST generation before fees can be paid."
+          )
+        );
+      }
+      console.log();
       process.exit(1);
     }
 
-    const walletSeed = process.env.WALLET_SEED!;
-
-    // Build wallet from seed
-    console.log("Building wallet...");
-    const wallet = await WalletBuilder.buildFromSeed(
-      networkConfig.indexer,
-      networkConfig.indexerWS,
-      networkConfig.proofServer,
-      networkConfig.node,
-      walletSeed,
-      getZswapNetworkId(),
-      "info"
-    );
-
-    wallet.start();
-    const state = await Rx.firstValueFrom(wallet.state());
-
-    console.log(chalk.cyan.bold("📍 Wallet Address:"));
-    console.log(chalk.white(`   ${state.address}`));
-    console.log();
-
-    let balance = state.balances[nativeToken()] || 0n;
-
-    if (balance === 0n) {
-      console.log(chalk.yellow.bold("💰 Balance: ") + chalk.red.bold("0 DUST"));
-      console.log();
-      console.log(chalk.red.bold("❌ Wallet needs funding to deploy contracts."));
-      console.log();
-      console.log(chalk.magenta.bold("━".repeat(60)));
-      console.log(chalk.magenta.bold("📝 How to Get Test Tokens:"));
-      console.log(chalk.magenta.bold("━".repeat(60)));
-      console.log();
-      console.log(chalk.white("   1. ") + chalk.cyan("Visit: ") + chalk.underline("https://midnight.network/test-faucet"));
-      console.log(chalk.white("   2. ") + chalk.cyan("Paste your wallet address (shown above)"));
-      console.log(chalk.white("   3. ") + chalk.cyan("Request tokens from the faucet"));
-      console.log();
-      console.log(chalk.gray("━".repeat(60)));
-      console.log(chalk.gray("⏱️  Faucet transactions can take 2-5 minutes to process."));
-      console.log(chalk.gray("━".repeat(60)));
-      console.log();
-      console.log(chalk.yellow.bold("💡 Options while waiting:"));
-      console.log(chalk.white("   • ") + chalk.cyan("Let this script wait (it will auto-detect when funds arrive)"));
-      console.log(chalk.white("   • ") + chalk.cyan("OR press ") + chalk.yellow("Ctrl+C") + chalk.cyan(" to stop, then check balance with:"));
-      console.log(chalk.yellow.bold("     npm run check-balance"));
-      console.log(chalk.white("   • ") + chalk.cyan("Once funded, run: ") + chalk.yellow.bold("npm run deploy"));
-      console.log();
-      console.log(chalk.blue("⏳ Waiting to receive tokens..."));
-      balance = await waitForFunds(wallet);
-    }
-
-    console.log(chalk.yellow.bold("💰 Balance: ") + chalk.green.bold(`${balance} DUST`));
-    console.log();
-
-    // Load compiled contract files
     console.log(chalk.gray("📦 Loading contract..."));
-    const contractPath = path.join(process.cwd(), "contracts");
-    const contractModulePath = path.join(
-      contractPath,
+    const managedPath = path.join(
+      process.cwd(),
+      "contracts",
       "managed",
-      contractName,
-      "contract",
-      "index.cjs"
+      contractName
+    );
+    const contractModule = await import(
+      path.join(managedPath, "contract", "index.js")
     );
 
-    const HelloWorldModule = await import(contractModulePath);
-    const contractInstance = new HelloWorldModule.Contract({});
+    // Contracts are now bound through CompiledContract: the constructor, its
+    // witnesses, and the path to the compiled ZK assets.
+    const compiledContract = pipe(
+      CompiledContract.make(contractName, contractModule.Contract),
+      CompiledContract.withVacantWitnesses,
+      CompiledContract.withCompiledFileAssets(managedPath)
+    );
 
-    // Create wallet provider for transactions
-    const walletState = await Rx.firstValueFrom(wallet.state());
-
-    const walletProvider = {
-      coinPublicKey: walletState.coinPublicKey,
-      encryptionPublicKey: walletState.encryptionPublicKey,
-      balanceTx(tx: any, newCoins: any) {
-        return wallet
-          .balanceTransaction(
-            ZswapTransaction.deserialize(
-              tx.serialize(getLedgerNetworkId()),
-              getZswapNetworkId()
-            ),
-            newCoins
-          )
-          .then((tx) => wallet.proveTransaction(tx))
-          .then((zswapTx) =>
-            Transaction.deserialize(
-              zswapTx.serialize(getZswapNetworkId()),
-              getLedgerNetworkId()
-            )
-          )
-          .then(createBalancedTx);
-      },
-      submitTx(tx: any) {
-        return wallet.submitTransaction(tx);
-      },
-    };
-
-    // Configure all required providers
-    console.log("Setting up providers...");
+    console.log(chalk.gray("Setting up providers..."));
+    const { walletProvider, midnightProvider } = makeWalletProviders(wallet);
     const providers = MidnightProviders.create({
       contractName,
       walletProvider,
-      networkConfig,
+      midnightProvider,
+      networkConfig: network,
+      accountId: wallet.unshieldedAddress,
     });
 
-    // Deploy contract to blockchain
     console.log(chalk.blue("🚀 Deploying contract (30-60 seconds)..."));
     console.log();
 
-    const deployed = await deployContract(providers, {
-      contract: contractInstance,
-      privateStateId: "helloWorldState",
-      initialPrivateState: {},
+    const deployed = await deployContract(providers as any, {
+      compiledContract: compiledContract as any,
     });
 
     const contractAddress = deployed.deployTxData.public.contractAddress;
 
-    // Save deployment information
     console.log();
     console.log(chalk.green.bold("━".repeat(60)));
     console.log(chalk.green.bold("🎉 CONTRACT DEPLOYED SUCCESSFULLY!"));
@@ -196,23 +144,25 @@ async function main() {
     const info = {
       contractAddress,
       deployedAt: new Date().toISOString(),
-      network: networkConfig.name,
+      network: network.name,
+      networkId: network.networkId,
       contractName,
     };
-
     fs.writeFileSync("deployment.json", JSON.stringify(info, null, 2));
-    console.log(chalk.gray("✅ Saved to deployment.json"));
+    console.log(chalk.gray("   Saved to deployment.json"));
     console.log();
-
-    // Close wallet connection
-    await wallet.close();
-  } catch (error) {
+    console.log(chalk.cyan("   Interact with it: ") + chalk.yellow.bold("npm run cli"));
     console.log();
-    console.log(chalk.red.bold("❌ Deployment Failed:"));
-    console.error(chalk.red(error instanceof Error ? error.message : String(error)));
-    console.log();
-    process.exit(1);
+  } finally {
+    await wallet.facade.stop();
   }
+  process.exit(0);
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.log();
+  console.log(chalk.red.bold("❌ Deployment failed:"));
+  console.error(chalk.red(error instanceof Error ? error.stack ?? error.message : String(error)));
+  console.log();
+  process.exit(1);
+});
