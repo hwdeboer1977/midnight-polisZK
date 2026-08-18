@@ -1,12 +1,11 @@
 import "dotenv/config";
 import { deployContract } from "@midnight-ntwrk/midnight-js-contracts";
-import { CompiledContract } from "@midnight-ntwrk/compact-js";
-import { pipe } from "effect";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { nativeToken } from "@midnight-ntwrk/ledger-v8";
-import * as fs from "fs";
-import * as path from "path";
 import chalk from "chalk";
+import { loadCompiledContract } from "./utils/contract.js";
+import { formatPeur, initialPeurSupply } from "./utils/constructor-args.js";
+import { currentInstance, deploymentKey, saveDeployment } from "./utils/deployments.js";
 import { MidnightProviders } from "./providers/midnight-providers.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js";
@@ -14,15 +13,31 @@ import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js
 async function main() {
   console.log();
   console.log(chalk.blue.bold("━".repeat(60)));
-  console.log(chalk.blue.bold("🌙  midnight-polisZK Deployment"));
+  console.log(
+    chalk.blue.bold(
+      `🌙  midnight-polisZK Deployment — ${process.env.CONTRACT_NAME ?? "?"}${currentInstance() ? `:${currentInstance()}` : ""}`
+    )
+  );
   console.log(chalk.blue.bold("━".repeat(60)));
   console.log();
 
   EnvironmentManager.validateEnvironment();
 
   const network = EnvironmentManager.getNetworkConfig();
-  const contractName = process.env.CONTRACT_NAME || "hello-world";
-  const seed = EnvironmentManager.getWalletSeed();
+  // No default: there is no single "the contract" here, and silently deploying
+  // the wrong one wastes a real transaction.
+  const contractName = process.env.CONTRACT_NAME?.trim();
+  if (!contractName) {
+    console.error(
+      chalk.red("❌ CONTRACT_NAME is not set. Deploy one of:")
+    );
+    console.error(chalk.yellow.bold("   npm run deploy:payroll") + chalk.gray("   (add INSTANCE=<employer>)"));
+    console.error(chalk.yellow.bold("   npm run deploy:peur"));
+    process.exit(1);
+  }
+  const instance = currentInstance();
+  const key = deploymentKey(network.networkId, contractName, instance);
+  const secret = EnvironmentManager.getWalletSecret();
 
   setNetworkId(network.networkId);
 
@@ -49,10 +64,16 @@ async function main() {
   }
 
   console.log(chalk.gray("Building wallet..."));
-  const wallet = await buildWallet(seed, network);
+  const wallet = await buildWallet(secret, network);
 
   try {
-    console.log(chalk.gray("Syncing (a fresh wallet syncs from genesis)..."));
+    console.log(
+      chalk.gray(
+        wallet.resumed
+          ? "Syncing (resuming from cached state)..."
+          : "Syncing (no cached state — a fresh wallet replays from genesis)..."
+      )
+    );
     const state = await waitForSync(wallet, (line) =>
       console.log(chalk.gray(`   ${line}`))
     );
@@ -95,23 +116,7 @@ async function main() {
     }
 
     console.log(chalk.gray("📦 Loading contract..."));
-    const managedPath = path.join(
-      process.cwd(),
-      "contracts",
-      "managed",
-      contractName
-    );
-    const contractModule = await import(
-      path.join(managedPath, "contract", "index.js")
-    );
-
-    // Contracts are now bound through CompiledContract: the constructor, its
-    // witnesses, and the path to the compiled ZK assets.
-    const compiledContract = pipe(
-      CompiledContract.make(contractName, contractModule.Contract),
-      CompiledContract.withVacantWitnesses,
-      CompiledContract.withCompiledFileAssets(managedPath)
-    );
+    const { compiledContract } = await loadCompiledContract(contractName);
 
     console.log(chalk.gray("Setting up providers..."));
     const { walletProvider, midnightProvider } = makeWalletProviders(wallet);
@@ -140,18 +145,48 @@ async function main() {
     console.log(chalk.cyan.bold("📍 Contract Address:"));
     console.log(chalk.white(`   ${contractAddress}`));
     console.log();
+    console.log(
+      chalk.gray(`   deploy tx hash: ${deployed.deployTxData.public.txHash}`)
+    );
+    console.log(
+      chalk.gray("   Search the contract address or tx hash on an explorer.")
+    );
+    console.log();
 
-    const info = {
+    saveDeployment({
       contractAddress,
       deployedAt: new Date().toISOString(),
       network: network.name,
       networkId: network.networkId,
       contractName,
-    };
-    fs.writeFileSync("deployment.json", JSON.stringify(info, null, 2));
-    console.log(chalk.gray("   Saved to deployment.json"));
+      instance,
+    });
+    console.log(chalk.gray(`   Saved to deployment.json under "${key}"`));
+
+    // pEUR is useless with zero supply, so the initial mint runs here rather
+    // than leaving the caller to do it as a separate step.
+    if (contractName === "peur") {
+      const supply = initialPeurSupply();
+      console.log();
+      console.log(
+        chalk.blue(`🪙  Minting initial supply (${formatPeur(supply)} pEUR)...`)
+      );
+      const mintTx = await deployed.callTx.mint(supply);
+      console.log(chalk.green("   ✅ Minted to the deployer's shielded balance"));
+      console.log(chalk.gray(`   tx hash ${mintTx.public.txHash}`));
+    }
     console.log();
-    console.log(chalk.cyan("   Interact with it: ") + chalk.yellow.bold("npm run cli"));
+    if (contractName === "payroll") {
+      console.log(
+        chalk.yellow.bold("   ⚠️  This instance has no employer yet.")
+      );
+      console.log(
+        chalk.cyan("   Assign one (deployer only, once): ") +
+          chalk.yellow.bold(`${instance ? `INSTANCE=${instance} ` : ""}npm run payroll`)
+      );
+    } else {
+      console.log(chalk.cyan("   Interact with it: ") + chalk.yellow.bold("npm run cli"));
+    }
     console.log();
   } finally {
     await wallet.facade.stop();

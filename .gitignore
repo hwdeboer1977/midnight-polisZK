@@ -56,3 +56,17 @@ temp/
 
 # Private state store (LevelDB)
 midnight-level-db/
+
+# Employer's salaries + nonces (private half of the payroll state)
+payroll-secrets*.json
+
+# Cached wallet sync state
+.wallet-state/
+
+# Frontend build output and generated config
+frontend/node_modules/
+frontend/dist/
+frontend/public/deployments.json
+
+# Contract modules copied into the frontend by frontend:config
+frontend/src/generated/

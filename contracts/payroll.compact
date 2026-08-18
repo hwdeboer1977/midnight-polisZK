@@ -1,0 +1,112 @@
+pragma language_version >= 0.16;
+
+import CompactStandardLibrary;
+
+// Payroll for a single employer with a fixed roster of 10 employees.
+//
+// One contract instance per employer. The platform operator deploys it, then
+// hands ownership to that employer exactly once; from then on the platform
+// cannot write payroll and cannot take ownership back. Only employer X can
+// touch employer X's contract.
+//
+// Privacy model: individual salaries are circuit inputs, so they never leave
+// the employer's machine — only the proof does. What the chain learns is the
+// headcount, the total, and one commitment per employee.
+//
+// The whole roster is set in ONE call on purpose. If salaries were written one
+// at a time, each call would move `totalPayroll` by exactly that person's
+// salary, and anyone watching blocks could read every individual amount off the
+// deltas. Setting all ten at once means the public state only ever moves by the
+// aggregate.
+
+// Hashed per employee so the employer can later prove to that employee what
+// they were paid, without the amount being public. The nonce is what stops the
+// commitment from being brute-forced: without it, hashing every plausible
+// salary would recover the amount.
+struct SalaryCommitment {
+  amount: Uint<60>;
+  nonce: Bytes<32>;
+}
+
+// Whoever deployed this instance. Its only power is naming the employer, and
+// only while no employer has been named yet.
+export ledger platform: ZswapCoinPublicKey;
+
+// The employer this instance belongs to. Meaningless until `employerAssigned`.
+export ledger employer: ZswapCoinPublicKey;
+export ledger employerAssigned: Boolean;
+
+// Public aggregates.
+export ledger employeeCount: Uint<8>;
+export ledger totalPayroll: Uint<64>;
+
+// Employee index -> commitment to (salary, nonce). Public, but reveals nothing
+// about the amount.
+export ledger commitments: Map<Uint<8>, Bytes<32>>;
+
+constructor() {
+  platform = disclose(ownPublicKey());
+  employerAssigned = false;
+  employeeCount = 0;
+  totalPayroll = 0;
+}
+
+// Hands the instance to its employer. Callable once, by the deployer only.
+// After this the platform has no privileged circuit left: it cannot reassign,
+// cannot revoke, and cannot set payroll.
+export circuit assignEmployer(newEmployer: ZswapCoinPublicKey): [] {
+  assert(ownPublicKey() == platform, "only the platform may assign the employer");
+  assert(!employerAssigned, "employer already assigned");
+
+  employer = disclose(newEmployer);
+  employerAssigned = true;
+}
+
+// Key rotation, controlled by the employer rather than the platform. Without
+// this, a lost employer key would strand the instance; with it, the platform
+// still never regains write access.
+export circuit transferEmployer(newEmployer: ZswapCoinPublicKey): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(ownPublicKey() == employer, "only the employer may transfer ownership");
+
+  employer = disclose(newEmployer);
+}
+
+// Salaries are capped at Uint<60> rather than Uint<64> so that ten of them
+// cannot overflow the Uint<64> total. 2^60 minor units is far above any real
+// payroll, and the compiler rejects the assignment otherwise.
+export circuit setPayroll(
+  salaries: Vector<10, Uint<60>>,
+  nonces: Vector<10, Bytes<32>>
+): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(ownPublicKey() == employer, "only the employer may set payroll");
+
+  // Compact has no mutable locals, so the sum is written out. It is computed
+  // inside the circuit: only the result crosses into public state.
+  const total =
+    salaries[0] + salaries[1] + salaries[2] + salaries[3] + salaries[4] +
+    salaries[5] + salaries[6] + salaries[7] + salaries[8] + salaries[9];
+
+  for (const i of 0..10) {
+    commitments.insert(
+      i as Uint<8>,
+      disclose(persistentHash<SalaryCommitment>(
+        SalaryCommitment { amount: salaries[i], nonce: nonces[i] }
+      ))
+    );
+  }
+
+  totalPayroll = disclose(total);
+  employeeCount = 10;
+}
+
+// Pure: touches no ledger state, so the compiler exposes it in `pureCircuits`
+// and it can be evaluated locally with no transaction. That gives the employer
+// a way to recompute a commitment from (salary, nonce) and check it against
+// what is on chain — using exactly the hash the circuit used.
+export pure circuit commitmentFor(amount: Uint<60>, nonce: Bytes<32>): Bytes<32> {
+  return persistentHash<SalaryCommitment>(
+    SalaryCommitment { amount: amount, nonce: nonce }
+  );
+}

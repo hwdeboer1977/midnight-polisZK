@@ -1,6 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { validateMnemonic } from "@midnight-ntwrk/wallet-sdk";
 import type { NetworkConfig } from "../providers/midnight-providers.js";
+import { masterSeedHex, type WalletSecret } from "./wallet.js";
 
 /**
  * Devnet dev-preset account. The `CFG_PRESET: dev` node genesis pre-funds this
@@ -70,23 +72,60 @@ export class EnvironmentManager {
   }
 
   /**
-   * On local devnet the pre-funded dev seed is used unless WALLET_SEED is set,
-   * so a fresh clone runs without any secret configured. Remote networks always
-   * require an explicit seed.
+   * How the wallet is identified, in priority order: an explicit mnemonic, an
+   * explicit hex seed, or — on local devnet only — the pre-funded dev seed, so
+   * a fresh clone runs with nothing configured.
+   *
+   * A recovery phrase is what browser wallets (Lace, IAM) actually give you;
+   * they never export a raw key. Both forms end at the same HD derivation.
    */
-  static getWalletSeed(): string {
+  static getWalletSecret(): WalletSecret {
+    const mnemonic = process.env.WALLET_MNEMONIC?.trim().replace(/\s+/g, " ");
     const seed = process.env.WALLET_SEED?.trim();
-    if (seed) return seed;
-    if (EnvironmentManager.isLocal()) return LOCAL_DEV_SEED;
+
+    if (mnemonic && seed) {
+      throw new Error(
+        "Set only one of WALLET_MNEMONIC or WALLET_SEED (both are defined)."
+      );
+    }
+    if (mnemonic) return { kind: "mnemonic", value: mnemonic };
+    if (seed) return { kind: "seed", value: seed };
+    if (EnvironmentManager.isLocal()) {
+      return { kind: "seed", value: LOCAL_DEV_SEED };
+    }
     throw new Error(
-      `WALLET_SEED is required for network "${EnvironmentManager.getNetwork()}". ` +
-        `Set it in .env.`
+      `WALLET_MNEMONIC or WALLET_SEED is required for network ` +
+        `"${EnvironmentManager.getNetwork()}". Set one in .env.`
     );
   }
 
+  /** Where the secret came from, for display. Never includes the secret. */
+  static describeWalletSecret(): string {
+    if (process.env.WALLET_MNEMONIC?.trim()) return "recovery phrase (.env)";
+    if (process.env.WALLET_SEED?.trim()) return "seed (.env)";
+    return "local devnet dev seed";
+  }
+
+  /** Stable per-wallet secret used to derive the private state password. */
+  static getMasterSeedHex(): string {
+    return masterSeedHex(EnvironmentManager.getWalletSecret());
+  }
+
   static validateEnvironment(): void {
-    const walletSeed = EnvironmentManager.getWalletSeed();
-    if (!/^[a-fA-F0-9]{64}$/.test(walletSeed)) {
+    const secret = EnvironmentManager.getWalletSecret();
+
+    if (secret.kind === "mnemonic") {
+      const words = secret.value.split(" ").length;
+      if (!validateMnemonic(secret.value)) {
+        throw new Error(
+          `WALLET_MNEMONIC is not a valid BIP-39 phrase (${words} words read). ` +
+            `Check for typos, extra quotes, or a missing word.`
+        );
+      }
+      return;
+    }
+
+    if (!/^[a-fA-F0-9]{64}$/.test(secret.value)) {
       throw new Error("WALLET_SEED must be a 64-character hexadecimal string");
     }
   }

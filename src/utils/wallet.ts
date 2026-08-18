@@ -17,15 +17,40 @@ import {
   ZswapSecretKeys,
   DustSecretKey,
 } from "@midnight-ntwrk/ledger-v8";
+import { mnemonicToSeedSync } from "@scure/bip39";
 import * as Rx from "rxjs";
 import { WebSocket } from "ws";
 import type { NetworkConfig } from "../providers/midnight-providers.js";
+import { loadWalletState, saveWalletState } from "./wallet-cache.js";
 
 // The indexer's GraphQL subscriptions need a WebSocket implementation on the
 // global. Node 22 ships one, but the graphql-ws client the provider uses only
 // picks up the `ws` implementation reliably when it is set explicitly.
 if (!(globalThis as { WebSocket?: unknown }).WebSocket) {
   (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
+}
+
+/**
+ * How the wallet was identified. Browser wallets (Lace, IAM) only ever hand out
+ * a recovery phrase, never a raw key, so a mnemonic is the normal case for a
+ * wallet funded outside this project.
+ */
+export type WalletSecret =
+  | { kind: "seed"; value: string }
+  | { kind: "mnemonic"; value: string };
+
+/**
+ * The master seed every role key hangs off, as hex.
+ *
+ * A mnemonic becomes a seed by BIP-39, exactly as the Midnight wallet SDK's own
+ * builder does it (`mnemonicToSeedSync` -> hex -> HD roles at account 0,
+ * index 0). Matching that byte for byte is what makes an address derived here
+ * identical to the one the browser wallet shows.
+ */
+export function masterSeedHex(secret: WalletSecret): string {
+  return secret.kind === "mnemonic"
+    ? Buffer.from(mnemonicToSeedSync(secret.value)).toString("hex")
+    : secret.value;
 }
 
 /**
@@ -40,12 +65,15 @@ export interface DerivedKeys {
 
 const ROLES = [Roles.NightExternal, Roles.Zswap, Roles.Dust] as const;
 
-export function deriveKeys(seedHex: string, networkId: string): DerivedKeys {
-  const seed = Buffer.from(seedHex, "hex");
+export function deriveKeys(
+  secret: WalletSecret,
+  networkId: string
+): DerivedKeys {
+  const seed = Buffer.from(masterSeedHex(secret), "hex");
 
   const hd = HDWallet.fromSeed(seed);
   if (hd.type !== "seedOk") {
-    throw new Error(`Could not derive HD wallet from WALLET_SEED: ${hd.error}`);
+    throw new Error(`Could not derive HD wallet from the wallet secret: ${hd.error}`);
   }
 
   const derived = hd.hdWallet
@@ -73,8 +101,11 @@ export function deriveKeys(seedHex: string, networkId: string): DerivedKeys {
  * The address the faucet funds. Derivable offline — no indexer round-trip — so
  * it stays available even when the network is unreachable.
  */
-export function getUnshieldedAddress(seedHex: string, networkId: string): string {
-  return deriveKeys(seedHex, networkId).unshieldedKeystore.getBech32Address().toString();
+export function getUnshieldedAddress(
+  secret: WalletSecret,
+  networkId: string
+): string {
+  return deriveKeys(secret, networkId).unshieldedKeystore.getBech32Address().toString();
 }
 
 export function buildConfiguration(network: NetworkConfig) {
@@ -107,26 +138,55 @@ export interface BuiltWallet {
   shieldedSecretKeys: ZswapSecretKeys;
   dustSecretKey: DustSecretKey;
   unshieldedAddress: string;
+  /** True when this run resumed from cached sync state. */
+  resumed: boolean;
+  /** Persists sync state so the next run resumes instead of replaying. */
+  saveState: () => Promise<void>;
 }
 
 /** Builds and starts the three-wallet facade. Caller is responsible for stop(). */
 export async function buildWallet(
-  seedHex: string,
+  secret: WalletSecret,
   network: NetworkConfig
 ): Promise<BuiltWallet> {
-  const keys = deriveKeys(seedHex, network.networkId);
+  const keys = deriveKeys(secret, network.networkId);
   const configuration = buildConfiguration(network);
   const dustParameters = LedgerParameters.initialParameters().dust;
+  const seedHex = masterSeedHex(secret);
+
+  const cached = loadWalletState(seedHex, network.networkId);
+
+  // Captured from the builders so their state can be serialized later; the
+  // facade exposes wallet *state*, not the wallet objects themselves.
+  let shieldedWallet: ReturnType<ReturnType<typeof ShieldedWallet>["startWithSeed"]>;
+  let unshieldedWallet: ReturnType<
+    ReturnType<typeof UnshieldedWallet>["startWithPublicKey"]
+  >;
+  let dustWallet: ReturnType<ReturnType<typeof DustWallet>["startWithSeed"]>;
 
   const facade = await WalletFacade.init({
     configuration,
-    shielded: (config) => ShieldedWallet(config).startWithSeed(keys.shieldedSeed),
-    unshielded: (config) =>
-      UnshieldedWallet(config).startWithPublicKey(
-        PublicKey.fromKeyStore(keys.unshieldedKeystore)
-      ),
-    dust: (config) =>
-      DustWallet(config).startWithSeed(keys.dustSeed, dustParameters),
+    shielded: (config) => {
+      const w = ShieldedWallet(config);
+      shieldedWallet = cached
+        ? w.restore(cached.shielded)
+        : w.startWithSeed(keys.shieldedSeed);
+      return shieldedWallet;
+    },
+    unshielded: (config) => {
+      const w = UnshieldedWallet(config);
+      unshieldedWallet = cached
+        ? w.restore(cached.unshielded)
+        : w.startWithPublicKey(PublicKey.fromKeyStore(keys.unshieldedKeystore));
+      return unshieldedWallet;
+    },
+    dust: (config) => {
+      const w = DustWallet(config);
+      dustWallet = cached
+        ? w.restore(cached.dust)
+        : w.startWithSeed(keys.dustSeed, dustParameters);
+      return dustWallet;
+    },
   });
 
   const shieldedSecretKeys = ZswapSecretKeys.fromSeed(keys.shieldedSeed);
@@ -140,12 +200,47 @@ export async function buildWallet(
     shieldedSecretKeys,
     dustSecretKey,
     unshieldedAddress: keys.unshieldedKeystore.getBech32Address().toString(),
+    resumed: cached !== null,
+    saveState: async () => {
+      const [shielded, unshielded, dust] = await Promise.all([
+        shieldedWallet.serializeState(),
+        unshieldedWallet.serializeState(),
+        dustWallet.serializeState(),
+      ]);
+      saveWalletState(seedHex, network.networkId, { shielded, unshielded, dust });
+    },
   };
 }
 
+function isComplete(progress: unknown): boolean {
+  const p = progress as { isStrictlyComplete?: () => boolean } | null;
+  return typeof p?.isStrictlyComplete === "function" ? p.isStrictlyComplete() : false;
+}
+
 /**
- * Waits for a synced state while reporting progress. A fresh wallet syncs from
- * genesis, which is slow and silent otherwise.
+ * Renders one wallet section as "name done (applied/target)". Shielded and dust
+ * report appliedIndex/highestRelevantWalletIndex; unshielded reports
+ * appliedId/highestTransactionId.
+ */
+function formatProgress(name: string, progress: unknown): string {
+  const done = isComplete(progress) ? "✓" : "…";
+  const p = progress as {
+    appliedIndex?: bigint;
+    highestRelevantWalletIndex?: bigint;
+    appliedId?: bigint;
+    highestTransactionId?: bigint;
+  } | null;
+  const applied = p?.appliedIndex ?? p?.appliedId;
+  const target = p?.highestRelevantWalletIndex ?? p?.highestTransactionId;
+  if (applied === undefined || target === undefined) return `${name}${done}`;
+  return `${name}${done} ${applied}/${target}`;
+}
+
+/**
+ * Waits for a synced state while reporting progress. All three sections have to
+ * reach strictly-complete, so reporting only one of them makes a slow shielded
+ * or dust scan look like a hang — which matters on remote networks, where a
+ * first sync from genesis can take a long time.
  */
 export async function waitForSync(
   wallet: BuiltWallet,
@@ -155,21 +250,38 @@ export async function waitForSync(
     .state()
     .pipe(Rx.throttleTime(5000, undefined, { leading: true, trailing: true }))
     .subscribe((state) => {
-      const p = state.unshielded.progress;
-      const pct =
-        p.highestTransactionId > 0n
-          ? Number((p.appliedId * 100n) / p.highestTransactionId)
-          : 0;
       onProgress?.(
-        `sync ${pct}%  (tx ${p.appliedId}/${p.highestTransactionId}, connected=${p.isConnected})`
+        [
+          formatProgress("shielded", state.shielded.state.progress),
+          formatProgress("unshielded", state.unshielded.progress),
+          formatProgress("dust", state.dust.state.progress),
+        ].join("  ")
       );
     });
 
   try {
-    return await wallet.facade.waitForSyncedState();
+    const state = await wallet.facade.waitForSyncedState();
+    // Persist only after reaching the tip, so a cached state is always one we
+    // know was complete. A failure here costs the next run a full resync but
+    // must not fail the command that just synced successfully.
+    try {
+      await wallet.saveState();
+    } catch (error) {
+      onProgress?.(
+        `warning: could not cache wallet state (${
+          error instanceof Error ? error.message : String(error)
+        })`
+      );
+    }
+    return state;
   } finally {
     sub.unsubscribe();
   }
+}
+
+/** Current wallet state snapshot, without waiting for a fresh sync. */
+export function currentState(wallet: BuiltWallet) {
+  return Rx.firstValueFrom(wallet.facade.state());
 }
 
 /** Default transaction time-to-live. */

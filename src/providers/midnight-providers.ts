@@ -40,7 +40,7 @@ function privateStatePassword(): string {
   const override = process.env.PRIVATE_STATE_PASSWORD;
   if (override) return override;
 
-  const seed = EnvironmentManager.getWalletSeed();
+  const seed = EnvironmentManager.getMasterSeedHex();
   const digest = createHash("sha256")
     .update(`midnight-private-state:${seed}`)
     .digest("base64");

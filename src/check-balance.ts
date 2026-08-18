@@ -12,22 +12,28 @@ async function checkBalance() {
   console.log();
 
   EnvironmentManager.validateEnvironment();
-  const seed = EnvironmentManager.getWalletSeed();
+  const secret = EnvironmentManager.getWalletSecret();
   const network = EnvironmentManager.getNetworkConfig();
 
   // Derived locally from the seed, so it prints even if the network is down.
-  const address = getUnshieldedAddress(seed, network.networkId);
+  const address = getUnshieldedAddress(secret, network.networkId);
 
   console.log(chalk.cyan.bold("📍 Unshielded address (fund this one):"));
   console.log(chalk.white(`   ${address}`));
   console.log();
   console.log(chalk.gray(`   Network: ${network.name}`));
+  console.log(chalk.gray(`   Key from: ${EnvironmentManager.describeWalletSecret()}`));
+  if (!EnvironmentManager.isLocal()) {
+    console.log(
+      chalk.yellow("   This must match the address your wallet app shows.")
+    );
+  }
   console.log();
 
-  console.log(chalk.gray("Syncing wallet (this can take a minute)..."));
+  console.log(chalk.gray("Syncing wallet..."));
   let wallet;
   try {
-    wallet = await buildWallet(seed, network);
+    wallet = await buildWallet(secret, network);
   } catch (error) {
     console.log();
     console.log(chalk.red("❌ Could not reach the network:"));
@@ -40,6 +46,14 @@ async function checkBalance() {
     console.log();
     process.exit(1);
   }
+
+  console.log(
+    chalk.gray(
+      wallet.resumed
+        ? "   resuming from cached state"
+        : "   no cached state — first sync replays the chain and can take a while"
+    )
+  );
 
   try {
     const state = await waitForSync(wallet, (line) =>
