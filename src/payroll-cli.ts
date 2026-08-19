@@ -1,49 +1,253 @@
 import "dotenv/config";
 import * as fs from "fs";
-import { randomBytes } from "crypto";
 import * as readline from "readline/promises";
 import chalk from "chalk";
 import { connect, readLedger, type Connection } from "./utils/contract.js";
 import { currentInstance } from "./utils/deployments.js";
+import { EnvironmentManager } from "./utils/environment.js";
 import { hex, toPublicKey } from "./utils/keys.js";
+import {
+  deriveEmployerKey,
+  deriveNonce,
+  isSealed,
+  openSealed,
+  sealOpening,
+} from "./utils/payroll-openings.js";
 import { parseRosterWorkbook, ROSTER_SIZE } from "./utils/roster.js";
+// The one formatter, rather than a local copy: this file had its own, and it
+// kept dividing by 100 long after the unit became 1e-6, which is exactly the
+// drift a second implementation is free to have.
+import { formatPeur } from "./utils/constructor-args.js";
 
 const CONTRACT_NAME = "payroll";
 const ROSTER = ROSTER_SIZE;
 
 /**
- * The employer's copy of what was paid. The chain only stores commitments, so
- * without the salaries and their nonces a commitment can never be reopened —
- * losing this file means losing the ability to prove anyone's salary. One file
- * per instance, since each employer has their own roster.
+ * A local CACHE of what was paid — no longer the only copy.
+ *
+ * It used to be load-bearing: the chain held commitments, this file held the
+ * only nonces that could open them, and deleting it destroyed the ability to
+ * prove anyone's salary. Now nonces are derived from the wallet secret and the
+ * openings are also sealed on chain, so this file is a convenience. Menu option
+ * 6 rebuilds it from the chain alone.
+ *
+ * One file per instance, since each employer has their own roster.
  */
-/** 420000n -> "4,200.00". Minor units are cents, as the contract counts them. */
-function formatMinor(value: bigint): string {
-  const whole = (value / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${whole}.${(value % 100n).toString().padStart(2, "0")}`;
-}
-
 const SECRETS_FILE = currentInstance()
   ? `payroll-secrets.${currentInstance()}.json`
   : "payroll-secrets.json";
 
+interface Opening {
+  index: number;
+  salary: string;
+  nonce: string;
+}
+
 interface SecretRecord {
   contractAddress: string;
   updatedAt: string;
-  employees: { index: number; salary: string; nonce: string }[];
+  /** YYYYMM -> the openings for that period. */
+  runs: Record<string, { updatedAt: string; employees: Opening[] }>;
+  /** Pre-period file, kept so its openings are not silently dropped. */
+  employees?: Opening[];
 }
 
 function readSecrets(): SecretRecord | null {
   if (!fs.existsSync(SECRETS_FILE)) return null;
-  return JSON.parse(fs.readFileSync(SECRETS_FILE, "utf8")) as SecretRecord;
+  const parsed = JSON.parse(fs.readFileSync(SECRETS_FILE, "utf8")) as SecretRecord;
+  return { ...parsed, runs: parsed.runs ?? {} };
 }
 
-function writeSecrets(record: SecretRecord): void {
+/**
+ * Merges one period's openings into the file, leaving every other period alone.
+ *
+ * The whole point of keying commitments by period on chain is that a past month
+ * stays provable. That holds only if the nonces survive too — a commitment
+ * nobody can open is indistinguishable from no commitment at all. So this
+ * merges rather than replaces, which the previous version did not.
+ */
+function writeSecrets(
+  contractAddress: string,
+  period: number,
+  employees: Opening[]
+): void {
+  const now = new Date().toISOString();
+  const existing = readSecrets();
+  const record: SecretRecord = {
+    contractAddress,
+    updatedAt: now,
+    ...(existing?.employees ? { employees: existing.employees } : {}),
+    runs: { ...(existing?.runs ?? {}), [String(period)]: { updatedAt: now, employees } },
+  };
   fs.writeFileSync(SECRETS_FILE, JSON.stringify(record, null, 2) + "\n", {
     mode: 0o600,
   });
 }
 
+/** 202603 -> "March 2026". */
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+function periodName(period: bigint | number): string {
+  const n = Number(period);
+  const month = MONTHS[(n % 100) - 1];
+  return month ? `${month} ${Math.floor(n / 100)}` : String(period);
+}
+
+/** Rejects anything that is not a plausible YYYYMM, matching the circuit. */
+function parsePeriod(raw: string): number {
+  const value = raw.trim();
+  if (!/^\d{6}$/.test(value)) {
+    throw new Error(`"${raw}" is not a YYYYMM period, e.g. 202603`);
+  }
+  const period = Number(value);
+  const month = period % 100;
+  if (month < 1 || month > 12) throw new Error(`"${raw}" has no month ${month}`);
+  if (period < 200001 || period > 299912) throw new Error(`"${raw}" is out of range`);
+  return period;
+}
+
+/** The current month, as the default nobody should have to type. */
+function thisPeriod(): number {
+  const now = new Date();
+  return now.getUTCFullYear() * 100 + now.getUTCMonth() + 1;
+}
+
+
+/**
+ * Rebuilds the local secrets file from the chain alone.
+ *
+ * This is the whole point of sealing the openings on chain: an employer who has
+ * lost everything but their wallet recovery phrase can reconstruct every salary
+ * and nonce they ever filed. Nothing here reads the existing file, and nothing
+ * here needs the roster spreadsheet.
+ *
+ * Each recovered opening is checked against the commitment it claims to open,
+ * so a blob that decrypts to the wrong thing is reported rather than written
+ * into the file as though it were sound.
+ */
+async function recoverOpenings(conn: Connection): Promise<void> {
+  const ledger = await readLedger(conn);
+  if (!ledger) {
+    console.log(chalk.red("\n❌ No contract state on chain.\n"));
+    return;
+  }
+  const employerKey = deriveEmployerKey(
+    EnvironmentManager.getMasterSeedHex(),
+    conn.contractAddress
+  );
+
+  const periods = Array.from(ledger.periods as Iterable<bigint>).sort((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0
+  );
+
+  if (periods.length === 0) {
+    console.log(chalk.gray("\nNothing on chain to recover.\n"));
+    return;
+  }
+
+  console.log(
+    chalk.gray(
+      `\nRecovering from ${conn.contractAddress}\n` +
+        `using the wallet secret from ${EnvironmentManager.describeWalletSecret()}.\n`
+    )
+  );
+
+  let recovered = 0;
+  let failed = 0;
+
+  for (const periodBig of periods) {
+    const period = Number(periodBig);
+    if (!ledger.sealedFor.member(periodBig)) {
+      console.log(
+        chalk.yellow(`⚠️  ${periodName(period)} has no sealed openings — filed before sealing.`)
+      );
+      failed += 1;
+      continue;
+    }
+
+    const sealedByIndex = ledger.sealedFor.lookup(periodBig);
+    const commitments = ledger.commitmentsFor.member(periodBig)
+      ? ledger.commitmentsFor.lookup(periodBig)
+      : null;
+
+    const employees: Opening[] = [];
+    let periodFailed = false;
+
+    for (const [indexBig, blob] of sealedByIndex as Iterable<[bigint, Uint8Array]>) {
+      const index = Number(indexBig);
+      if (!isSealed(blob)) {
+        console.log(chalk.yellow(`⚠️  ${periodName(period)} [${index}] is empty.`));
+        periodFailed = true;
+        continue;
+      }
+      try {
+        const { salaryMinor, nonce } = openSealed(employerKey, blob);
+
+        // The commitment is the authority. A blob that decrypts cleanly but
+        // does not reproduce the on-chain commitment is worse than one that
+        // fails outright, because it would look like a valid opening.
+        if (commitments?.member(indexBig)) {
+          const expected = hex(commitments.lookup(indexBig));
+          // Recomputed with the contract's own pure circuit, so this is the
+          // identical hash the proof committed to — not a re-implementation.
+          const actual = hex(
+            conn.contractModule.pureCircuits.commitmentFor(salaryMinor, nonce)
+          );
+          if (actual !== expected) {
+            console.log(
+              chalk.red(`❌ ${periodName(period)} [${index}] does not match its commitment.`)
+            );
+            periodFailed = true;
+            continue;
+          }
+        }
+
+        employees.push({
+          index,
+          salary: salaryMinor.toString(),
+          nonce: hex(nonce),
+        });
+      } catch {
+        console.log(
+          chalk.red(
+            `❌ ${periodName(period)} [${index}] would not decrypt — ` +
+              "wrong wallet for this contract?"
+          )
+        );
+        periodFailed = true;
+      }
+    }
+
+    if (employees.length > 0) {
+      employees.sort((a, b) => a.index - b.index);
+      writeSecrets(conn.contractAddress, period, employees);
+      console.log(
+        chalk.green(`✅ ${periodName(period)}: recovered ${employees.length} openings`) +
+          chalk.gray(
+            `  total ${formatPeur(
+              employees.reduce((sum, e) => sum + BigInt(e.salary), 0n)
+            )}`
+          )
+      );
+      recovered += 1;
+    }
+    if (periodFailed) failed += 1;
+  }
+
+  console.log();
+  console.log(
+    chalk.cyan(`Recovered ${recovered} period(s) into ${SECRETS_FILE}.`) +
+      (failed > 0 ? chalk.yellow(`  ${failed} period(s) had problems.`) : "")
+  );
+  console.log(
+    chalk.gray(
+      "Nothing local was needed: the openings came from chain and the key from\n" +
+        "the wallet recovery phrase.\n"
+    )
+  );
+}
 
 type Role = "employer" | "platform-unassigned" | "platform-spent" | "outsider";
 
@@ -88,16 +292,47 @@ async function showStatus(conn: Connection): Promise<void> {
   );
   console.log(chalk.gray(`   → ${describeRole(roleOf(ledger, conn.myPublicKey))}`));
   console.log();
-  console.log(chalk.cyan("Employee count: ") + `${ledger.employeeCount}`);
-  console.log(chalk.cyan("Total payroll:  ") + `${ledger.totalPayroll}`);
-  console.log(chalk.cyan("Commitments:    ") + `${ledger.commitments.size()}`);
-  for (const [index, commitment] of ledger.commitments) {
-    console.log(chalk.gray(`   [${index}] ${hex(commitment)}`));
+  const periods = Array.from(ledger.periods as Iterable<bigint>).sort((a, b) =>
+    a < b ? 1 : a > b ? -1 : 0
+  );
+
+  if (periods.length === 0) {
+    console.log(chalk.gray("No payroll filed yet.\n"));
+    return;
   }
+
+  console.log(chalk.cyan("Periods filed:  ") + `${periods.length}`);
+  console.log();
+
+  // Newest first: the month being asked about is nearly always the last filed.
+  for (const period of periods) {
+    const total = ledger.totalPayrollFor.member(period)
+      ? formatPeur(ledger.totalPayrollFor.lookup(period))
+      : "—";
+    const count = ledger.employeeCountFor.member(period)
+      ? ledger.employeeCountFor.lookup(period)
+      : 0n;
+    console.log(
+      chalk.white.bold(periodName(period)) +
+        chalk.gray(`  (${period})`) +
+        chalk.cyan("  total ") +
+        total +
+        chalk.gray(`  ·  ${count} employees`) +
+        (period === ledger.latestPeriod ? chalk.green("  ← latest") : "")
+    );
+    if (ledger.commitmentsFor.member(period)) {
+      for (const [index, commitment] of ledger.commitmentsFor.lookup(period)) {
+        console.log(chalk.gray(`   [${index}] ${hex(commitment)}`));
+      }
+    }
+    console.log();
+  }
+
   console.log(
     chalk.gray(
-      "\nNo individual salary appears above — only the aggregate and one\n" +
-        "opaque commitment per employee.\n"
+      "No individual salary appears above — only a per-period aggregate and one\n" +
+        "opaque commitment per employee. Past periods stay on chain, so a month\n" +
+        "remains provable after later ones are filed.\n"
     )
   );
 }
@@ -131,7 +366,8 @@ async function main() {
       console.log("3. Set payroll from roster.xlsx (employer)");
       console.log("4. Verify a commitment        (employer)");
       console.log("5. Transfer employer rights   (employer)");
-      console.log("6. Exit");
+      console.log("6. Recover openings from chain (employer)");
+      console.log("7. Exit");
 
       const choice = await rl.question("\nYour choice: ");
 
@@ -188,6 +424,7 @@ async function main() {
           const file = answer.trim() || "roster-template.xlsx";
 
           let salaries: bigint[];
+          let period: number;
           try {
             const roster = await parseRosterWorkbook(file);
             if (roster.problems.length > 0) {
@@ -207,6 +444,24 @@ async function main() {
 
             salaries = roster.rows.map((row) => row.salaryMinor);
 
+            // The workbook carries the period, so the month filed is the month
+            // the file was prepared for. The prompt confirms rather than asks:
+            // silently trusting a spreadsheet cell to pick which month gets
+            // overwritten is worth one keypress.
+            try {
+              const suggested = roster.period ?? thisPeriod();
+              const source = roster.period ? file : "today";
+              const typed = await rl.question(
+                `Period [${suggested} — ${periodName(suggested)}, from ${source}]: `
+              );
+              period = typed.trim() ? parsePeriod(typed) : suggested;
+            } catch (error) {
+              console.error(
+                chalk.red(`❌ ${error instanceof Error ? error.message : String(error)}\n`)
+              );
+              break;
+            }
+
             // Names and addresses are printed for confirmation and then dropped:
             // they never enter a circuit, let alone the chain.
             console.log();
@@ -214,17 +469,29 @@ async function main() {
             for (const row of roster.rows) {
               console.log(
                 chalk.gray(
-                  `   [${row.index}] ${row.fullName.padEnd(18)} ${formatMinor(row.salaryMinor).padStart(12)}`
+                  `   [${row.index}] ${row.fullName.padEnd(18)} ${formatPeur(row.salaryMinor).padStart(12)}`
                 )
               );
             }
             console.log(
-              chalk.yellow.bold(`   total: ${formatMinor(roster.totalMinor)}`) +
+              chalk.yellow.bold(`   total: ${formatPeur(roster.totalMinor)}`) +
                 chalk.gray("  ← the only figure that becomes public")
             );
             console.log();
 
-            const confirm = await rl.question("Submit this payroll? [y/N]: ");
+            const already = readSecrets()?.runs?.[String(period)];
+            if (already) {
+              console.log(
+                chalk.yellow(
+                  `⚠️  ${periodName(period)} is already filed. Submitting replaces it\n` +
+                    `   on chain and in ${SECRETS_FILE}; other periods are untouched.\n`
+                )
+              );
+            }
+
+            const confirm = await rl.question(
+              `Submit this payroll for ${periodName(period)}? [y/N]: `
+            );
             if (confirm.trim().toLowerCase() !== "y") {
               console.log(chalk.gray("Cancelled.\n"));
               break;
@@ -236,25 +503,41 @@ async function main() {
             break;
           }
 
-          // One nonce per employee, so two people on the same salary do not
-          // produce the same commitment.
-          const nonces = salaries.map(() => new Uint8Array(randomBytes(32)));
+          // Derived, not random. One nonce per employee per period, so two
+          // people on the same salary do not produce the same commitment — and
+          // every one of them is recomputable from the wallet secret alone, so
+          // there is no longer a file whose loss is unrecoverable.
+          const employerKey = deriveEmployerKey(
+            EnvironmentManager.getMasterSeedHex(),
+            conn.contractAddress
+          );
+          const nonces = salaries.map((_, index) =>
+            deriveNonce(employerKey, period, index)
+          );
+          const sealedOpenings = salaries.map((salary, index) =>
+            sealOpening(employerKey, salary, nonces[index]!)
+          );
 
           try {
             console.log(
               chalk.gray("\nProving and submitting (this takes a few minutes)...")
             );
-            const tx = await conn.deployed.callTx.setPayroll(salaries, nonces);
+            const tx = await conn.deployed.callTx.setPayroll(
+              period,
+              salaries,
+              nonces,
+              sealedOpenings
+            );
 
-            writeSecrets({
-              contractAddress: conn.contractAddress,
-              updatedAt: new Date().toISOString(),
-              employees: salaries.map((salary, index) => ({
+            writeSecrets(
+              conn.contractAddress,
+              period,
+              salaries.map((salary, index) => ({
                 index,
                 salary: salary.toString(),
                 nonce: hex(nonces[index]!),
-              })),
-            });
+              }))
+            );
 
             const total = salaries.reduce((a, b) => a + b, 0n);
             console.log(chalk.green("✅ Payroll set!"));
@@ -279,9 +562,39 @@ async function main() {
             break;
           }
 
+          const filed = Object.keys(secrets.runs ?? {}).sort().reverse();
+          if (filed.length === 0) {
+            console.log(
+              chalk.red(`❌ ${SECRETS_FILE} holds no period runs — nothing to open.\n`)
+            );
+            break;
+          }
+          console.log(
+            chalk.gray(
+              `\nPeriods on file: ${filed.map((f) => `${f} (${periodName(Number(f))})`).join(", ")}\n`
+            )
+          );
+
+          let period: number;
+          try {
+            const typed = await rl.question(`Period as YYYYMM [${filed[0]}]: `);
+            period = typed.trim() ? parsePeriod(typed) : Number(filed[0]);
+          } catch (error) {
+            console.error(
+              chalk.red(`❌ ${error instanceof Error ? error.message : String(error)}\n`)
+            );
+            break;
+          }
+
+          const run = secrets.runs?.[String(period)];
+          if (!run) {
+            console.log(chalk.red(`❌ No local record for ${periodName(period)}\n`));
+            break;
+          }
+
           const raw = await rl.question(`Employee index (0-${ROSTER - 1}): `);
           const index = Number(raw.trim());
-          const record = secrets.employees.find((e) => e.index === index);
+          const record = run.employees.find((e) => e.index === index);
           if (!record) {
             console.log(chalk.red(`❌ No local record for index ${raw.trim()}\n`));
             break;
@@ -289,8 +602,16 @@ async function main() {
 
           try {
             const ledger = await readLedger(conn);
-            if (!ledger || !ledger.commitments.member(BigInt(index))) {
-              console.log(chalk.red(`❌ No on-chain commitment at index ${index}\n`));
+            const forPeriod =
+              ledger && ledger.commitmentsFor.member(BigInt(period))
+                ? ledger.commitmentsFor.lookup(BigInt(period))
+                : null;
+            if (!forPeriod || !forPeriod.member(BigInt(index))) {
+              console.log(
+                chalk.red(
+                  `❌ No on-chain commitment at index ${index} for ${periodName(period)}\n`
+                )
+              );
               break;
             }
 
@@ -300,11 +621,12 @@ async function main() {
               BigInt(record.salary),
               Uint8Array.from(Buffer.from(record.nonce, "hex"))
             );
-            const onChain = ledger.commitments.lookup(BigInt(index));
+            const onChain = forPeriod.lookup(BigInt(index));
             const matches = hex(expected) === hex(onChain);
 
             console.log();
-            console.log(`Salary (local):  ${record.salary}`);
+            console.log(`Period:          ${periodName(period)}`);
+            console.log(`Salary (local):  ${formatPeur(BigInt(record.salary))} pEUR`);
             console.log(chalk.gray(`On chain:        ${hex(onChain)}`));
             console.log(chalk.gray(`Recomputed:      ${hex(expected)}`));
             console.log(
@@ -349,13 +671,22 @@ async function main() {
           break;
         }
 
-        case "6":
+        case "6": {
+          try {
+            await recoverOpenings(conn);
+          } catch (error) {
+            console.error(chalk.red("❌ Recovery failed:"), error);
+          }
+          break;
+        }
+
+        case "7":
           running = false;
           console.log("\n👋 Goodbye!");
           break;
 
         default:
-          console.log(chalk.red("❌ Invalid choice. Please enter 1-6.\n"));
+          console.log(chalk.red("❌ Invalid choice. Please enter 1-7.\n"));
       }
     }
   } finally {

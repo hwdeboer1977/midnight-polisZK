@@ -7,6 +7,16 @@ const loadParser = () => import("../generated/roster");
 
 const ROSTER_COLUMNS = ["Full name", "Address", "Monthly gross salary"] as const;
 const ROSTER_SIZE = 10;
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+/** 202603 -> "March 2026". */
+function periodName(period: number): string {
+  const month = MONTHS[(period % 100) - 1];
+  return month ? `${month} ${Math.floor(period / 100)}` : String(period);
+}
 import { formatPeur } from "../lib/format";
 
 /**
@@ -54,9 +64,9 @@ export function RosterUpload() {
         <span>{busy ? "Reading…" : "Choose an .xlsx file"}</span>
       </label>
       <p className="note">
-        Columns: {ROSTER_COLUMNS.join(" · ")}. Generate a starting point with{" "}
-        <code>npm run roster:template</code>. Parsed in your browser — the file is
-        never uploaded anywhere.
+        Year and Month above the table, then columns: {ROSTER_COLUMNS.join(" · ")}.
+        Generate a starting point with <code>npm run roster:template</code>. Parsed in
+        your browser — the file is never uploaded anywhere.
       </p>
 
       {error ? <p className="status error">Could not read {fileName}: {error}</p> : null}
@@ -74,6 +84,13 @@ export function RosterUpload() {
                 ))}
               </ul>
             </div>
+          ) : null}
+
+          {roster.period ? (
+            <p className="status">
+              Payroll period: <strong>{periodName(roster.period)}</strong>{" "}
+              <span className="muted">({roster.period})</span>
+            </p>
           ) : null}
 
           <table className="roster">
@@ -107,7 +124,8 @@ export function RosterUpload() {
 
           {usable ? (
             <p className="note">
-              Ready: {ROSTER_SIZE} employees. Submitting means proving a transaction, which
+              Ready: {ROSTER_SIZE} employees
+              {roster.period ? ` for ${periodName(roster.period)}` : ""}. Submitting means proving a transaction, which
               runs from the CLI for now — <code>INSTANCE=&lt;employer&gt; npm run payroll</code>,
               option 3, and give it this file. Only the total and one commitment per
               employee will be published; the names and addresses above stay here.

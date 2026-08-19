@@ -34,14 +34,31 @@ export interface PayrollLedger {
   platform: { bytes: Uint8Array };
   employer: { bytes: Uint8Array };
   employerAssigned: boolean;
-  employeeCount: bigint;
-  totalPayroll: bigint;
-  commitments: {
-    size(): bigint;
-    member(key: bigint): boolean;
-    lookup(key: bigint): Uint8Array;
-    [Symbol.iterator](): Iterator<[bigint, Uint8Array]>;
-  };
+  /** YYYYMM of the most recent run, 0 before any. */
+  latestPeriod: bigint;
+  periods: LedgerSet<bigint>;
+  employeeCountFor: LedgerMap<bigint, bigint>;
+  totalPayrollFor: LedgerMap<bigint, bigint>;
+  /** period -> employee index -> commitment. */
+  commitmentsFor: LedgerMap<bigint, LedgerMap<bigint, Uint8Array>>;
+  /**
+   * period -> employee index -> the opening, encrypted to the employer's key.
+   * Opaque here: the browser never holds the wallet secret that opens it.
+   */
+  sealedFor: LedgerMap<bigint, LedgerMap<bigint, Uint8Array>>;
+}
+
+interface LedgerMap<K, V> {
+  size(): bigint;
+  member(key: K): boolean;
+  lookup(key: K): V;
+  [Symbol.iterator](): Iterator<[K, V]>;
+}
+
+interface LedgerSet<T> {
+  size(): bigint;
+  member(value: T): boolean;
+  [Symbol.iterator](): Iterator<T>;
 }
 
 /** Public ledger shape of peur.compact. */

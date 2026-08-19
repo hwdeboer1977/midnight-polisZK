@@ -20,10 +20,21 @@ const SAMPLE = [
 ];
 
 const target = process.argv[2] ?? path.join(process.cwd(), "roster-template.xlsx");
-await writeRosterTemplate(target, SAMPLE);
+
+// Seeded with the current month so the common case is a file you can fill in
+// and submit; the period is still a cell, so filing a past month is editing
+// one number rather than working around the template.
+const now = new Date();
+const period = { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
+
+await writeRosterTemplate(target, SAMPLE, period);
 console.log(`Wrote ${target}`);
-console.log("Columns: Full name | Address | Monthly gross salary");
+console.log(`Period:  Year ${period.year} | Month ${period.month}  (rows 1-2)`);
+console.log("Columns: Full name | Address | Monthly gross salary  (row 4)");
 console.log(
   "Only the salaries reach the chain, and only as private inputs folded into the public total."
+);
+console.log(
+  "The period is published as-is: it is the key a past month stays provable under."
 );
 process.exit(0);

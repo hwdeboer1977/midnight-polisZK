@@ -1,20 +1,44 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { RosterUpload } from "../components/RosterUpload";
 import { Tile } from "../components/Tile";
 import { WalletPicker } from "../components/WalletPicker";
 import { loadDeployments, type Deployments } from "../lib/deployments";
-import { group } from "../lib/format";
+import { formatPeur, group } from "../lib/format";
 import { usePayrollInstances, type PayrollInstance } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
 
 const hex = (bytes: Uint8Array) =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
+/** 202603 -> "March 2026". */
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+function periodName(period: bigint): string {
+  const n = Number(period);
+  const month = MONTHS[(n % 100) - 1];
+  return month ? `${month} ${Math.floor(n / 100)}` : String(period);
+}
+
 function Instance({ instance }: { instance: PayrollInstance }) {
   const { name, deployment, state, blockHeight, role } = instance;
-  const commitments = state ? Number(state.commitments.size()) : 0;
+
+  // Newest first: the month someone is looking for is almost always the last
+  // one filed, and a correction to an old month should not bury it.
+  const periods = state
+    ? Array.from(state.periods).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))
+    : [];
+  const latest = state && state.latestPeriod > 0n ? state.latestPeriod : null;
+  const counts = state?.employeeCountFor;
+  const totals = state?.totalPayrollFor;
+  const commitments =
+    state && latest && state.commitmentsFor.member(latest)
+      ? Number(state.commitmentsFor.lookup(latest).size())
+      : 0;
 
   return (
     <section className="card">
@@ -26,19 +50,27 @@ function Instance({ instance }: { instance: PayrollInstance }) {
       <div className="tiles inline">
         <Tile
           label="Employees"
-          value={state ? group(state.employeeCount) : "—"}
-          unit="committed on chain"
+          value={
+            latest && counts?.member(latest)
+              ? group(counts!.lookup(latest))
+              : "—"
+          }
+          unit={latest ? periodName(latest) : "no payroll filed yet"}
         />
         <Tile
           label="Total payroll"
-          value={state ? group(state.totalPayroll) : "—"}
-          unit="public aggregate"
+          value={
+            latest && totals?.member(latest)
+              ? formatPeur(totals.lookup(latest))
+              : "—"
+          }
+          unit={latest ? `${periodName(latest)} · public aggregate` : "public aggregate"}
           accent
         />
         <Tile
-          label="Commitments"
-          value={state ? String(commitments) : "—"}
-          unit={blockHeight ? `block ${group(BigInt(blockHeight))}` : "one per salary"}
+          label="Periods filed"
+          value={state ? String(periods.length) : "—"}
+          unit={blockHeight ? `block ${group(BigInt(blockHeight))}` : "months on chain"}
         />
       </div>
 
@@ -50,19 +82,38 @@ function Instance({ instance }: { instance: PayrollInstance }) {
         </div>
       ) : null}
 
+      {state && periods.length > 0
+        ? periods.map((period) => {
+            const rows = state.commitmentsFor.member(period)
+              ? Array.from(state.commitmentsFor.lookup(period))
+              : [];
+            const total = state.totalPayrollFor.member(period)
+              ? formatPeur(state.totalPayrollFor.lookup(period))
+              : "—";
+            return (
+              <details className="details" key={String(period)}>
+                <summary>
+                  {periodName(period)} — {total} pEUR, {rows.length} commitments
+                </summary>
+                {rows.map(([index, commitment]) => (
+                  <CopyRow
+                    key={String(index)}
+                    label={`#${index}`}
+                    value={hex(commitment)}
+                  />
+                ))}
+              </details>
+            );
+          })
+        : null}
+
       {commitments > 0 ? (
-        <details className="details">
-          <summary>Salary commitments ({commitments})</summary>
-          {state
-            ? Array.from(state.commitments).map(([index, commitment]) => (
-                <CopyRow key={String(index)} label={`#${index}`} value={hex(commitment)} />
-              ))
-            : null}
-          <p className="note">
-            Each is a hash of one salary and a secret nonce. Opaque without the nonce,
-            which only you hold — so no salary is derivable from what is published here.
-          </p>
-        </details>
+        <p className="note">
+          Each commitment is a hash of one salary and a secret nonce. Opaque without
+          the nonce, which only you hold — so no salary is derivable from what is
+          published here. Every period stays on chain, so a past month remains
+          provable after later ones are filed.
+        </p>
       ) : null}
     </section>
   );
@@ -134,7 +185,11 @@ export function Payroll() {
     <>
       {error ? <p className="status error">Could not read state: {error}</p> : null}
       {mine.map((instance) => (
-        <Instance key={instance.name} instance={instance} />
+        // Per instance, not around the list: one contract left on an older
+        // version of the ledger should not hide the others.
+        <ErrorBoundary key={instance.name} what={instance.name}>
+          <Instance instance={instance} />
+        </ErrorBoundary>
       ))}
       {asEmployer.length > 0 ? <RosterUpload /> : null}
     </>

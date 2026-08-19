@@ -36,19 +36,47 @@ export ledger platform: ZswapCoinPublicKey;
 export ledger employer: ZswapCoinPublicKey;
 export ledger employerAssigned: Boolean;
 
-// Public aggregates.
-export ledger employeeCount: Uint<8>;
-export ledger totalPayroll: Uint<64>;
+// Payroll is recorded per period, not as a single current state.
+//
+// A commitment is only worth having if it can still be opened when someone
+// disputes it, and disputes are about past months. Keying by period is what
+// makes "prove what Anna was paid in March" answerable in June, rather than
+// being overwritten the moment April is submitted.
+//
+// The period is YYYYMM as a number — 202603. A plain counter would have done,
+// but then reading the chain tells you a run happened without telling you which
+// month it was for, and the mapping back would live off-chain where it can be
+// lost or disagreed with.
+export ledger periods: Set<Uint<32>>;
+export ledger latestPeriod: Uint<32>;
 
-// Employee index -> commitment to (salary, nonce). Public, but reveals nothing
-// about the amount.
-export ledger commitments: Map<Uint<8>, Bytes<32>>;
+// period -> aggregates for that period.
+export ledger employeeCountFor: Map<Uint<32>, Uint<8>>;
+export ledger totalPayrollFor: Map<Uint<32>, Uint<64>>;
+
+// period -> employee index -> commitment to (salary, nonce). Public, but
+// reveals nothing about the amount.
+export ledger commitmentsFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
+
+// period -> employee index -> the opening, encrypted to the employer's key.
+//
+// A commitment nobody can open proves nothing, and the openings used to exist
+// in exactly one place: a JSON file on the employer's laptop. Losing it lost
+// the ability to demonstrate what anyone was ever paid — silently, and with no
+// way to reconstruct it.
+//
+// 68 bytes is AES-256-GCM: a 12-byte IV, 40 bytes of ciphertext over the salary
+// and nonce, and a 16-byte tag. The contract treats it as opaque and cannot
+// check that it decrypts to the matching commitment. That is deliberate rather
+// than overlooked: verifying it would mean doing the decryption in-circuit, and
+// the only party who can be harmed by a bad blob is the employer who wrote it —
+// they alone hold the key, and they alone need the backup.
+export ledger sealedFor: Map<Uint<32>, Map<Uint<8>, Bytes<68>>>;
 
 constructor() {
   platform = disclose(ownPublicKey());
   employerAssigned = false;
-  employeeCount = 0;
-  totalPayroll = 0;
+  latestPeriod = 0;
 }
 
 // Hands the instance to its employer. Callable once, by the deployer only.
@@ -76,11 +104,21 @@ export circuit transferEmployer(newEmployer: ZswapCoinPublicKey): [] {
 // cannot overflow the Uint<64> total. 2^60 minor units is far above any real
 // payroll, and the compiler rejects the assignment otherwise.
 export circuit setPayroll(
+  period: Uint<32>,
   salaries: Vector<10, Uint<60>>,
-  nonces: Vector<10, Bytes<32>>
+  nonces: Vector<10, Bytes<32>>,
+  sealedOpenings: Vector<10, Bytes<68>>
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
   assert(ownPublicKey() == employer, "only the employer may set payroll");
+
+  const p = disclose(period);
+
+  // Rejected rather than silently accepted: a zero or absurd period would be a
+  // typo, and a typo here writes a month of payroll where nobody will look for
+  // it. The bound is deliberately loose — this checks shape, not calendar.
+  assert(p >= 200001, "period must be YYYYMM, e.g. 202603");
+  assert(p <= 299912, "period must be YYYYMM, e.g. 202603");
 
   // Compact has no mutable locals, so the sum is written out. It is computed
   // inside the circuit: only the result crosses into public state.
@@ -88,17 +126,37 @@ export circuit setPayroll(
     salaries[0] + salaries[1] + salaries[2] + salaries[3] + salaries[4] +
     salaries[5] + salaries[6] + salaries[7] + salaries[8] + salaries[9];
 
+  // A period may be re-submitted — a correction to a month already filed is a
+  // real thing that happens. It overwrites that period alone and leaves every
+  // other month standing, which is the whole point of keying by period.
+  if (!commitmentsFor.member(p)) {
+    commitmentsFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
+  }
+  if (!sealedFor.member(p)) {
+    sealedFor.insert(p, default<Map<Uint<8>, Bytes<68>>>);
+  }
+
   for (const i of 0..10) {
-    commitments.insert(
+    commitmentsFor.lookup(p).insert(
       i as Uint<8>,
       disclose(persistentHash<SalaryCommitment>(
         SalaryCommitment { amount: salaries[i], nonce: nonces[i] }
       ))
     );
+    // Written in the same circuit as the commitment it opens, so a period can
+    // never end up on chain with one and not the other.
+    sealedFor.lookup(p).insert(i as Uint<8>, disclose(sealedOpenings[i]));
   }
 
-  totalPayroll = disclose(total);
-  employeeCount = 10;
+  periods.insert(p);
+  totalPayrollFor.insert(p, disclose(total));
+  employeeCountFor.insert(p, 10);
+
+  // Only ever moves forward, so a correction filed for an old month does not
+  // make that month look like the current one.
+  if (p > latestPeriod) {
+    latestPeriod = p;
+  }
 }
 
 // Pure: touches no ledger state, so the compiler exposes it in `pureCircuits`

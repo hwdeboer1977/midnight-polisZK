@@ -83,22 +83,82 @@ unauthorised call costs nothing and never reaches the chain.
 ### Privacy
 
 Salaries are circuit inputs, so only the proof leaves the machine. The chain
-stores the headcount, the total, and one commitment per employee.
+stores, **per period**, the headcount, the total, and one commitment per employee.
 
 The whole roster is set in a **single** `setPayroll` call, and that is a privacy
 requirement rather than a convenience. If salaries were written one at a time,
-each transaction would move the public `totalPayroll` by exactly that person's
+each transaction would move that period's public total by exactly that person's
 salary, and anyone watching blocks could read every amount off the deltas.
 Batching means public state only ever moves by the aggregate.
+
+### Payroll is recorded per period
+
+The ledger is keyed by period — `YYYYMM` as a number, so `202603` — rather than
+holding a single current state:
+
+```
+periods           Set<Uint<32>>
+latestPeriod      Uint<32>
+employeeCountFor  Map<Uint<32>, Uint<8>>
+totalPayrollFor   Map<Uint<32>, Uint<64>>
+commitmentsFor    Map<Uint<32>, Map<Uint<8>, Bytes<32>>>
+sealedFor         Map<Uint<32>, Map<Uint<8>, Bytes<68>>>
+```
+
+A commitment is only worth having if it can still be opened when someone
+disputes it, and disputes are about past months. Keying by period is what makes
+"prove what Anna was paid in March" answerable in June, instead of March being
+overwritten the moment April is filed.
+
+`YYYYMM` rather than a plain counter because a counter tells a reader that a run
+happened without telling them which month it was for, and the mapping back would
+live off-chain where it can be lost or disagreed with.
+
+A period may be **re-submitted** — a correction to a month already filed is a
+real thing that happens. It replaces that period alone and leaves every other
+month standing, which is the whole point of keying by period. `latestPeriod`
+only ever moves forward, so a correction filed for an old month does not make
+that month look like the current one.
 
 Each employee gets a commitment `persistentHash(salary, nonce)` stored on chain.
 It reveals nothing on its own, but lets the employer later prove to an employee
 what they were paid. The nonce is what stops the commitment being brute-forced —
 without it, hashing every plausible salary would recover the amount.
 
-Salaries and nonces are written to `payroll-secrets.<INSTANCE>.json`
-(gitignored, mode 0600). **Lose that file and no commitment can ever be
-reopened** — it is the private half of the contract's state.
+### Losing the openings
+
+A commitment is only useful if it can still be opened, and the opening — the
+`(salary, nonce)` pair — is exactly what a hash does not contain. Two mechanisms
+keep it recoverable, because either one alone leaves a gap:
+
+**Nonces are derived, not random.** `nonce(period, i)` is a hash over the
+employer's wallet secret, the contract address, the period, and the index, so
+every nonce ever used is recomputable from a recovery phrase that is already
+backed up. Binding to the contract address matters: without it, one employer
+running two instances would produce identical commitments for identical
+salaries, leaking equality between contracts meant to know nothing about each
+other.
+
+**Openings are sealed on chain.** `sealedFor[period][i]` holds the salary and
+nonce encrypted to the employer's key — AES-256-GCM, 68 bytes: a 12-byte IV, 40
+bytes of ciphertext, a 16-byte tag. Derivation alone recovers the nonce but not
+the amount, so an employer who lost the roster spreadsheet too would still be
+stuck; sealing puts the amount on chain as well.
+
+The IV is stored rather than derived from `(period, i)` because a period may be
+legitimately re-filed — corrections are the reason the ledger is keyed by period
+at all — and a derived IV would then repeat with the same key on different
+plaintext. Under GCM that leaks the XOR of the two salaries and voids
+authentication.
+
+The contract cannot check that a blob decrypts to its matching commitment;
+doing so would mean decrypting in-circuit. The only party a bad blob can harm is
+the employer who wrote it, since they alone hold the key.
+
+`payroll-secrets.<INSTANCE>.json` (gitignored, mode 0600) is therefore a
+**cache**, not the source of truth. Menu option 6 rebuilds it from the chain
+using nothing but the wallet recovery phrase, and verifies every recovered
+opening against its on-chain commitment before writing it.
 
 `commitmentFor(amount, nonce)` is a **pure** circuit, so the CLI evaluates it
 locally with no transaction to check a local record against the chain, using the
@@ -187,6 +247,18 @@ wallet will ask you to approve — nothing happens until you do.
 | `/payroll`  | live payroll state per instance, roster upload                     |
 | `/peur`     | live token state, your pEUR balance, token type                    |
 
+Each payroll instance renders inside an **error boundary**. Ledger state decodes
+lazily — `contract.ledger(...)` returns an object whose fields decode when they
+are read — so a contract deployed from an older `payroll.compact` throws during
+render, well past the `try/catch` that wrapped the fetch. Without a boundary that
+throw unmounts the whole app and the page goes blank with no message, which is
+indistinguishable from a broken build. The boundary is per instance, so one
+stale contract cannot hide the others.
+
+If a card reads *"could not be displayed"* with a `reading 'keys'` error, the
+contract predates the current ledger shape: redeploy it, and re-run
+`npm run frontend:config` so the browser's copy of the compiled module matches.
+
 The landing page renders without the app shell — no network picker, no contract
 navigation — because the first question a payroll product has to answer is
 "what does this publish about my staff?", not "which network?".
@@ -257,6 +329,28 @@ encryption public key (lets shielded pEUR reach them), and the unshielded addres
 The operator then runs `npm run onboard` with the coin public key. An employer
 also needs **tDUST** before they can submit anything: the contract is theirs, but
 transactions still cost fees.
+
+#### The coin public key is not the unshielded address
+
+`assignEmployer` takes a `ZswapCoinPublicKey` — 64 hex characters. A Midnight
+wallet exposes two Bech32m addresses and only one of them contains that key:
+
+| Address                    | Decodes to                                          |
+| -------------------------- | --------------------------------------------------- |
+| `mn_shield-addr_preview1…` | 64 bytes: **coin public key** ‖ encryption public key |
+| `mn_addr_preview1…`        | 32 bytes: the unshielded (fee-token) key             |
+
+The coin public key is the **first 32 bytes of the shielded address**. The
+unshielded address is a different key entirely — it is not a truncation, not an
+encoding variant, and no conversion exists between them.
+
+This matters more than a format note suggests, because `assignEmployer` is
+one-shot and unconditional. Assigning a value no wallet can produce as
+`ownPublicKey()` permanently strands the instance: the assert can never pass
+again, the platform cannot reassign, and the only remedy is a redeploy. Verify
+before assigning — decode the employer's shielded address and confirm its first
+32 bytes match the key they sent you, or read the key straight off their
+`/register` page or CLI header.
 
 Wallet state lives in a `WalletProvider` context (`src/wallet/WalletContext.tsx`):
 detection, connect, the connected API, the account snapshot, and refresh. Switching
@@ -359,9 +453,34 @@ the `additionalCoinEncPublicKeyMappings` that make the coin findable.
 npm run roster:template     # writes roster-template.xlsx
 ```
 
-Columns: **Full name · Address · Monthly gross salary**, one row per employee, ten
-rows. Amounts accept `3500`, `3500.00`, `3,500.00` or `€3.500,00` — a payroll file
-that silently loses cents is worse than one that refuses to load.
+The workbook carries the **period** above the table, then one row per employee:
+
+```
+1  Payroll period   Year   2026
+2                   Month  8
+3
+4  Full name | Address | Monthly gross salary
+5+ ten employee rows
+```
+
+The period lives in the file rather than being typed at submit time because it
+is a property of the file: the same spreadsheet re-opened months later still
+means the month it was prepared for. Typing it separately is how March's
+salaries end up filed under June. Excel-side validation rejects a year outside
+2000–2999 and a month outside 1–12, so a typo is caught before ten proofs have
+been generated for it.
+
+Both cells are located by **label**, and the employee table by its `Full name`
+header, rather than by fixed row numbers — inserting a title row above them
+shifts nothing. A roster saved from the older single-table template still loads
+its ten employees; it reports the missing period as a problem rather than
+guessing a month.
+
+Amounts accept `3500`, `3500.00`, `3,500.00` or `€3.500,00` — a payroll file
+that silently loses cents is worse than one that refuses to load. Numeric and
+text cells land on the same minor unit; they did not always, and a salary that
+parsed differently depending on how Excel happened to store the cell was off by
+a factor of 10,000.
 
 Upload it in the browser (`/payroll`) to check it: parsing happens **in the page**,
 so the file is never uploaded anywhere, and the preview shows exactly which figure
@@ -371,12 +490,66 @@ becomes public. Then submit from the CLI, which needs the file path:
 INSTANCE=acme npm run payroll    # option 3: Set payroll from roster.xlsx
 ```
 
+The menu:
+
+| # | Does                                                            |
+| - | ---------------------------------------------------------------- |
+| 1 | show status — every period filed, newest first                    |
+| 2 | assign employer (platform, once)                                  |
+| 3 | set payroll from a roster .xlsx                                   |
+| 4 | verify a commitment against the chain                             |
+| 5 | transfer employer rights (employer)                               |
+| 6 | **recover openings from chain** — rebuild the secrets file        |
+| 7 | exit                                                              |
+
 Only the salaries enter the circuit, and only the total and ten commitments are
 published. **Names and addresses never reach a transaction** — they are read,
 shown for confirmation, and dropped.
 
-A verified run: ten employees totalling 41,771.50, of which the chain learned
-`employeeCount 10`, `totalPayroll 4177150`, and ten opaque commitments.
+A verified run: ten employees totalling 41,771.50, of which the chain learned —
+for that period alone — `employeeCountFor 10`, the total, ten opaque
+commitments, and ten sealed openings.
+
+### Recompiling does not reach a running process
+
+`npm run compile` rewrites `contracts/managed/`, but **nothing already running
+picks that up**. A compiled contract reaches a process exactly once, and there
+are two independent copies to think about:
+
+| Holder                    | Refreshed by                        |
+| ------------------------- | ------------------------------------ |
+| `frontend/src/generated/` | `npm run frontend:config`            |
+| a long-running Node process | restarting it                      |
+
+The second is the one that bites hardest, because it fails silently and on
+chain. `dist/demo-server.js` imports the contract module at startup and Node
+caches ES module imports for the life of the process, so a demo server started
+before a recompile keeps serving the **old** `Contract` class — old initial
+ledger state, old verifier keys. It will happily deploy that old contract hours
+later, and the deployment looks entirely successful. The mismatch only surfaces
+when something tries to read the new fields off it:
+
+```
+CompactError: attempted to take size, only map, array, and bmt are supported
+```
+
+That is a `Uint` sitting where a `Set` was expected — the signature of state
+written by a contract from a different version of the source.
+
+**After every `npm run compile`, restart anything long-running**: `demo:server`,
+and the Vite dev server if `frontend:config` re-copied the module underneath it.
+Deployments made in between have to be thrown away; there is no migrating them.
+
+### The frontend's contract module is a copy
+
+`frontend/src/generated/` holds a **copy** of the compiled contract module,
+placed there by `npm run frontend:config`. It does not update when
+`npm run compile` runs. A recompiled contract plus a stale copy means the browser
+decodes ledger state with the old shape, which surfaces as a blank page rather
+than an error.
+
+`npm run frontend` regenerates it first, so a normal start stays in sync. Running
+`npm --prefix frontend run dev` directly skips that step.
 
 ## Deployments and instances
 
@@ -534,7 +707,7 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 | `npm run demo:server`    | ⚠️ demo-only self-service onboarding on :8787      |
 | `npm run roster:template`| write roster-template.xlsx                        |
 | `npm run deploy:payroll` | deploy a payroll instance (`INSTANCE=x`)          |
-| `npm run payroll`        | assign employer, set payroll, verify a commitment |
+| `npm run payroll`        | assign employer, set payroll, verify, recover openings |
 | `npm run deploy:peur`    | deploy pEUR, then mint the initial supply         |
 | `npm run peur`           | pEUR status, mint, send to an employer            |
 | `npm run check-balance`  | print address, sync wallet, show tNIGHT/tDUST     |
@@ -574,7 +747,7 @@ midnight-polisZK/
 ├── .env                           # config (keep private!)
 ├── deployment.json                # addresses, keyed <network>/<contract>[:instance]
 ├── .wallet-state/                 # cached sync state (gitignored, 0600)
-└── payroll-secrets.*.json         # salaries + nonces per instance (gitignored, 0600)
+└── payroll-secrets.*.json         # local cache of openings, rebuildable from chain (gitignored, 0600)
 ```
 
 ## Not built yet
