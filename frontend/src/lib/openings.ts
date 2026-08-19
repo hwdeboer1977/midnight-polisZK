@@ -216,16 +216,22 @@ export async function deriveEmployeeSeed(
 }
 
 /**
- * The nonce of the coin that funds one slot.
+ * The nonce of the coin that funds one slot, for one filing round.
  *
  * Derived so the coin can be rebuilt at payday. Distinct from the salary nonce
  * — that one opens a commitment, this one identifies a coin — hence a separate
- * domain tag, so the two can never collide.
+ * domain tag.
+ *
+ * The round matters: re-filing a period and funding it again would otherwise
+ * rebuild the identical coin, and Zswap rejects a duplicate commitment. The
+ * contract counts filings per period, so the round is read from chain and the
+ * nonce stays reconstructible.
  */
 export async function sealedCoinNonce(
   employerKey: Uint8Array,
   period: number,
+  round: number,
   index: number
 ): Promise<Uint8Array> {
-  return sha256(DOMAIN.coin, employerKey, `${period}:${index}`);
+  return sha256(DOMAIN.coin, employerKey, `${period}:${round}:${index}`);
 }

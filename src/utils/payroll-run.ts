@@ -157,7 +157,34 @@ export async function fundAndPay(
     // happens in index order, so the nth contract leaf funds the nth slot.
     // Already-paid slots therefore consume their leaf without paying again.
     const after = await readLedger(conn);
-    const allLeaves = await contractLeaves(conn);
+    const everyLeaf = await contractLeaves(conn);
+
+    // Which coin funds which slot, recorded by the contract when it received
+    // them. `filter(address)` lists every coin ever received — spent ones
+    // included, with no unspent view — so the n-th coin received is the n-th
+    // leaf, and the contract's ordinal maps a slot straight to it.
+    //
+    // This replaces counting positions from zero, which paid an earlier
+    // period's already-spent coins on any contract with history.
+    const ordinals = after.coinOrdinalFor.member(p)
+      ? after.coinOrdinalFor.lookup(p)
+      : null;
+    if (!ordinals) throw new Error(`No funded coins recorded for period ${period}`);
+
+    const allLeaves = slots.map((_, i) => {
+      if (!ordinals.member(BigInt(i))) {
+        throw new Error(`No coin recorded for employee ${i + 1}`);
+      }
+      const ordinal = Number(ordinals.lookup(BigInt(i)));
+      const leaf = everyLeaf[ordinal];
+      if (leaf === undefined) {
+        throw new Error(
+          `The contract records coin #${ordinal} for employee ${i + 1}, but only ` +
+            `${everyLeaf.length} are visible — the indexer may be behind`
+        );
+      }
+      return leaf;
+    });
 
     let paid = 0;
     let alreadyPaid = 0;

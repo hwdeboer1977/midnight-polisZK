@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "frontend:config": "npm --prefix .. run frontend:config",
+    "config": "npm --prefix .. run frontend:config"
   },
   "devDependencies": {
     "@midnight-ntwrk/dapp-connector-api": "4.0.1",

@@ -224,6 +224,15 @@ export function Payroll() {
           target={{
             name: asEmployer[0]!.name,
             contractAddress: asEmployer[0]!.deployment.contractAddress,
+            // The local service signs with the platform wallet, so it can only
+            // act on an instance whose employer IS the platform. Read off the
+            // contract rather than assumed: the ledger holds both keys.
+            operatorIsEmployer: (() => {
+              const s = asEmployer[0]!.state;
+              return s
+                ? hex(s.platform.bytes) === hex(s.employer.bytes)
+                : false;
+            })(),
           }}
           // A filed period changes the ledger this page is showing, so re-read
           // rather than leaving the tiles a month behind until someone reloads.

@@ -4,7 +4,7 @@ import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-p
 import { fetchContractState, INDEXERS, INDEXER_WS } from "./chain";
 import { deriveEmployeeSeed, deriveEmployerKey, deriveNonce, sealedCoinNonce } from "./openings";
 import { submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
-import { connectContract } from "./submitPayroll";
+import { connectContract, type ProvingMode } from "./submitPayroll";
 
 /**
  * Funding and paying a filed period.
@@ -86,10 +86,12 @@ export async function fundPeriod(options: {
   employerKey: Uint8Array;
   tokenId: string;
   period: number;
+  /** Filing round, from `fileRoundFor` — keeps a re-filed period's coins distinct. */
+  round: number;
   slots: SlotState[];
   onProgress?: StepProgress;
 }): Promise<number> {
-  const { deployed, employerKey, tokenId, period, slots } = options;
+  const { deployed, employerKey, tokenId, period, round, slots } = options;
   const onProgress = options.onProgress ?? (() => {});
 
   const todo = slots.filter((s) => !s.funded);
@@ -100,7 +102,7 @@ export async function fundPeriod(options: {
       `Funding employee ${slot.index + 1} of ${slots.length} — proving, a few minutes…`
     );
     const salaryNonce = await deriveNonce(employerKey, period, slot.index);
-    const coinNonce = await sealedCoinNonce(employerKey, period, slot.index);
+    const coinNonce = await sealedCoinNonce(employerKey, period, round, slot.index);
 
     await deployed.callTx.fundEmployee(
       BigInt(period),
@@ -125,6 +127,36 @@ export async function fundPeriod(options: {
  * nothing about its own coins — deliberately, since storing a coin publishes
  * its value — so this is the only place the information exists.
  */
+/**
+ * The leaves belonging to one period, from the contract's full leaf list.
+ *
+ * `filter(address)` lists every coin the contract ever RECEIVED, spent ones
+ * included — there is no unspent view and `nullifiers` reads empty. So the list
+ * is a complete, creation-ordered history, and indexing it from zero pays the
+ * first period's coins no matter which period is being paid. That produced
+ * `Public transcript input mismatch` once a second period existed: the proof
+ * was built over coins that had already been spent.
+ *
+ * Each funded period contributes exactly `rosterSize` leaves, in funding order,
+ * so a period's coins start at `rosterSize × (periods funded before it)`.
+ */
+export function leavesForPeriod(
+  allLeaves: number[],
+  fundedPeriodsBefore: number,
+  rosterSize: number
+): number[] {
+  const offset = fundedPeriodsBefore * rosterSize;
+  const slice = allLeaves.slice(offset, offset + rosterSize);
+  if (slice.length < rosterSize) {
+    throw new Error(
+      `Expected ${rosterSize} coins for this period at offset ${offset}, found ` +
+        `${slice.length} of ${allLeaves.length}. The indexer may not have caught up ` +
+        "with funding yet — wait a moment and try again."
+    );
+  }
+  return slice;
+}
+
 export function contractLeaves(zswapStateText: string): number[] {
   return [...zswapStateText.matchAll(/(\d+): \([0-9a-f]{64}, Some\(ContractAddress/g)]
     .map((m) => Number(m[1]))
@@ -148,6 +180,7 @@ export async function payPeriod(options: {
   employerKey: Uint8Array;
   tokenId: string;
   period: number;
+  round: number;
   slots: SlotState[];
   leaves: number[];
   onProgress?: StepProgress;
@@ -159,6 +192,7 @@ export async function payPeriod(options: {
     employerKey,
     tokenId,
     period,
+    round,
     slots,
     leaves,
   } = options;
@@ -191,7 +225,7 @@ export async function payPeriod(options: {
 
     salaryNonces.push(await deriveNonce(employerKey, period, index));
     coins.push({
-      nonce: await sealedCoinNonce(employerKey, period, index),
+      nonce: await sealedCoinNonce(employerKey, period, round, index),
       color,
       value: slot.salaryMinor,
       mt_index: BigInt(leaves[index]!),
@@ -266,6 +300,10 @@ export async function fetchContractLeaves(
 export interface RunResult {
   funded: number;
   paid: number;
+  /** Wall-clock seconds, so the two proving modes can be compared. */
+  seconds?: number;
+  /** Which prover actually ran, for the same reason. */
+  proving?: ProvingMode;
 }
 
 /**
@@ -283,6 +321,7 @@ export async function fundAndPayPeriod(options: {
   tokenId: string;
   period: number;
   salaries: bigint[];
+  provingMode?: ProvingMode;
   onProgress?: StepProgress;
 }): Promise<RunResult> {
   const {
@@ -293,8 +332,11 @@ export async function fundAndPayPeriod(options: {
     tokenId,
     period,
     salaries,
+    provingMode = "local",
   } = options;
   const onProgress = options.onProgress ?? (() => {});
+
+  const startedAt = Date.now();
 
   onProgress("Deriving your key (PBKDF2, deliberately slow)…");
   const employerKey = await deriveEmployerKey(passphrase, contractAddress);
@@ -308,6 +350,7 @@ export async function fundAndPayPeriod(options: {
     api,
     networkId,
     contractAddress,
+    provingMode,
     onProgress,
   });
 
@@ -316,7 +359,14 @@ export async function fundAndPayPeriod(options: {
   );
   const slots = slotStates(ledger, period, salaries);
 
+  // Which filing round this is. Re-filing a period bumps it, so its coins get
+  // fresh nonces instead of colliding with the previous round's.
+  const round = ledger.fileRoundFor?.member(BigInt(period))
+    ? Number(ledger.fileRoundFor.lookup(BigInt(period)))
+    : 0;
+
   const funded = await fundPeriod({
+    round,
     api,
     deployed,
     employerKey,
@@ -329,10 +379,41 @@ export async function fundAndPayPeriod(options: {
   // Re-read after funding: the coins that were just created are the ones the
   // payment step has to spend, and they did not exist a moment ago.
   onProgress("Waiting for the new coins to be indexed…");
-  const leaves = await fetchContractLeaves(networkId, contractAddress);
+  const allLeaves = await fetchContractLeaves(networkId, contractAddress);
+
+  // Which coin funds which slot, straight from the contract. It records the
+  // ordinal when the coin is received, so there is nothing to infer: the n-th
+  // coin the contract ever received is its n-th leaf.
+  //
+  // This replaces counting positions from zero, which paid earlier periods'
+  // already-spent coins once a contract had any history.
+  const after = (contractModule as any).ledger(
+    await currentLedgerState(networkId, contractAddress)
+  );
+  const ordinals = after.coinOrdinalFor.member(BigInt(period))
+    ? after.coinOrdinalFor.lookup(BigInt(period))
+    : null;
+  if (!ordinals) throw new Error(`No funded coins recorded for period ${period}`);
+
+  const leaves = slots.map((_, index) => {
+    if (!ordinals.member(BigInt(index))) {
+      throw new Error(`No coin recorded for employee ${index + 1}`);
+    }
+    const ordinal = Number(ordinals.lookup(BigInt(index)));
+    const leaf = allLeaves[ordinal];
+    if (leaf === undefined) {
+      throw new Error(
+        `The contract records coin #${ordinal} for employee ${index + 1}, but only ` +
+          `${allLeaves.length} coins are visible — the indexer may be behind.`
+      );
+    }
+    return leaf;
+  });
+
   const fresh = slots.map((s) => ({ ...s, funded: true }));
 
   const paid = await payPeriod({
+    round,
     providers: contractProviders,
     compiledContract,
     contractAddress,
@@ -344,7 +425,12 @@ export async function fundAndPayPeriod(options: {
     onProgress,
   });
 
-  return { funded, paid };
+  return {
+    funded,
+    paid,
+    seconds: Math.round((Date.now() - startedAt) / 1000),
+    proving: provingMode,
+  };
 }
 
 /**
@@ -462,17 +548,28 @@ export async function periodStatus(
  */
 export async function fundAndPayViaService(options: {
   instance: string;
+  networkId: string;
   contractAddress: string;
   period: number;
   salaries: bigint[];
   passphrase: string;
   onProgress?: StepProgress;
 }): Promise<RunResult> {
-  const { instance, contractAddress, period, salaries, passphrase } = options;
+  const { instance, networkId, contractAddress, period, salaries, passphrase } = options;
   const onProgress = options.onProgress ?? (() => {});
 
   onProgress("Deriving this period's material (PBKDF2, deliberately slow)…");
   const employerKey = await deriveEmployerKey(passphrase, contractAddress);
+
+  // The filing round is part of the coin nonce, so it has to be read before the
+  // material is derived — a re-filed period funds different coins.
+  const { ledger } = await import("../generated/payroll/index.js");
+  const state = (ledger as any)(
+    await currentLedgerState(networkId, contractAddress)
+  );
+  const round = state.fileRoundFor?.member(BigInt(period))
+    ? Number(state.fileRoundFor.lookup(BigInt(period)))
+    : 0;
 
   // Everything the service needs, and nothing more. The passphrase never leaves
   // this function: what goes over the wire is one period's nonces and the
@@ -486,7 +583,7 @@ export async function fundAndPayViaService(options: {
     slots.push({
       salary: salary.toString(),
       salaryNonce: toHex(await deriveNonce(employerKey, period, index)),
-      coinNonce: toHex(await sealedCoinNonce(employerKey, period, index)),
+      coinNonce: toHex(await sealedCoinNonce(employerKey, period, round, index)),
       payee: String(employee.coinPublicKey).replace(/^0x/, "").toLowerCase(),
       // Public half only. Without it the coin is created and the payee's wallet
       // can never find it — paid, and unreachable.

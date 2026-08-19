@@ -7,7 +7,7 @@ import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
 import { httpClientProofProvider } from "@midnight-ntwrk/midnight-js-http-client-proof-provider";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
-import { ZKConfigProvider } from "@midnight-ntwrk/midnight-js-types";
+import { createProofProvider, ZKConfigProvider } from "@midnight-ntwrk/midnight-js-types";
 import { pipe } from "effect";
 import { fetchContractState, INDEXERS, INDEXER_WS, PROOF_SERVERS } from "./chain";
 import {
@@ -253,11 +253,39 @@ function loggingProofProvider(inner: any): any {
  * indexer, and wallet adapters, and having one copy is what stops them drifting
  * into three subtly different provider stacks.
  */
+export type ProvingMode = "local" | "wallet";
+
+/**
+ * Whether this wallet can generate proofs itself.
+ *
+ * Coverage varies and the connector does not guarantee it: 1AM implements
+ * `getProvingProvider` and proves in-tab with a WASM prover, Lace does not and
+ * requires a local proof server. Feature-detect rather than assume, or a Lace
+ * user gets a crash where they should get the local path.
+ */
+export function walletCanProve(api: ConnectedAPI): boolean {
+  return typeof (api as any)?.getProvingProvider === "function";
+}
+
 export async function connectContract(options: {
   api: ConnectedAPI;
   networkId: string;
   contractAddress: string;
   contractName?: string;
+  /**
+   * Where proofs are generated.
+   *
+   * `local` posts to the proof server this machine runs. `wallet` hands the job
+   * to the wallet via `getProvingProvider` — the direction the SDK is moving,
+   * since `Configuration.proverServerUri` is deprecated in its favour.
+   *
+   * ⚠️ Proving consumes the witness, and the witness here is the salaries. With
+   * `local` they reach a server on this machine and nowhere else. With `wallet`
+   * they reach the wallet, and where the wallet proves is its choice, not ours
+   * — possibly in-process, possibly a remote service. That is a privacy
+   * decision, not a performance one, and it cannot be made from this side.
+   */
+  provingMode?: ProvingMode;
   onProgress?: SubmitProgress;
 }): Promise<{
   deployed: any;
@@ -265,7 +293,13 @@ export async function connectContract(options: {
   providers: any;
   compiledContract: any;
 }> {
-  const { api, networkId, contractAddress, contractName = "payroll" } = options;
+  const {
+    api,
+    networkId,
+    contractAddress,
+    contractName = "payroll",
+    provingMode = "local",
+  } = options;
   const onProgress = options.onProgress ?? (() => {});
 
   // Endpoints and network id come from the wallet, so the transaction is built
@@ -333,7 +367,14 @@ export async function connectContract(options: {
     publicDataProvider: indexerPublicDataProvider(indexer, indexerWs),
     zkConfigProvider,
     proofProvider: loggingProofProvider(
-      httpClientProofProvider(proofServer, zkConfigProvider as any)
+      provingMode === "wallet" && walletCanProve(api)
+        ? // The wallet proves. `getProvingProvider` returns the ledger-level
+          // interface ({check, prove}); `createProofProvider` adapts it to the
+          // {proveTx} shape midnight-js expects.
+          createProofProvider(
+            await api.getProvingProvider(zkConfigProvider.asKeyMaterialProvider())
+          )
+        : httpClientProofProvider(proofServer, zkConfigProvider as any)
     ),
     walletProvider,
     midnightProvider,
@@ -375,6 +416,7 @@ export async function submitPayroll(options: {
   networkId: string;
   contractAddress: string;
   contractName?: string;
+  provingMode?: ProvingMode;
   passphrase: string;
   period: number;
   salaries: bigint[];
@@ -385,6 +427,7 @@ export async function submitPayroll(options: {
     networkId,
     contractAddress,
     contractName = "payroll",
+    provingMode = "local",
     passphrase,
     period,
     salaries,
@@ -415,8 +458,17 @@ export async function submitPayroll(options: {
     sealedOpenings.push(await sealOpening(employerKey, salaries[index]!, nonce));
   }
 
-  onProgress("Loading the compiled contract…");
-  const contractModule = await import("../generated/payroll/index.js");
+  // One provider stack, built in one place. This used to be a second copy of
+  // connectContract's body, and it drifted: a fix applied to one was missing
+  // from the other more than once.
+  const { deployed, contractModule } = await connectContract({
+    api,
+    networkId,
+    contractAddress,
+    contractName,
+    provingMode,
+    onProgress,
+  });
 
   // Who each slot is payable to, as the hash the circuit will check against.
   // Computed with the contract's own pure circuit rather than reimplementing
@@ -431,80 +483,6 @@ export async function submitPayroll(options: {
       })
     );
   }
-  const compiledContract = pipe(
-    CompiledContract.make(contractName, (contractModule as any).Contract),
-    CompiledContract.withVacantWitnesses
-  );
-
-  const zkConfigProvider = new FetchZkConfigProvider(
-    zkBaseUrl(contractName),
-    fetch.bind(window)
-  );
-
-  const shielded = await api.getShieldedAddresses();
-  const coinPublicKey = shielded.shieldedCoinPublicKey;
-  const encryptionPublicKey = shielded.shieldedEncryptionPublicKey;
-
-  /**
-   * The wallet balances and submits; it is the only party holding the keys that
-   * can. midnight-js works in ledger objects while the connector speaks
-   * serialized hex, so this adapter is purely translation.
-   */
-  const walletProvider = {
-    balanceTx: async (tx: any) => {
-      onProgress("Waiting for your wallet to balance and sign…");
-      const { tx: balanced } = await api.balanceUnsealedTransaction(
-        toHex(tx.serialize())
-      );
-      return Transaction.deserialize(
-        "signature",
-        "proof",
-        "binding",
-        fromHex(balanced)
-      ) as any;
-    },
-    getCoinPublicKey: () => coinPublicKey as any,
-    getEncryptionPublicKey: () => encryptionPublicKey as any,
-  };
-
-  const midnightProvider = {
-    submitTx: async (tx: any) => {
-      onProgress("Submitting to the network…");
-      await api.submitTransaction(toHex(tx.serialize()));
-
-      // What is returned here is not cosmetic: midnight-js immediately calls
-      // `watchForTxData(txId)` with it and waits for that id to be indexed. An
-      // id the indexer will never see does not fail — it hangs forever, while
-      // the transaction itself confirms perfectly well on chain. That is a
-      // uniquely unhelpful failure, so take the identifier the ledger reports
-      // rather than deriving one.
-      const identifiers: string[] = tx.identifiers?.() ?? [];
-      if (identifiers.length === 0) {
-        throw new Error(
-          "The transaction was submitted but reported no identifier, so its " +
-            "confirmation cannot be followed. Check the contract state directly."
-        );
-      }
-      return identifiers[0] as any;
-    },
-  };
-
-  const providers: any = {
-    privateStateProvider: emptyPrivateStateProvider(),
-    publicDataProvider: indexerPublicDataProvider(indexer, indexerWs),
-    zkConfigProvider,
-    proofProvider: loggingProofProvider(
-      httpClientProofProvider(proofServer, zkConfigProvider as any)
-    ),
-    walletProvider,
-    midnightProvider,
-  };
-
-  onProgress("Connecting to the contract…");
-  const deployed: any = await findDeployedContract(providers, {
-    compiledContract: compiledContract as any,
-    contractAddress,
-  });
 
   onProgress("Proving the circuit — this takes a few minutes…");
   // BigInt, not the plain number: `period` is a Uint<32> in the circuit and the

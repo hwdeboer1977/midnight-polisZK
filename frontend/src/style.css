@@ -483,3 +483,7 @@ button.primary.secondary-action {
   font-size: 13px;
   color: var(--text);
 }
+
+/* Nested proving option. Indented so it reads as a qualifier on the checkbox
+   above it rather than an independent choice. */
+.prove-here.nested { margin-left: 22px; margin-top: 8px; }

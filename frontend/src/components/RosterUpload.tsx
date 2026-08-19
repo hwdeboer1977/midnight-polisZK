@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ParsedRoster } from "../generated/roster";
-import { submitPayroll, type SubmitResult } from "../lib/submitPayroll";
+import { submitPayroll, walletCanProve, type SubmitResult } from "../lib/submitPayroll";
 import {
   fundAndPayPeriod,
   fundAndPayViaService,
@@ -41,6 +41,15 @@ export interface SubmitTarget {
   /** Display name of the instance the payroll will be filed against. */
   name: string;
   contractAddress: string;
+  /**
+   * Whether the platform wallet is also this instance's employer.
+   *
+   * False means the local service cannot fund or pay here: it signs with the
+   * platform key, and `fundEmployee`/`payPeriod` assert `ownPublicKey() ==
+   * employer`. Letting someone press the button anyway spends minutes of
+   * proving to arrive at `failed assert: only the employer may pay`.
+   */
+  operatorIsEmployer: boolean;
 }
 
 export function RosterUpload({
@@ -69,6 +78,16 @@ export function RosterUpload({
   const [allowRefile, setAllowRefile] = useState(false);
   /** Opt in to proving in the page instead of handing the run to the service. */
   const [proveHere, setProveHere] = useState(false);
+  // The service route is unavailable unless the operator is the employer, so
+  // the choice collapses to one option and the checkbox stops being a choice.
+  const serviceUsable = target?.operatorIsEmployer ?? false;
+  // Not every wallet can prove: 1AM can (in-tab WASM), Lace cannot and needs
+  // the local proof server. Offering a toggle that cannot work is worse than
+  // not offering it.
+  const canDelegate = api ? walletCanProve(api) : false;
+  const useBrowser = proveHere || !serviceUsable;
+  /** Let the wallet generate the proofs instead of the local proof server. */
+  const [delegateProving, setDelegateProving] = useState(false);
   const [roster, setRoster] = useState<ParsedRoster | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -169,10 +188,10 @@ export function RosterUpload({
     setPayResult(null);
     setPayStep("Starting…");
     try {
-      if (proveHere) {
+      if (useBrowser) {
         // Everything stays in the page: salaries, passphrase and proving. This
-        // is the shape the product wants; it is opt-in because coin-carrying
-        // circuits have historically been rejected by the proof server here.
+        // is the shape the product wants, and it works: coin-carrying circuits
+        // prove here now.
         const deployments = await loadDeployments();
         const peur = Object.values(deployments).find(
           (d) => d.contractName === "peur" && d.networkId === networkId
@@ -191,6 +210,7 @@ export function RosterUpload({
             tokenId: peur.tokenId,
             period: roster.period,
             salaries: roster.rows.map((row) => row.salaryMinor),
+            provingMode: delegateProving ? "wallet" : "local",
             onProgress: setPayStep,
           })
         );
@@ -198,6 +218,7 @@ export function RosterUpload({
         setPayResult(
           await fundAndPayViaService({
             instance: target.name.replace(/^payroll:/, ""),
+            networkId,
             contractAddress: target.contractAddress,
             period: roster.period,
             salaries: roster.rows.map((row) => row.salaryMinor),
@@ -225,6 +246,7 @@ export function RosterUpload({
         api,
         networkId,
         contractAddress: target.contractAddress,
+        provingMode: delegateProving ? "wallet" : "local",
         passphrase,
         period: roster.period,
         salaries: roster.rows.map((row) => row.salaryMinor),
@@ -405,6 +427,32 @@ export function RosterUpload({
                     </div>
                   ) : null}
 
+                  {/* Applies to filing and to paying alike, so it sits above
+                      both buttons rather than under one of them. */}
+                  <label className="prove-here">
+                    <input
+                      type="checkbox"
+                      checked={delegateProving && canDelegate}
+                      disabled={submitting || payStep !== null || !canDelegate}
+                      onChange={(e) => setDelegateProving(e.target.checked)}
+                    />{" "}
+                    Let the wallet generate the proofs
+                    <span className="muted">
+                      {" "}
+                      — instead of the proof server on this machine. Applies to filing,
+                      and to funding and paying when those run in this browser.{" "}
+                      <strong>
+                        Proving consumes the salaries, so this hands them to the wallet,
+                        and where it proves is its choice — in-process, or a remote
+                        service.
+                      </strong>{" "}
+                      Unticked they reach <code>127.0.0.1:6300</code> and nowhere else.
+                      {canDelegate
+                        ? " This wallet proves in the tab, so the salaries stay on this machine either way — the difference is speed, not exposure."
+                        : " This wallet does not implement getProvingProvider, so the local proof server is the only option."}
+                    </span>
+                  </label>
+
                   <button
                     className="primary"
                     onClick={() => void onSubmit()}
@@ -450,29 +498,38 @@ export function RosterUpload({
                 Moves pEUR into the contract, one coin per employee carrying exactly the
                 committed salary, then pays each one out. The circuit refuses any amount
                 that does not open that employee's commitment, so nobody — including you
-                — can pay a figure other than the one filed. Twenty proofs for ten
-                employees, so expect this to take a while. Safe to re-run: funded and
-                paid slots are skipped.
+                — can pay a figure other than the one filed. One proof per employee to fund,
+                then one for the whole payment. Safe to re-run: funded and paid slots
+                are skipped.
               </p>
               <label className="prove-here">
                 <input
                   type="checkbox"
-                  checked={proveHere}
-                  disabled={payStep !== null}
+                  checked={useBrowser}
+                  disabled={payStep !== null || !serviceUsable}
                   onChange={(e) => setProveHere(e.target.checked)}
                 />{" "}
                 Prove in this browser instead of the local service
                 <span className="muted">
                   {" "}
-                  — nothing leaves the page, but coin-carrying circuits have been
-                  rejected by the proof server here. Experimental.
+                  — the salaries, the passphrase and the proving all stay in the page,
+                  and your own wallet signs.
+                  {!serviceUsable ? (
+                    <>
+                      {" "}
+                      <strong>
+                        Required here: this contract&rsquo;s employer is your wallet, not
+                        the platform, and the service can only sign as the platform.
+                      </strong>
+                    </>
+                  ) : null}
                 </span>
               </label>
 
               <p className="note">
                 <strong>Runs in the local payroll service</strong> (
-                <code>npm run demo:server</code>), not in this page — coin-carrying
-                circuits cannot yet be proven through the wallet connector. So this needs
+                <code>npm run demo:server</code>), not in this page. Only used when the box
+                above is unticked; the browser can prove these circuits now. It needs
                 the service running, it signs with the platform wallet rather than yours,
                 and this period's amounts are sent to <code>127.0.0.1</code>. Your
                 passphrase is <strong>not</strong> sent — the nonces and the employees'
@@ -492,6 +549,11 @@ export function RosterUpload({
                   <strong>
                     Funded {payResult.funded}, paid {payResult.paid} employee
                     {payResult.paid === 1 ? "" : "s"}
+                    {payResult.seconds !== undefined
+                      ? ` — ${payResult.seconds}s, proved ${
+                          payResult.proving === "wallet" ? "by the wallet" : "locally"
+                        }`
+                      : ""}
                   </strong>
                 </div>
               ) : null}

@@ -106,6 +106,37 @@ export ledger fundedFor: Map<Uint<32>, Map<Uint<8>, Boolean>>;
 // settled but never for how much.
 export ledger paidFor: Map<Uint<32>, Map<Uint<8>, Boolean>>;
 
+// period -> how many times that period has been filed.
+//
+// Re-filing a month is legitimate — it is how a correction is made — but the
+// coin funding a slot has a nonce DERIVED from the passphrase, so a second
+// funding round for the same period would rebuild the identical coin: same
+// nonce, same value, same recipient, therefore the same commitment. Zswap
+// rejects that as a duplicate (`240 CommitmentAlreadyPresent`, surfacing as
+// the retired umbrella `103`).
+//
+// Including this counter in the derivation makes each round's coins distinct
+// while keeping them reconstructible, which random nonces would not.
+export ledger fileRoundFor: Map<Uint<32>, Uint<32>>;
+
+// How many coins this contract has ever received.
+//
+// Coins land in the Zswap tree in the order they are created, so the n-th coin
+// this contract received is the n-th leaf it owns. Recording the ordinal per
+// slot lets a caller find exactly the coin it must spend.
+export ledger coinsReceived: Uint<32>;
+
+// period -> employee index -> which of this contract's coins funds that slot.
+//
+// Without it the caller has to guess, because `filter(address)` lists every
+// coin ever received — spent ones included, with no unspent view — so counting
+// positions from zero pays an earlier period's already-spent coins. Guessing
+// produced both `Public transcript input mismatch` and
+// `239 NullifierAlreadyPresent`.
+//
+// It reveals ordering, which the leaf list already makes public, and no value.
+export ledger coinOrdinalFor: Map<Uint<32>, Map<Uint<8>, Uint<32>>>;
+
 // The token this instance pays in, fixed on the first payment.
 //
 // Without it, anyone could fund a slot with a token they minted themselves and
@@ -119,6 +150,7 @@ constructor() {
   employerAssigned = false;
   latestPeriod = 0;
   payTokenSet = false;
+  coinsReceived = 0;
 }
 
 // Hands the instance to its employer. Callable once, by the deployer only.
@@ -184,6 +216,16 @@ export circuit setPayroll(
   }
   if (!fundedFor.member(p)) {
     fundedFor.insert(p, default<Map<Uint<8>, Boolean>>);
+  }
+  if (!coinOrdinalFor.member(p)) {
+    coinOrdinalFor.insert(p, default<Map<Uint<8>, Uint<32>>>);
+  }
+
+  // Every filing starts a new round, so a re-filed month funds fresh coins.
+  if (!fileRoundFor.member(p)) {
+    fileRoundFor.insert(p, 0);
+  } else {
+    fileRoundFor.insert(p, (fileRoundFor.lookup(p) + 1) as Uint<32>);
   }
 
   for (const i of 0..2) {
@@ -259,6 +301,10 @@ export circuit fundEmployee(
 
   receiveShielded(disclose(coin));
   fundedFor.lookup(p).insert(i, true);
+
+  // Which leaf this coin will be. Recorded so paying does not have to guess.
+  coinOrdinalFor.lookup(p).insert(i, coinsReceived);
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
 }
 
 // Pays one employee the exact amount committed for them.

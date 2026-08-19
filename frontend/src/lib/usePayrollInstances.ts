@@ -58,9 +58,25 @@ export function usePayrollInstances(
               networkId,
               deployment.contractAddress
             );
-            const state = chainState
-              ? (contract.ledger(chainState.data) as PayrollLedger)
-              : null;
+
+            // Decoding is per instance, and a failure skips that one instead of
+            // emptying the list. A contract deployed before the current ledger
+            // shape throws here — `tried to idx, only map, array, and bmt are
+            // supported` — and one stale test deployment used to take out every
+            // instance including the employer's own working one.
+            let state: PayrollLedger | null = null;
+            if (chainState) {
+              try {
+                state = contract.ledger(chainState.data) as PayrollLedger;
+              } catch (cause) {
+                console.warn(
+                  `[payroll] ${name} (${deployment.contractAddress}) could not be ` +
+                    "decoded — deployed from an older contract version?",
+                  cause
+                );
+                return null;
+              }
+            }
 
             let role: PayrollInstance["role"] = "none";
             if (state && coinPublicKey) {
@@ -81,7 +97,8 @@ export function usePayrollInstances(
           })
         );
 
-        if (!cancelled) setInstances(loaded);
+        // Undecodable instances drop out rather than appearing half-built.
+        if (!cancelled) setInstances(loaded.filter((i): i is PayrollInstance => i !== null));
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
