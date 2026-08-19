@@ -1,5 +1,7 @@
 import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import { Transaction, ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
+import { FetchZkConfigProvider } from "@midnight-ntwrk/midnight-js-fetch-zk-config-provider";
+import { fromHex, toHex } from "@midnight-ntwrk/midnight-js-utils";
 import { CompiledContract } from "@midnight-ntwrk/compact-js";
 import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
 import { httpClientProofProvider } from "@midnight-ntwrk/midnight-js-http-client-proof-provider";
@@ -8,7 +10,6 @@ import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { ZKConfigProvider } from "@midnight-ntwrk/midnight-js-types";
 import { pipe } from "effect";
 import { fetchContractState, INDEXERS, INDEXER_WS, PROOF_SERVERS } from "./chain";
-import { keyToHex } from "./keys";
 import {
   deriveEmployeeSeed,
   deriveEmployerKey,
@@ -35,64 +36,15 @@ import {
  *   - this page holds the salaries and forgets them when it navigates away.
  */
 
-/** Where the compiled ZK assets are served from. Written by `frontend:config`. */
-const ZK_BASE = "/zk";
-
 /**
- * Fetches prover keys, verifier keys, and ZKIR over HTTP.
+ * Where the compiled ZK assets are served from. Written by `frontend:config`.
  *
- * The Node provider reads these off disk; a browser has no disk, so the same
- * `contracts/managed/<name>/{keys,zkir}` layout is copied into `public/zk` and
- * fetched instead. The prover key for `setPayroll` is roughly 10 MB, so it is
- * requested only when a proof is actually being built — which is exactly why
- * this interface separates the three getters.
+ * The official `FetchZkConfigProvider` appends `keys/<circuit>.prover`,
+ * `keys/<circuit>.verifier` and `zkir/<circuit>.bzkir` to this base, which is
+ * the layout `copyZkAssets` already produces.
  */
-class FetchZkConfigProvider extends ZKConfigProvider<string> {
-  constructor(private readonly contractName: string) {
-    super();
-  }
-
-  private async fetchBytes(path: string): Promise<Uint8Array> {
-    const url = `${ZK_BASE}/${this.contractName}/${path}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(
-        `Could not load ${url} (${response.status}). Run \`npm run frontend:config\` ` +
-          "to copy the compiled ZK assets into the frontend."
-      );
-    }
-    return new Uint8Array(await response.arrayBuffer());
-  }
-
-  async getProverKey(circuitId: string) {
-    return (await this.fetchBytes(`keys/${circuitId}.prover`)) as never;
-  }
-
-  async getVerifierKey(circuitId: string) {
-    return (await this.fetchBytes(`keys/${circuitId}.verifier`)) as never;
-  }
-
-  async getZKIR(circuitId: string) {
-    return (await this.fetchBytes(`zkir/${circuitId}.bzkir`)) as never;
-  }
-}
-
-const toHex = (bytes: Uint8Array) =>
-  Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-
-/** Coin public keys come back from the ledger as hex strings. */
-function hexToBytes(value: string): Uint8Array {
-  return fromHex(value);
-}
-
-function fromHex(hex: string): Uint8Array {
-  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
-  const bytes = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}
+const zkBaseUrl = (contractName: string) =>
+  `${window.location.origin}/zk/${contractName}`;
 
 /**
  * Private state that is never written.
@@ -103,17 +55,35 @@ function fromHex(hex: string): Uint8Array {
  * object to IndexedDB would only add a failure mode.
  */
 function emptyPrivateStateProvider(): any {
-  const store = new Map<string, unknown>();
+  const states = new Map<string, unknown>();
+  const signingKeys = new Map<string, unknown>();
+
   return {
     setContractAddress: () => {},
-    set: async (id: string, state: unknown) => void store.set(id, state),
-    get: async (id: string) => store.get(id) ?? null,
-    remove: async (id: string) => void store.delete(id),
-    clear: async () => void store.clear(),
-    setSigningKey: async () => {},
-    getSigningKey: async () => null,
-    removeSigningKey: async () => {},
-    clearSigningKeys: async () => {},
+    set: async (id: string, state: unknown) => void states.set(id, state),
+    get: async (id: string) => states.get(id) ?? null,
+    remove: async (id: string) => void states.delete(id),
+    clear: async () => void states.clear(),
+    setSigningKey: async (address: string, key: unknown) =>
+      void signingKeys.set(address, key),
+    getSigningKey: async (address: string) => signingKeys.get(address) ?? null,
+    removeSigningKey: async (address: string) => void signingKeys.delete(address),
+    clearSigningKeys: async () => void signingKeys.clear(),
+    // Present because the interface has them, and an ephemeral store has
+    // nothing meaningful to export. Throwing beats returning empty: a caller
+    // that means to back something up should hear that it cannot.
+    exportPrivateStates: async () => {
+      throw new Error("not supported in-memory");
+    },
+    importPrivateStates: async () => {
+      throw new Error("not supported in-memory");
+    },
+    exportSigningKeys: async () => {
+      throw new Error("not supported in-memory");
+    },
+    importSigningKeys: async () => {
+      throw new Error("not supported in-memory");
+    },
   };
 }
 
@@ -289,17 +259,27 @@ export async function connectContract(options: {
   contractAddress: string;
   contractName?: string;
   onProgress?: SubmitProgress;
-}): Promise<{ deployed: any; contractModule: any }> {
+}): Promise<{
+  deployed: any;
+  contractModule: any;
+  providers: any;
+  compiledContract: any;
+}> {
   const { api, networkId, contractAddress, contractName = "payroll" } = options;
   const onProgress = options.onProgress ?? (() => {});
 
-  const indexer = INDEXERS[networkId];
-  const indexerWs = INDEXER_WS[networkId];
+  // Endpoints and network id come from the wallet, so the transaction is built
+  // for the network the user actually has selected in it. Reading them from a
+  // local table instead is how a page ends up proving against one network while
+  // the wallet signs for another.
+  const config = await api.getConfiguration();
+  setNetworkId(config.networkId);
+
+  const indexer = config.indexerUri ?? INDEXERS[networkId];
+  const indexerWs = config.indexerWsUri ?? INDEXER_WS[networkId];
   const proofServer = PROOF_SERVERS[networkId];
   if (!indexer || !indexerWs) throw new Error(`No indexer configured for "${networkId}"`);
   if (!proofServer) throw new Error(`No proof server configured for "${networkId}"`);
-
-  setNetworkId(networkId);
 
   onProgress("Loading the compiled contract…");
   const contractModule = await import("../generated/payroll/index.js");
@@ -308,7 +288,10 @@ export async function connectContract(options: {
     CompiledContract.withVacantWitnesses
   );
 
-  const zkConfigProvider = new FetchZkConfigProvider(contractName);
+  const zkConfigProvider = new FetchZkConfigProvider(
+    zkBaseUrl(contractName),
+    fetch.bind(window)
+  );
   const shielded = await api.getShieldedAddresses();
 
   const walletProvider = {
@@ -322,14 +305,12 @@ export async function connectContract(options: {
         fromHex(balanced)
       ) as any;
     },
-    // Bech32m -> hex. The connector hands out `mn_shield-cpk_preview1…`; the
-    // ledger works in raw hex, as `keys.ts` has documented all along. Circuits
-    // without coin operations never read these, which is why `setPayroll`
-    // proved fine and `fundEmployee` was rejected by the proof server with an
-    // empty 400 — the transaction it built was malformed, not the proof.
-    getCoinPublicKey: () => keyToHex(shielded.shieldedCoinPublicKey) as any,
-    getEncryptionPublicKey: () =>
-      keyToHex(shielded.shieldedEncryptionPublicKey) as any,
+    // Passed through exactly as the connector returns them — Bech32m. An
+    // earlier version converted these to hex, on the reasoning that the ledger
+    // works in hex; the documented browser-provider pattern does not convert,
+    // and converting is a divergence with nothing behind it.
+    getCoinPublicKey: () => shielded.shieldedCoinPublicKey as any,
+    getEncryptionPublicKey: () => shielded.shieldedEncryptionPublicKey as any,
   };
 
   const midnightProvider = {
@@ -364,7 +345,10 @@ export async function connectContract(options: {
     contractAddress,
   });
 
-  return { deployed, contractModule };
+  // `providers` and `compiledContract` come back too: paying needs
+  // `submitCallTx`, because the `callTx` shorthand cannot carry the
+  // encryption-key mapping a shielded payment requires.
+  return { deployed, contractModule, providers, compiledContract };
 }
 
 /**
@@ -443,7 +427,7 @@ export async function submitPayroll(options: {
     const keys = ZswapSecretKeys.fromSeed(seed);
     payees.push(
       (contractModule as any).pureCircuits.payeeHash({
-        bytes: hexToBytes(String(keys.coinPublicKey)),
+        bytes: fromHex(String(keys.coinPublicKey).replace(/^0x/, "")),
       })
     );
   }
@@ -452,7 +436,10 @@ export async function submitPayroll(options: {
     CompiledContract.withVacantWitnesses
   );
 
-  const zkConfigProvider = new FetchZkConfigProvider(contractName);
+  const zkConfigProvider = new FetchZkConfigProvider(
+    zkBaseUrl(contractName),
+    fetch.bind(window)
+  );
 
   const shielded = await api.getShieldedAddresses();
   const coinPublicKey = shielded.shieldedCoinPublicKey;
@@ -476,9 +463,8 @@ export async function submitPayroll(options: {
         fromHex(balanced)
       ) as any;
     },
-    // Bech32m -> hex; see the note in connectContract.
-    getCoinPublicKey: () => keyToHex(coinPublicKey) as any,
-    getEncryptionPublicKey: () => keyToHex(encryptionPublicKey) as any,
+    getCoinPublicKey: () => coinPublicKey as any,
+    getEncryptionPublicKey: () => encryptionPublicKey as any,
   };
 
   const midnightProvider = {

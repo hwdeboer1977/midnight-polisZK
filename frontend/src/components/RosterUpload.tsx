@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import type { ParsedRoster } from "../generated/roster";
 import { submitPayroll, type SubmitResult } from "../lib/submitPayroll";
-import { fundAndPayViaService, periodStatus, type RunResult } from "../lib/payPayroll";
+import {
+  fundAndPayPeriod,
+  fundAndPayViaService,
+  periodStatus,
+  type RunResult,
+} from "../lib/payPayroll";
+import { loadDeployments } from "../lib/deployments";
 import { useWallet } from "../wallet/WalletContext";
 
 // The xlsx parser drags in ~950 kB of spreadsheet library. Loading it only when
@@ -9,7 +15,10 @@ import { useWallet } from "../wallet/WalletContext";
 const loadParser = () => import("../generated/roster");
 
 const ROSTER_COLUMNS = ["Full name", "Address", "Monthly gross salary"] as const;
-const ROSTER_SIZE = 10;
+// Mirrors ROSTER_SIZE in the generated roster module, which mirrors the
+// contract. Three copies of one number is two too many; the generated module is
+// the one to trust if they ever disagree.
+const ROSTER_SIZE = 2;
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -58,6 +67,8 @@ export function RosterUpload({
   const [filedPeriods, setFiledPeriods] = useState<number[]>([]);
   /** Explicit opt-in to replacing a month that is already on chain. */
   const [allowRefile, setAllowRefile] = useState(false);
+  /** Opt in to proving in the page instead of handing the run to the service. */
+  const [proveHere, setProveHere] = useState(false);
   const [roster, setRoster] = useState<ParsedRoster | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -158,18 +169,43 @@ export function RosterUpload({
     setPayResult(null);
     setPayStep("Starting…");
     try {
-      // Runs in the local service, not here — the browser cannot prove circuits
-      // with coin operations. See fundAndPayViaService.
-      setPayResult(
-        await fundAndPayViaService({
-          instance: target.name.replace(/^payroll:/, ""),
-          contractAddress: target.contractAddress,
-          period: roster.period,
-          salaries: roster.rows.map((row) => row.salaryMinor),
-          passphrase,
-          onProgress: setPayStep,
-        })
-      );
+      if (proveHere) {
+        // Everything stays in the page: salaries, passphrase and proving. This
+        // is the shape the product wants; it is opt-in because coin-carrying
+        // circuits have historically been rejected by the proof server here.
+        const deployments = await loadDeployments();
+        const peur = Object.values(deployments).find(
+          (d) => d.contractName === "peur" && d.networkId === networkId
+        );
+        if (!peur?.tokenId) {
+          throw new Error(
+            `No pEUR token id for ${networkId} — run \`npm run frontend:config\`.`
+          );
+        }
+        setPayResult(
+          await fundAndPayPeriod({
+            api,
+            networkId,
+            contractAddress: target.contractAddress,
+            passphrase,
+            tokenId: peur.tokenId,
+            period: roster.period,
+            salaries: roster.rows.map((row) => row.salaryMinor),
+            onProgress: setPayStep,
+          })
+        );
+      } else {
+        setPayResult(
+          await fundAndPayViaService({
+            instance: target.name.replace(/^payroll:/, ""),
+            contractAddress: target.contractAddress,
+            period: roster.period,
+            salaries: roster.rows.map((row) => row.salaryMinor),
+            passphrase,
+            onProgress: setPayStep,
+          })
+        );
+      }
       onSubmitted?.();
     } catch (cause) {
       setPayError(cause instanceof Error ? cause.message : String(cause));
@@ -418,6 +454,21 @@ export function RosterUpload({
                 employees, so expect this to take a while. Safe to re-run: funded and
                 paid slots are skipped.
               </p>
+              <label className="prove-here">
+                <input
+                  type="checkbox"
+                  checked={proveHere}
+                  disabled={payStep !== null}
+                  onChange={(e) => setProveHere(e.target.checked)}
+                />{" "}
+                Prove in this browser instead of the local service
+                <span className="muted">
+                  {" "}
+                  — nothing leaves the page, but coin-carrying circuits have been
+                  rejected by the proof server here. Experimental.
+                </span>
+              </label>
+
               <p className="note">
                 <strong>Runs in the local payroll service</strong> (
                 <code>npm run demo:server</code>), not in this page — coin-carrying

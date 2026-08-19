@@ -15,8 +15,14 @@ export const ROSTER_COLUMNS = [
   "Monthly gross salary",
 ] as const;
 
-/** payroll.compact fixes the roster at ten employees. */
-export const ROSTER_SIZE = 10;
+/**
+ * How many employees payroll.compact carries.
+ *
+ * Must match the `Vector<N, …>` sizes in the contract exactly — the circuit
+ * rejects any other length — so changing it means editing the contract,
+ * recompiling and redeploying.
+ */
+export const ROSTER_SIZE = 2;
 
 /**
  * The period the roster is for, written above the table as Year and Month.

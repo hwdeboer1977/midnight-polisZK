@@ -491,14 +491,15 @@ the `additionalCoinEncPublicKeyMappings` that make the coin findable.
 npm run roster:template     # writes roster-template.xlsx
 ```
 
-The workbook carries the **period** above the table, then one row per employee:
+The workbook carries the **period** above the table, then one row per employee
+— **two** of them, matching `ROSTER_SIZE` and the contract's vector lengths:
 
 ```
 1  Payroll period   Year   2026
 2                   Month  8
 3
 4  Full name | Address | Monthly gross salary
-5+ ten employee rows
+5+ one row per employee (two, at ROSTER_SIZE = 2)
 ```
 
 The period lives in the file rather than being typed at submit time because it
@@ -681,40 +682,57 @@ on the operator's own machine either way.
 | Who signs | the employer's wallet extension | whatever is in `.env` |
 | Works for any employer | yes | only when employer == operator |
 | Circuits without coin operations (`setPayroll`) | **works** | works |
-| Circuits with coin operations (`fundEmployee`, `payEmployee`) | **broken** | works |
+| Circuits with coin operations (`fundEmployee`, `payEmployee`) | **works** | works |
 | Salaries leave the machine | no | no (localhost only) |
 | Prover key delivery | fetched from `public/zk` (10 MB+) | read from disk |
 
-### The browser cannot currently prove coin circuits
+### Proving coin circuits in the browser
 
-`fundEmployee` and `payEmployee` fail with an empty `400` from the proof server,
-returned in about 4 ms — the request is rejected at parsing, before any proving
-starts. The same circuits prove fine from Node against the same server.
+This works, and getting there took removing four divergences from the documented
+browser-provider pattern. For a long stretch `fundEmployee` and `payEmployee`
+were rejected by the proof server with a `400` returned in about 4 ms — the
+request refused at parsing, before any proving — while the same circuits proved
+fine from Node against the same server.
 
-Ruled out, each by test rather than by reasoning:
+A proof-server `400` is `WorkError::BadInput`: **a malformed or undeserializable
+binary body**. `POST /prove` takes a `tagged_serialize`d tuple of
+`(ProofPreimageVersioned, Option<ProvingKeyMaterial>, Option<Fr>)`, and a
+transaction with coin operations sends several prove requests — one for the
+contract circuit carrying our key material, plus one per zswap input and output
+with `None`, proven against keys the server fetches from `srs.midnight.network`
+at startup.
 
-- **Keys and ZKIR** — all circuits present and served, `fundEmployee.prover`
-  5.2 MB, HTTP 200.
-- **The ZK config provider** — `NodeZkConfigProvider` returns a plain `Buffer`
-  with no branding, so a fetch-based provider is equivalent.
-- **The contract, circuit and proof server** — a `probe` instance deployed with
-  the platform as its own employer let the CLI call the circuits directly. Both
-  `setPayroll` and `fundEmployee` proved and submitted.
+What fixed it was aligning with the reference implementation in the
+`midnight-dapp-dev` plugin rather than continuing to reason from first
+principles:
 
-One real bug was found and fixed along the way: the DApp connector returns keys
-in **Bech32m** while the ledger works in hex, and the wallet provider was passing
-them through unconverted. Those getters are only read when a transaction creates
-coin outputs, which is exactly why `setPayroll` was unaffected. Fixing it did not
-resolve the 400, so at least one further cause remains, in transaction
-construction rather than in the contract.
+| Divergence | What it should be |
+| --- | --- |
+| Connector keys converted to hex | **Passed through as Bech32m.** The connector returns `mn_shield-cpk_…`; the reference does not convert, and `getCoinPublicKey`/`getEncryptionPublicKey` are only read when a transaction creates coin outputs — which is exactly why `setPayroll` was never affected |
+| Hand-rolled `FetchZkConfigProvider` | The official `@midnight-ntwrk/midnight-js-fetch-zk-config-provider`, given `<origin>/zk/<contract>` |
+| Network id and endpoints from a local table | `await api.getConfiguration()`, so the transaction is built for the network the wallet actually has selected |
+| Private state provider with 9 of 13 methods | All 13; the export/import four throw, since an ephemeral store has nothing to export |
 
-Until that is solved, funding and payment run through the local service.
+The hex conversion was the instructive one: it was added as a *fix*, on the
+reasoning that the ledger works in hex, and it was wrong. `keys.ts` documents
+that the connector speaks Bech32m — which is true, and which is why comparisons
+against on-chain state must convert. Provider getters are not comparisons.
+
+⚠️ Two things that cost hours and produced nothing: a `RUST_LOG=debug` proof
+server left running (it logs nothing useful about a rejected request and makes
+every subsequent proof slower), and several confident diagnoses from symptoms.
+Every one of them was wrong. See **Decoding node and proof-server errors**.
 
 ### The local service, and what it can see
 
 `npm run demo:server` exposes `POST /api/payroll/run`, which the page's **Fund
-and pay** button calls. It signs with the `.env` wallet, so it only works where
-the employer is the operator.
+and pay** button calls when **Prove in this browser** is unticked. It signs with
+the `.env` wallet, so it only works where the employer is the operator.
+
+It is no longer the only route — the browser proves coin circuits now, and that
+is the better path: the employer signs with their own key and nothing leaves the
+page. The service remains useful when the employer's key is not available to the
+page at all, such as an operator running payroll on someone's behalf.
 
 What it receives is one period's derived material — amounts, nonces, and the
 employees' **public** keys. It does **not** receive the payroll passphrase:
@@ -740,22 +758,73 @@ transaction does not have one yet. A contract cannot receive and forward
 atomically.
 
 **Funding adds coins; paying spends them.** Adds commute, so ten funding
-transactions are independent and a stale view is still a valid one. Spends do
-not: each payment invalidates the view the next was built against. Observed
-exactly that — ten slots funded as ten transactions, then payments succeeded
-four times and failed on the fifth with `Invalid Transaction: Custom error: 170`,
-reproducibly at that slot.
+transactions are independent. Ten slots funded as ten transactions worked; the
+payments then succeeded four times and failed on the fifth with
+`Invalid Transaction: Custom error: 170`, reproducibly at the same slot.
 
-`payPeriod` batches all ten sends into one transaction, which removes the
-sequencing problem by construction and also removes a leak: ten payments publish
-ten events showing which slot settled when, where one transaction settles the
-month with no per-employee signal. It costs a **73 MB** prover key against 9 MB
-for a single payment, and it is all-or-nothing — a half-paid month can only be
-finished slot by slot.
+That code decodes — via the `midnight-status-codes` plugin — as
+**`InvalidDustSpendProof`: the dust spend proof is invalid**, fixed by
+regenerating it. It is a **fee** problem, not a contract-coin problem: DUST pays
+fees, and firing transactions back to back leaves the wallet's DUST spend proof
+stale.
 
-⚠️ **Unproven.** `payPeriod` compiles but has never run: verifier keys are fixed
-at deploy, so a contract deployed before the circuit existed has no key for it
-and `findDeployedContract` refuses. Testing it needs a redeploy.
+⚠️ An earlier version of this file explained 170 as contract-coin sequencing —
+each payment invalidating the view the next was built against. That was wrong,
+and it survived because the symptom fits both stories. It also explains why a
+"wait for the paid flag" fix changed nothing: it waited on the *contract's*
+state when the stale thing was the *wallet's DUST*. **Look the code up before
+theorising.**
+
+`payPeriod` batches all ten sends into one transaction, and **this is the one to
+use**. One transaction needs one DUST spend proof instead of ten, so the failure
+above does not arise. Verified end to end:
+
+```
+STEP 1  setPayroll 202608     filed
+STEP 2  funding 10 slots      funded 1..10/10
+STEP 3  payPeriod             OK in 90s
+
+RESULT paid 202608: 1111111111
+```
+
+Ten employees paid in a single transaction, 90 seconds of proving. The prover
+key is **73 MB** against 9 MB for a single payment, but the wall-clock cost is
+lower than ten sequential payments — and those do not complete anyway.
+
+It also removes a leak, independently of the bug: ten payments publish ten
+events showing which slot settled when, where one transaction settles the month
+with no per-employee signal. The same argument that makes `setPayroll` a single
+call.
+
+Batching is all-or-nothing, which for payroll is the right failure mode — a
+half-paid month is worse than one that failed cleanly and can be retried. The
+single-slot `payEmployee` is retained for finishing months that are already
+part-paid, since `payPeriod` asserts every slot is unpaid.
+
+⚠️ Verifier keys are fixed at deploy, so adding a circuit needs a **redeploy** —
+a contract deployed before `payPeriod` existed has no key for it and
+`findDeployedContract` refuses with `circuitIds: ['payPeriod']`.
+
+### Cost: eleven proofs, not one
+
+Filing a period is one transaction and one proof. Funding and paying is eleven:
+ten `fundEmployee` transactions, one per employee, then a single `payPeriod`.
+
+| | Transactions | Prover key |
+| --- | --- | --- |
+| `setPayroll` | 1 | 9.5 MB |
+| `fundEmployee` | 10 | 5.0 MB each |
+| `payPeriod` | 1 | 73.4 MB |
+
+Prover key size tracks circuit complexity, not proving time: the 73 MB batch
+proof takes about 90 seconds, while the ten small funding transactions dominate
+the wall clock. Batching funding the way payment was batched would collapse
+eleven transactions into two, and the same argument applies — adds commute, so
+there is no correctness objection, only proof size.
+
+⚠️ If proving suddenly gets slower, check the proof server is not still running
+with `RUST_LOG=debug` from a debugging session. It logs nothing useful about a
+rejected request and slows every proof after it.
 
 ### Paying needs the recipient's encryption key
 
@@ -770,7 +839,7 @@ additionalCoinEncPublicKeyMappings: new Map([[coinKey, encKey]])
 
 The same requirement is documented on `peur.mintTo`.
 
-## Wave 1 is custodial — say so
+## What is still custodial, and what is not
 
 Employee keys are derived from the employer's passphrase, so no keys need
 collecting and payment works today. It also means **whoever holds the passphrase
@@ -785,9 +854,53 @@ their wages.
 The migration is per slot: when an employee supplies a real key it replaces the
 derived one in the roster, and the next period pays the real one.
 
-Running the service against an instance where the operator is also the employer
-collapses this further — one wallet as operator, employer and every employee.
-Fine for a demo, and worth stating plainly rather than leaving to be discovered.
+Running the *service* against an instance where the operator is also the
+employer collapses this further — one wallet as operator, employer and every
+employee. That is what `preview/payroll:probe` is, and it is fine for a demo as
+long as nobody calls it employees being paid.
+
+The browser route does not collapse those roles. In the verified run above the
+employer signed with their own wallet extension and the platform could not have
+filed, funded or paid on their behalf — the contract asserts it. **Employer and
+operator are genuinely separate there; only employer and employee are not.**
+
+## Decoding node and proof-server errors
+
+Midnight's failures arrive as bare numbers — `Invalid Transaction: Custom error:
+170` — with no message. Two of them cost real debugging time here, and both were
+diagnosed wrongly from the symptom before being looked up.
+
+Install the lookup rather than guessing:
+
+```bash
+claude plugin marketplace add https://midnightntwrk.expert
+claude plugin install midnight-status-codes@midnight-expert
+```
+
+(The docs also offer `curl -fsSL https://midnightntwrk.expert/install.sh | bash`.
+The two commands above do the same thing without piping a remote script into a
+shell.)
+
+Codes met so far, each one diagnosed wrongly from the symptom first:
+
+| Code | Name | What it actually meant here |
+| --- | --- | --- |
+| `170` | `InvalidDustSpendProof` | The **fee** proof went stale across rapid transactions — nothing to do with the contract's coins |
+| `138` | `BalanceCheckOverspend` | A balance went negative **after fees**. Fees are paid in DUST: *raising NIGHT will not help*, and DUST registration is self-funding so it is not the cause |
+| `400` (proof server) | `WorkError::BadInput` | Malformed or undeserializable binary body — the request never reached proving |
+
+The `138` entry is worth reading in full before touching DUST registration: it
+explicitly rules out both theories that seemed obvious at the time — that the
+UTXO was already registered, and that more NIGHT was needed.
+
+Other plugins in that marketplace cover the proof server API, dApp development,
+the indexer, the node and wallets. Skills activate immediately; **slash commands
+only appear after restarting Claude Code**.
+
+`midnight-dapp-dev` is worth installing before writing any browser provider
+code — its `dapp-connector/references/browser-providers.md` is the reference
+that resolved the proving failure above, and every divergence from it turned out
+to be a bug.
 
 ## Deployments and instances
 
@@ -988,6 +1101,56 @@ midnight-polisZK/
 └── payroll-secrets.*.json         # local cache of openings, rebuildable from chain (gitignored, 0600)
 ```
 
+## Verified end to end
+
+One period, filed, funded and paid entirely from the browser, on `preview`,
+with the employer's key held in a wallet extension rather than by the operator.
+
+```
+contract  5b223f8e9e7ede32b4006ea962f86ac0427537619395f9e25594583b3f449635
+employer  9e584bd4…                       (1AM wallet, not the platform)
+
+period 202608   employees=2   total=8050500000    <- 8,050.50 pEUR, public
+  commitments=2   sealed=2
+  funded=11       paid=11
+
+salary 4200000000 present in public state?  false
+salary 3850500000 present in public state?  false
+```
+
+Every claim this project makes, in one run:
+
+- **The aggregate is public.** 8,050.50 pEUR for August 2026, readable by anyone.
+- **The individual salaries are not.** Searched the serialized contract state
+  for both figures; neither appears. Only commitments do.
+- **Payment matched the commitment.** The circuit refuses any amount that does
+  not open the commitment filed for that employee, so `paid=11` means each
+  employee received exactly what was committed for them — verifiable without
+  learning either amount.
+- **The employer signed.** Not the platform. `setPayroll`, `fundEmployee` and
+  `payPeriod` all assert `ownPublicKey() == employer`, and the key never left
+  the wallet extension.
+- **Nothing left the page.** Salaries, passphrase and proving all stayed in the
+  browser; the local service was not involved.
+
+### Roster size is two
+
+`ROSTER_SIZE` is **2**, not ten. Compact vector lengths are compile-time
+constants, so the size is written out in every `Vector<N, …>`, every `0..N`
+loop, the sum in `setPayroll`, and `employeeCountFor` — changing it means
+editing all of them, recompiling, and redeploying.
+
+Two keeps the cycle short, and the cost is almost entirely in the roster size:
+
+| | 10 employees | 2 employees |
+| --- | --- | --- |
+| `setPayroll` prover | 9.5 MB | 2.7 MB |
+| `payPeriod` prover | 73.4 MB | 18.7 MB |
+| Transactions to fund and pay | 11 | 3 |
+
+Funding is one transaction per employee, so it dominates. Batching it the way
+payment was batched would make that 2 regardless of roster size.
+
 ## Status at a glance
 
 | Capability | State |
@@ -995,12 +1158,13 @@ midnight-polisZK/
 | Per-period commitments, salaries private | **working**, verified on chain |
 | Sealed openings recoverable from chain | **working**, cross-verified Node ↔ browser |
 | Filing payroll from the browser | **working** |
+| Full cycle in the browser, employer's own key | **working** — filed, funded and paid; see **Verified end to end** |
 | Contract holding shielded pEUR privately | **working**, verified byte level |
 | Funding slots (one tx each) | **working**, 10/10 |
-| Paying slot by slot | **partial** — 4/10, then `Custom error: 170` |
-| Paying a whole period in one tx | **compiles, never run** — needs a redeploy |
-| Proving coin circuits in the browser | **broken** — empty 400, cause unknown |
-| DUST sponsorship | **untested** — mechanism exists in the SDK |
+| Paying a whole period in one tx (`payPeriod`) | **working** — from CLI and from the browser |
+| Paying slot by slot (`payEmployee`) | **partial** — 4/10, then `170`; use `payPeriod` |
+| Proving coin circuits in the browser | **working** — funding and payment both proved in the page |
+| DUST sponsorship | **untested** — mechanism exists in the SDK; attempts failed with `138` |
 | Employees holding their own keys | **not started** — wave 1 is custodial |
 | Tax / net pay | **not started** |
 

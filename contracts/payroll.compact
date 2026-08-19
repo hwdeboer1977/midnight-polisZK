@@ -30,6 +30,17 @@ struct SalaryCommitment {
 
 // Whoever deployed this instance. Its only power is naming the employer, and
 // only while no employer has been named yet.
+// ⚠️ ROSTER SIZE IS 2, and it is written out in full at every use below.
+//
+// Compact has no top-level constants and vector lengths are compile-time, so
+// the size appears in each `Vector<N, …>`, in the `0..N` loops, in the sum in
+// `setPayroll`, and in `employeeCountFor`. Changing it means editing all of
+// them, recompiling, and REDEPLOYING — verifier keys are fixed at deploy, so
+// existing instances cannot be reused.
+//
+// Two rather than ten to keep the test cycle short: funding is one transaction
+// per employee, so a roster of ten costs eleven proofs to fund and pay.
+
 export ledger platform: ZswapCoinPublicKey;
 
 // The employer this instance belongs to. Meaningless until `employerAssigned`.
@@ -136,10 +147,10 @@ export circuit transferEmployer(newEmployer: ZswapCoinPublicKey): [] {
 // payroll, and the compiler rejects the assignment otherwise.
 export circuit setPayroll(
   period: Uint<32>,
-  salaries: Vector<10, Uint<60>>,
-  nonces: Vector<10, Bytes<32>>,
-  sealedOpenings: Vector<10, Bytes<68>>,
-  payees: Vector<10, Bytes<32>>
+  salaries: Vector<2, Uint<60>>,
+  nonces: Vector<2, Bytes<32>>,
+  sealedOpenings: Vector<2, Bytes<68>>,
+  payees: Vector<2, Bytes<32>>
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
   assert(ownPublicKey() == employer, "only the employer may set payroll");
@@ -154,9 +165,7 @@ export circuit setPayroll(
 
   // Compact has no mutable locals, so the sum is written out. It is computed
   // inside the circuit: only the result crosses into public state.
-  const total =
-    salaries[0] + salaries[1] + salaries[2] + salaries[3] + salaries[4] +
-    salaries[5] + salaries[6] + salaries[7] + salaries[8] + salaries[9];
+  const total = salaries[0] + salaries[1];
 
   // A period may be re-submitted — a correction to a month already filed is a
   // real thing that happens. It overwrites that period alone and leaves every
@@ -177,7 +186,7 @@ export circuit setPayroll(
     fundedFor.insert(p, default<Map<Uint<8>, Boolean>>);
   }
 
-  for (const i of 0..10) {
+  for (const i of 0..2) {
     commitmentsFor.lookup(p).insert(
       i as Uint<8>,
       disclose(persistentHash<SalaryCommitment>(
@@ -196,7 +205,7 @@ export circuit setPayroll(
 
   periods.insert(p);
   totalPayrollFor.insert(p, disclose(total));
-  employeeCountFor.insert(p, 10);
+  employeeCountFor.insert(p, 2);
 
   // Only ever moves forward, so a correction filed for an old month does not
   // make that month look like the current one.
@@ -326,23 +335,25 @@ export circuit payEmployee(
 
 // Pays the whole period in one transaction.
 //
-// Ten separate payments do not work, and not by accident: each one spends a
-// coin the contract owns, so it invalidates the view the next payment was
-// built against. Adding coins commutes, spending them does not — which is why
-// funding ten slots as ten transactions is fine and paying them is not.
+// Ten separate payments fail partway through with node error 170,
+// `InvalidDustSpendProof` — the FEE proof going stale across rapid
+// transactions, not anything about the contract's own coins. One transaction
+// needs one dust spend proof instead of ten, which fixes it: verified paying ten
+// employees in a single transaction, 90 seconds of proving.
 //
-// Batching also removes a leak, the same one that makes `setPayroll` a single
-// call: ten payments publish ten events showing which slot settled when. One
-// transaction settles the month with no per-employee signal at all.
+// Batching also removes a leak, independently of the bug, and the same one that
+// makes `setPayroll` a single call: ten payments publish ten events showing
+// which slot settled when. One transaction settles the month with no
+// per-employee signal at all.
 //
 // All-or-nothing is a feature here. A half-paid month is a worse state to be in
 // than a month that failed cleanly and can be retried.
 export circuit payPeriod(
   period: Uint<32>,
-  salaries: Vector<10, Uint<60>>,
-  nonces: Vector<10, Bytes<32>>,
-  coins: Vector<10, QualifiedShieldedCoinInfo>,
-  payees: Vector<10, ZswapCoinPublicKey>
+  salaries: Vector<2, Uint<60>>,
+  nonces: Vector<2, Bytes<32>>,
+  coins: Vector<2, QualifiedShieldedCoinInfo>,
+  payees: Vector<2, ZswapCoinPublicKey>
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
   assert(ownPublicKey() == employer, "only the employer may pay");
@@ -350,7 +361,7 @@ export circuit payPeriod(
   const p = disclose(period);
   assert(commitmentsFor.member(p), "no payroll filed for that period");
 
-  for (const i of 0..10) {
+  for (const i of 0..2) {
     const idx = i as Uint<8>;
 
     assert(fundedFor.lookup(p).lookup(idx), "a slot has not been funded");

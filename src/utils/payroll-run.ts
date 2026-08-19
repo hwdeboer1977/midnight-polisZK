@@ -81,35 +81,6 @@ async function contractLeaves(conn: Connection): Promise<number[]> {
     .sort((a, b) => a - b);
 }
 
-/**
- * Waits until the chain agrees a slot's flag has flipped.
- *
- * Payments spend the contract's own coins, so each one changes the state the
- * next proof is built against. Firing them back to back submits the fifth
- * against a view of the contract that is four coins out of date, and the node
- * rejects it — observed as `Custom error: 170` after four successful payments.
- *
- * Funding does not have this problem: it only adds coins, so a stale view is
- * still a valid one. Hence waiting here and not there.
- */
-async function waitForFlag(
-  conn: Connection,
-  pick: (ledger: any) => any,
-  period: bigint,
-  index: number,
-  log: RunProgress
-): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const ledger = await readLedger(conn);
-    if (ledger && flag(pick(ledger), period, index)) return;
-    if (attempt === 10) log("   still waiting for the chain to catch up…");
-  }
-  throw new Error(
-    `Employee ${index + 1} was submitted but has not appeared on chain after two minutes`
-  );
-}
-
 function flag(map: any, period: bigint, index: number): boolean {
   if (!map?.member(period)) return false;
   const inner = map.lookup(period);
@@ -190,6 +161,7 @@ export async function fundAndPay(
 
     let paid = 0;
     let alreadyPaid = 0;
+    const unpaid: { index: number; slot: SlotInput; leaf: number }[] = [];
 
     for (const [i, slot] of slots.entries()) {
       const leaf = allLeaves[i];
@@ -206,35 +178,45 @@ export async function fundAndPay(
         );
       }
 
-      log(`Paying employee ${i + 1}/${slots.length}…`);
+      unpaid.push({ index: i, slot, leaf });
+    }
+
+    if (unpaid.length > 0) {
+      log(`Paying ${unpaid.length} employees in one transaction…`);
+
+      // One transaction, not one per employee. Paying slot by slot fails part
+      // way through with node error 170, `InvalidDustSpendProof`: the fee proof
+      // goes stale across rapid transactions. A single call needs a single dust
+      // spend proof, which is why this works where the loop did not.
+      //
+      // It is also the shape that leaks least — ten payments publish ten events
+      // showing which slot settled when; this publishes one.
+      //
       // submitCallTx rather than the callTx shorthand: the shorthand cannot
-      // carry the encryption-key mapping, and without it the coin is created
-      // but the payee's wallet can never detect it.
+      // carry the encryption-key mapping, and without it every coin is created
+      // and no payee can ever find theirs.
       await submitCallTx(conn.providers as any, {
         compiledContract: conn.compiledContract,
         contractAddress: conn.contractAddress,
-        circuitId: "payEmployee",
+        circuitId: "payPeriod",
         args: [
           p,
-          BigInt(i),
-          slot.salary,
-          slot.salaryNonce,
-          {
-            nonce: slot.coinNonce,
+          slots.map((s) => s.salary),
+          slots.map((s) => s.salaryNonce),
+          slots.map((s, i) => ({
+            nonce: s.coinNonce,
             color,
-            value: slot.salary,
-            mt_index: BigInt(leaf),
-          },
-          { bytes: slot.payee },
+            value: s.salary,
+            mt_index: BigInt(allLeaves[i]!),
+          })),
+          slots.map((s) => ({ bytes: s.payee })),
         ],
-        additionalCoinEncPublicKeyMappings: new Map([
-          [Buffer.from(slot.payee).toString("hex"), slot.payeeEnc],
-        ]),
+        additionalCoinEncPublicKeyMappings: new Map(
+          slots.map((s) => [Buffer.from(s.payee).toString("hex"), s.payeeEnc])
+        ),
       } as any);
 
-      // Confirmed on chain before moving on, not merely submitted.
-      await waitForFlag(conn, (l) => l.paidFor, p, i, log);
-      paid += 1;
+      paid = unpaid.length;
     }
 
     log(`Done — funded ${funded}, paid ${paid}`);

@@ -77,7 +77,38 @@ export interface ChainState {
   txHash: string | null;
 }
 
+/**
+ * Short-lived cache over contract-state reads.
+ *
+ * The public indexer rate-limits, and this page was asking it the same question
+ * several times per mount: React `StrictMode` runs every effect twice in dev,
+ * and each payroll instance is read to work out who owns it. A refresh doubled
+ * it again.
+ *
+ * Two seconds is enough to collapse a mount's worth of duplicate reads without
+ * ever showing state that is meaningfully stale — a filed period does not
+ * appear and disappear inside one render pass. In-flight requests are shared
+ * rather than duplicated, which is what actually removes the burst.
+ */
+const CACHE_MS = 2000;
+const cache = new Map<string, { at: number; result: Promise<ChainState | null> }>();
+
 export async function fetchContractState(
+  networkId: string,
+  address: string
+): Promise<ChainState | null> {
+  const key = `${networkId}/${address}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
+
+  const result = fetchContractStateUncached(networkId, address);
+  cache.set(key, { at: Date.now(), result });
+  // A failed read must not be remembered — the next attempt should really try.
+  void result.catch(() => cache.delete(key));
+  return result;
+}
+
+async function fetchContractStateUncached(
   networkId: string,
   address: string
 ): Promise<ChainState | null> {

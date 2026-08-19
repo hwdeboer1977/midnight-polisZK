@@ -3,6 +3,7 @@ import { ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { fetchContractState, INDEXERS, INDEXER_WS } from "./chain";
 import { deriveEmployeeSeed, deriveEmployerKey, deriveNonce, sealedCoinNonce } from "./openings";
+import { submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
 import { connectContract } from "./submitPayroll";
 
 /**
@@ -141,9 +142,9 @@ export function contractLeaves(zswapStateText: string): number[] {
  * paying the wrong person.
  */
 export async function payPeriod(options: {
-  api: ConnectedAPI;
-  deployed: any;
-  contractModule: any;
+  providers: any;
+  compiledContract: any;
+  contractAddress: string;
   employerKey: Uint8Array;
   tokenId: string;
   period: number;
@@ -152,7 +153,9 @@ export async function payPeriod(options: {
   onProgress?: StepProgress;
 }): Promise<number> {
   const {
-    deployed,
+    providers: contractProviders,
+    compiledContract,
+    contractAddress,
     employerKey,
     tokenId,
     period,
@@ -161,54 +164,72 @@ export async function payPeriod(options: {
   } = options;
   const onProgress = options.onProgress ?? (() => {});
 
-  const payable = slots.filter((s) => s.funded && !s.paid);
-  const available = [...leaves];
-  let done = 0;
+  const outstanding = slots.filter((s) => s.funded && !s.paid);
+  if (outstanding.length === 0) return 0;
 
-  for (const slot of payable) {
-    const leaf = available.shift();
-    if (leaf === undefined) {
-      throw new Error(
-        `Ran out of contract coins at employee ${slot.index + 1}. The indexer may ` +
-          "not have caught up with funding yet — wait a moment and try again."
-      );
-    }
-
-    onProgress(
-      `Paying employee ${slot.index + 1} of ${slots.length} — proving, a few minutes…`
+  if (leaves.length < slots.length) {
+    throw new Error(
+      `The contract shows ${leaves.length} coins for ${slots.length} employees — ` +
+        "the indexer may not have caught up with funding yet. Try again in a moment."
     );
-
-    const salaryNonce = await deriveNonce(employerKey, period, slot.index);
-    const coinNonce = await sealedCoinNonce(employerKey, period, slot.index);
-    const employeeKeys = ZswapSecretKeys.fromSeed(
-      await deriveEmployeeSeed(employerKey, slot.index)
-    );
-
-    await deployed.callTx.payEmployee(
-      BigInt(period),
-      BigInt(slot.index),
-      slot.salaryMinor,
-      salaryNonce,
-      {
-        nonce: coinNonce,
-        color: toHexBytes(tokenId),
-        value: slot.salaryMinor,
-        mt_index: BigInt(leaf),
-      },
-      { bytes: toHexBytes(String(employeeKeys.coinPublicKey)) }
-    );
-    done += 1;
   }
-  return done;
+
+  onProgress(`Paying ${outstanding.length} employees in one transaction…`);
+
+  const color = toHexBytes(tokenId);
+  const salaries = slots.map((s) => s.salaryMinor);
+  const salaryNonces: Uint8Array[] = [];
+  const coins: unknown[] = [];
+  const payees: { bytes: Uint8Array }[] = [];
+  const encMappings: [string, string][] = [];
+
+  for (const [index, slot] of slots.entries()) {
+    const employee = ZswapSecretKeys.fromSeed(
+      await deriveEmployeeSeed(employerKey, index)
+    );
+    const payee = toHexBytes(String(employee.coinPublicKey).replace(/^0x/, ""));
+
+    salaryNonces.push(await deriveNonce(employerKey, period, index));
+    coins.push({
+      nonce: await sealedCoinNonce(employerKey, period, index),
+      color,
+      value: slot.salaryMinor,
+      mt_index: BigInt(leaves[index]!),
+    });
+    payees.push({ bytes: payee });
+
+    // Without this the coins are created and no payee can ever find theirs:
+    // a shielded coin is only discoverable by someone whose encryption key the
+    // transaction was built with.
+    encMappings.push([
+      Array.from(payee, (b) => b.toString(16).padStart(2, "0")).join(""),
+      String(employee.encryptionPublicKey).replace(/^0x/, "").toLowerCase(),
+    ]);
+  }
+
+  // One transaction, not one per employee. Paying slot by slot fails part way
+  // through with node error 170, `InvalidDustSpendProof` — the fee proof going
+  // stale across rapid transactions. One call needs one dust spend proof.
+  //
+  // `submitCallTx` rather than `deployed.callTx`: the shorthand cannot carry
+  // `additionalCoinEncPublicKeyMappings`.
+  await submitCallTx(contractProviders, {
+    compiledContract,
+    contractAddress,
+    circuitId: "payPeriod",
+    args: [BigInt(period), salaries, salaryNonces, coins, payees],
+    additionalCoinEncPublicKeyMappings: new Map(encMappings),
+  } as any);
+
+  return outstanding.length;
 }
 
 /**
  * One indexer provider per network, reused.
  *
- * Constructing one opens a websocket. Building a fresh provider on every read
- * meant a new socket per call, and the public indexer answered that with
- * "Rate limited" — which surfaced as a page-level error rather than as the
- * self-inflicted load it was.
+ * Constructing one opens a websocket, so building a fresh provider per read
+ * meant a new socket per call — which the public indexer answered with
+ * "Rate limited".
  */
 const providers = new Map<string, ReturnType<typeof indexerPublicDataProvider>>();
 
@@ -278,7 +299,12 @@ export async function fundAndPayPeriod(options: {
   onProgress("Deriving your key (PBKDF2, deliberately slow)…");
   const employerKey = await deriveEmployerKey(passphrase, contractAddress);
 
-  const { deployed, contractModule } = await connectContract({
+  const {
+    deployed,
+    contractModule,
+    providers: contractProviders,
+    compiledContract,
+  } = await connectContract({
     api,
     networkId,
     contractAddress,
@@ -307,9 +333,9 @@ export async function fundAndPayPeriod(options: {
   const fresh = slots.map((s) => ({ ...s, funded: true }));
 
   const paid = await payPeriod({
-    api,
-    deployed,
-    contractModule,
+    providers: contractProviders,
+    compiledContract,
+    contractAddress,
     employerKey,
     tokenId,
     period,

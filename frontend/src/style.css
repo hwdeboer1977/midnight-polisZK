@@ -474,3 +474,12 @@ button.primary.secondary-action {
 }
 .refile label { font-size: 13px; color: var(--text); }
 .refile .note { margin: 7px 0 0; }
+
+/* Opt-in to in-page proving. Deliberately plain: it is a diagnostic switch, not
+   a feature to advertise, and it should not compete with the primary action. */
+.prove-here {
+  display: block;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text);
+}
