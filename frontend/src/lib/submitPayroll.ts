@@ -1,5 +1,5 @@
 import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
-import { Transaction } from "@midnight-ntwrk/ledger-v8";
+import { Transaction, ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
 import { CompiledContract } from "@midnight-ntwrk/compact-js";
 import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
 import { httpClientProofProvider } from "@midnight-ntwrk/midnight-js-http-client-proof-provider";
@@ -8,7 +8,9 @@ import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { ZKConfigProvider } from "@midnight-ntwrk/midnight-js-types";
 import { pipe } from "effect";
 import { fetchContractState, INDEXERS, INDEXER_WS, PROOF_SERVERS } from "./chain";
+import { keyToHex } from "./keys";
 import {
+  deriveEmployeeSeed,
   deriveEmployerKey,
   deriveNonce,
   keyFingerprint,
@@ -77,6 +79,11 @@ class FetchZkConfigProvider extends ZKConfigProvider<string> {
 
 const toHex = (bytes: Uint8Array) =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+/** Coin public keys come back from the ledger as hex strings. */
+function hexToBytes(value: string): Uint8Array {
+  return fromHex(value);
+}
 
 function fromHex(hex: string): Uint8Array {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
@@ -238,6 +245,129 @@ async function anySealedOpening(
 }
 
 /**
+ * Wraps the proof provider so a rejection says what was rejected.
+ *
+ * `httpClientProofProvider` reports only `code="400"` and discards the response
+ * body, which is where the proof server explains itself — leaving a failure
+ * that names neither the circuit nor the reason. This re-requests the same
+ * endpoint on failure purely to read the body, and puts the circuit id in the
+ * message.
+ */
+function loggingProofProvider(inner: any): any {
+  return {
+    ...inner,
+    proveTx: async (tx: any, options?: any) => {
+      try {
+        return await inner.proveTx(tx, options);
+      } catch (cause) {
+        // The circuit id is not where it was guessed to be; log the whole
+        // options shape so the next failure names it without another round.
+        console.error("[proof] proveTx failed. options keys:", Object.keys(options ?? {}));
+        console.error("[proof] options:", options);
+        console.error("[proof] cause:", cause);
+        const circuit =
+          options?.circuitId ?? options?.zkConfig?.circuitId ?? "see [proof] options above";
+        throw new Error(
+          `Proving failed for circuit "${circuit}": ` +
+            (cause instanceof Error ? cause.message : String(cause))
+        );
+      }
+    },
+  };
+}
+
+/**
+ * Builds providers and binds to a deployed contract.
+ *
+ * Shared by filing, funding, and paying: all three need the same proof server,
+ * indexer, and wallet adapters, and having one copy is what stops them drifting
+ * into three subtly different provider stacks.
+ */
+export async function connectContract(options: {
+  api: ConnectedAPI;
+  networkId: string;
+  contractAddress: string;
+  contractName?: string;
+  onProgress?: SubmitProgress;
+}): Promise<{ deployed: any; contractModule: any }> {
+  const { api, networkId, contractAddress, contractName = "payroll" } = options;
+  const onProgress = options.onProgress ?? (() => {});
+
+  const indexer = INDEXERS[networkId];
+  const indexerWs = INDEXER_WS[networkId];
+  const proofServer = PROOF_SERVERS[networkId];
+  if (!indexer || !indexerWs) throw new Error(`No indexer configured for "${networkId}"`);
+  if (!proofServer) throw new Error(`No proof server configured for "${networkId}"`);
+
+  setNetworkId(networkId);
+
+  onProgress("Loading the compiled contract…");
+  const contractModule = await import("../generated/payroll/index.js");
+  const compiledContract = pipe(
+    CompiledContract.make(contractName, (contractModule as any).Contract),
+    CompiledContract.withVacantWitnesses
+  );
+
+  const zkConfigProvider = new FetchZkConfigProvider(contractName);
+  const shielded = await api.getShieldedAddresses();
+
+  const walletProvider = {
+    balanceTx: async (tx: any) => {
+      onProgress("Waiting for your wallet to balance and sign…");
+      const { tx: balanced } = await api.balanceUnsealedTransaction(toHex(tx.serialize()));
+      return Transaction.deserialize(
+        "signature",
+        "proof",
+        "binding",
+        fromHex(balanced)
+      ) as any;
+    },
+    // Bech32m -> hex. The connector hands out `mn_shield-cpk_preview1…`; the
+    // ledger works in raw hex, as `keys.ts` has documented all along. Circuits
+    // without coin operations never read these, which is why `setPayroll`
+    // proved fine and `fundEmployee` was rejected by the proof server with an
+    // empty 400 — the transaction it built was malformed, not the proof.
+    getCoinPublicKey: () => keyToHex(shielded.shieldedCoinPublicKey) as any,
+    getEncryptionPublicKey: () =>
+      keyToHex(shielded.shieldedEncryptionPublicKey) as any,
+  };
+
+  const midnightProvider = {
+    submitTx: async (tx: any) => {
+      onProgress("Submitting to the network…");
+      await api.submitTransaction(toHex(tx.serialize()));
+      const identifiers: string[] = tx.identifiers?.() ?? [];
+      if (identifiers.length === 0) {
+        throw new Error(
+          "The transaction was submitted but reported no identifier, so its " +
+            "confirmation cannot be followed. Check the contract state directly."
+        );
+      }
+      return identifiers[0] as any;
+    },
+  };
+
+  const providers: any = {
+    privateStateProvider: emptyPrivateStateProvider(),
+    publicDataProvider: indexerPublicDataProvider(indexer, indexerWs),
+    zkConfigProvider,
+    proofProvider: loggingProofProvider(
+      httpClientProofProvider(proofServer, zkConfigProvider as any)
+    ),
+    walletProvider,
+    midnightProvider,
+  };
+
+  onProgress("Connecting to the contract…");
+  const deployed: any = await findDeployedContract(providers, {
+    compiledContract: compiledContract as any,
+    contractAddress,
+  });
+
+  return { deployed, contractModule };
+}
+
+/**
  * Whether this contract already holds sealed openings.
  *
  * Drives whether the UI asks for the passphrase twice: a retype is only worth
@@ -303,6 +433,20 @@ export async function submitPayroll(options: {
 
   onProgress("Loading the compiled contract…");
   const contractModule = await import("../generated/payroll/index.js");
+
+  // Who each slot is payable to, as the hash the circuit will check against.
+  // Computed with the contract's own pure circuit rather than reimplementing
+  // the struct encoding here, for the same reason commitments are.
+  const payees: Uint8Array[] = [];
+  for (let index = 0; index < salaries.length; index += 1) {
+    const seed = await deriveEmployeeSeed(employerKey, index);
+    const keys = ZswapSecretKeys.fromSeed(seed);
+    payees.push(
+      (contractModule as any).pureCircuits.payeeHash({
+        bytes: hexToBytes(String(keys.coinPublicKey)),
+      })
+    );
+  }
   const compiledContract = pipe(
     CompiledContract.make(contractName, (contractModule as any).Contract),
     CompiledContract.withVacantWitnesses
@@ -332,8 +476,9 @@ export async function submitPayroll(options: {
         fromHex(balanced)
       ) as any;
     },
-    getCoinPublicKey: () => coinPublicKey as any,
-    getEncryptionPublicKey: () => encryptionPublicKey as any,
+    // Bech32m -> hex; see the note in connectContract.
+    getCoinPublicKey: () => keyToHex(coinPublicKey) as any,
+    getEncryptionPublicKey: () => keyToHex(encryptionPublicKey) as any,
   };
 
   const midnightProvider = {
@@ -362,7 +507,9 @@ export async function submitPayroll(options: {
     privateStateProvider: emptyPrivateStateProvider(),
     publicDataProvider: indexerPublicDataProvider(indexer, indexerWs),
     zkConfigProvider,
-    proofProvider: httpClientProofProvider(proofServer, zkConfigProvider as any),
+    proofProvider: loggingProofProvider(
+      httpClientProofProvider(proofServer, zkConfigProvider as any)
+    ),
     walletProvider,
     midnightProvider,
   };
@@ -381,7 +528,8 @@ export async function submitPayroll(options: {
     BigInt(period),
     salaries,
     nonces,
-    sealedOpenings
+    sealedOpenings,
+    payees
   );
 
   // Only now is the passphrase binding: a commitment on chain depends on it.

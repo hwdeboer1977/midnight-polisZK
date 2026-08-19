@@ -1,0 +1,26 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+// Probe: can a contract hold and pay out a shielded coin WITHOUT publishing
+// what it is worth? The coin is a witness argument and is never stored.
+
+export ledger deposits: Counter;
+export ledger payouts: Counter;
+
+export circuit deposit(coin: ShieldedCoinInfo): [] {
+  receiveShielded(disclose(coin));
+  deposits.increment(1);
+}
+
+export circuit withdraw(
+  coin: QualifiedShieldedCoinInfo,
+  to: ZswapCoinPublicKey,
+  amount: Uint<128>
+): [] {
+  sendShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(disclose(to)),
+    disclose(amount)
+  );
+  payouts.increment(1);
+}

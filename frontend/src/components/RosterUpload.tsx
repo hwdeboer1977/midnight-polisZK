@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ParsedRoster } from "../generated/roster";
-import { hasBeenFiled, submitPayroll, type SubmitResult } from "../lib/submitPayroll";
+import { submitPayroll, type SubmitResult } from "../lib/submitPayroll";
+import { fundAndPayViaService, periodStatus, type RunResult } from "../lib/payPayroll";
 import { useWallet } from "../wallet/WalletContext";
 
 // The xlsx parser drags in ~950 kB of spreadsheet library. Loading it only when
@@ -49,6 +50,14 @@ export function RosterUpload({
   const [confirmation, setConfirmation] = useState("");
   /** Null until the chain has been asked whether this contract has been filed before. */
   const [firstFiling, setFirstFiling] = useState<boolean | null>(null);
+  const [payStep, setPayStep] = useState<string | null>(null);
+  const [payResult, setPayResult] = useState<RunResult | null>(null);
+  const [payError, setPayError] = useState<string | null>(null);
+  /** Name of a filed-but-unpaid period, so the card can say why a file is needed. */
+  const [outstanding, setOutstanding] = useState<string | null>(null);
+  const [filedPeriods, setFiledPeriods] = useState<number[]>([]);
+  /** Explicit opt-in to replacing a month that is already on chain. */
+  const [allowRefile, setAllowRefile] = useState(false);
   const [roster, setRoster] = useState<ParsedRoster | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,32 +87,96 @@ export function RosterUpload({
     }
   }
 
+  // One read of the contract, not two. Both answers come from the same state,
+  // and the public indexer rate-limits a page that asks twice on every mount.
+  //
+  // `firstFiling` decides whether to ask for the passphrase twice: confirmation
+  // is only useful before anything is on chain, since afterwards a wrong
+  // passphrase is caught by failing to open an existing opening — a real check
+  // rather than a retype.
   useEffect(() => {
     if (!target) return;
     let cancelled = false;
-    // Confirmation is only useful before anything is on chain; afterwards a
-    // wrong passphrase is caught by failing to open an existing opening, which
-    // is a real check rather than a retype.
-    void hasBeenFiled(networkId, target.contractAddress)
-      .then((filed) => !cancelled && setFirstFiling(!filed))
-      .catch(() => !cancelled && setFirstFiling(true));
+    const address = target.contractAddress;
+
+    void (async () => {
+      try {
+        const status = await periodStatus(networkId, address);
+        if (cancelled) return;
+        setFirstFiling(!status.hasSealed);
+        setOutstanding(status.unpaid === null ? null : periodName(status.unpaid));
+        setFiledPeriods(status.filed);
+      } catch {
+        // A failed read must not make the card claim a period is settled, nor
+        // skip the confirmation field. Both fall back to the cautious answer.
+        if (cancelled) return;
+        setFirstFiling(true);
+        setOutstanding(null);
+        setFiledPeriods([]);
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [target?.contractAddress, networkId]);
+  }, [target?.contractAddress, networkId, submitted, payResult]);
 
   const usable = roster !== null && roster.problems.length === 0;
   const needsConfirmation = firstFiling !== false;
   const passphraseReady =
     passphrase.length >= 8 && (!needsConfirmation || confirmation === passphrase);
   const submitting = step !== null;
+  // Filing a month that is already on chain replaces its commitments with fresh
+  // nonces and resets its payment flags — so a month that was paid would read
+  // as unpaid, against commitments the old openings no longer match. It is a
+  // legitimate operation (a correction) but never an accident, hence the
+  // explicit opt-in rather than a button that happens to still be enabled.
+  const alreadyFiled =
+    roster?.period !== null &&
+    roster?.period !== undefined &&
+    filedPeriods.includes(roster.period);
+
   const canSubmit =
     usable &&
     roster.period !== null &&
     target !== undefined &&
     api !== null &&
     passphraseReady &&
+    (!alreadyFiled || allowRefile) &&
     !submitting;
+
+  /**
+   * Funds and pays the period this roster describes.
+   *
+   * Needs the roster, not just the chain: the contract holds commitments, so
+   * the salaries have to come from the file that produced them.
+   */
+  async function onFundAndPay() {
+    if (!roster || roster.period === null || !target || !api) return;
+
+    setPayError(null);
+    setPayResult(null);
+    setPayStep("Starting…");
+    try {
+      // Runs in the local service, not here — the browser cannot prove circuits
+      // with coin operations. See fundAndPayViaService.
+      setPayResult(
+        await fundAndPayViaService({
+          instance: target.name.replace(/^payroll:/, ""),
+          contractAddress: target.contractAddress,
+          period: roster.period,
+          salaries: roster.rows.map((row) => row.salaryMinor),
+          passphrase,
+          onProgress: setPayStep,
+        })
+      );
+      onSubmitted?.();
+    } catch (cause) {
+      setPayError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPayStep(null);
+    }
+  }
 
   async function onSubmit() {
     if (!roster || roster.period === null || !target || !api) return;
@@ -136,6 +209,14 @@ export function RosterUpload({
   return (
     <section className="card">
       <h2>Upload roster</h2>
+
+      {target && outstanding ? (
+        <p className="note first-time">
+          <strong>{outstanding} is filed but not fully paid.</strong> Upload the same
+          roster again to fund and pay it — the chain stores commitments, not salaries,
+          so the amounts have to come from the file that produced them.
+        </p>
+      ) : null}
 
       <label className="upload">
         <input type="file" accept=".xlsx" onChange={(e) => void onFile(e)} />
@@ -268,6 +349,26 @@ export function RosterUpload({
                     </p>
                   </div>
 
+                  {alreadyFiled ? (
+                    <div className="refile">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={allowRefile}
+                          disabled={submitting || payStep !== null}
+                          onChange={(e) => setAllowRefile(e.target.checked)}
+                        />{" "}
+                        Re-file {roster.period ? periodName(roster.period) : "this month"} —
+                        replaces its commitments and marks every employee unpaid
+                      </label>
+                      <p className="note">
+                        Already on chain. To pay it, use <strong>Fund and pay</strong>{" "}
+                        below; re-filing is for correcting a month, and any payment
+                        already made against the old commitments would no longer match.
+                      </p>
+                    </div>
+                  ) : null}
+
                   <button
                     className="primary"
                     onClick={() => void onSubmit()}
@@ -275,7 +376,9 @@ export function RosterUpload({
                   >
                     {submitting
                       ? "Submitting…"
-                      : `Submit payroll for ${roster.period ? periodName(roster.period) : "this period"}`}
+                      : alreadyFiled
+                        ? `Re-file ${roster.period ? periodName(roster.period) : "this period"}`
+                        : `Submit payroll for ${roster.period ? periodName(roster.period) : "this period"}`}
                   </button>
                   <p className="note">
                     Files against <strong>{target.name}</strong>. Your wallet will ask you
@@ -290,7 +393,57 @@ export function RosterUpload({
                 </p>
               )}
 
+              {/* Funding and paying reuse the same passphrase and the same
+                  roster, so they live here rather than on the contract card —
+                  the chain holds commitments, not salaries. */}
+              <button
+                className="primary secondary-action"
+                onClick={() => void onFundAndPay()}
+                disabled={
+                  !usable ||
+                  roster.period === null ||
+                  !api ||
+                  !passphraseReady ||
+                  submitting ||
+                  payStep !== null
+                }
+              >
+                {payStep !== null ? "Funding and paying…" : "Fund and pay this period"}
+              </button>
+              <p className="note">
+                Moves pEUR into the contract, one coin per employee carrying exactly the
+                committed salary, then pays each one out. The circuit refuses any amount
+                that does not open that employee's commitment, so nobody — including you
+                — can pay a figure other than the one filed. Twenty proofs for ten
+                employees, so expect this to take a while. Safe to re-run: funded and
+                paid slots are skipped.
+              </p>
+              <p className="note">
+                <strong>Runs in the local payroll service</strong> (
+                <code>npm run demo:server</code>), not in this page — coin-carrying
+                circuits cannot yet be proven through the wallet connector. So this needs
+                the service running, it signs with the platform wallet rather than yours,
+                and this period's amounts are sent to <code>127.0.0.1</code>. Your
+                passphrase is <strong>not</strong> sent — the nonces and the employees'
+                public keys are derived here first, so the service can pay this month and
+                nothing else.
+              </p>
+
               {step ? <p className="status">{step}</p> : null}
+              {payStep ? <p className="status">{payStep}</p> : null}
+
+              {payError ? (
+                <p className="status error">Could not fund/pay: {payError}</p>
+              ) : null}
+
+              {payResult ? (
+                <div className="problems">
+                  <strong>
+                    Funded {payResult.funded}, paid {payResult.paid} employee
+                    {payResult.paid === 1 ? "" : "s"}
+                  </strong>
+                </div>
+              ) : null}
 
               {submitError ? (
                 <p className="status error">Could not submit: {submitError}</p>

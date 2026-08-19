@@ -610,6 +610,185 @@ than an error.
 `npm run frontend` regenerates it first, so a normal start stays in sync. Running
 `npm --prefix frontend run dev` directly skips that step.
 
+## What is private, and what is not
+
+Everything below was verified on preview, not inferred from documentation. Where
+something is unproven it says so.
+
+### On chain
+
+| | Visible to anyone | Why |
+| --- | --- | --- |
+| Period filed (`202608`) | **yes** | it is the ledger key |
+| Employee count | **yes** | `employeeCountFor` |
+| Total payroll for a period | **yes** | `totalPayrollFor` — this is the dashboard figure |
+| Which slots are funded / paid | **yes** | `fundedFor`, `paidFor` |
+| The employer's key | **yes** | `employer` |
+| **Individual salaries** | no | only `persistentHash(salary, nonce)` |
+| **Amounts moved when paying** | no | shielded coins |
+| **Who each employee is** | no | `payeeFor` stores a hash of the coin public key |
+| **The openings** | no | sealed under the employer's key |
+
+The public total is deliberate and useful: an auditor can check what a company
+paid in a month without learning what anyone earns.
+
+### Contract-held coins are private — with a condition
+
+A contract can hold and pay out shielded pEUR without publishing the amounts,
+but only if it is written to refuse to remember them. Verified with a throwaway
+`vault` contract: deposited 2.0 pEUR, then searched the whole serialized state.
+
+```
+balance map: 0 entries          <- ContractState.balance stays empty for shielded coins
+deposits: 1                     <- the receive happened
+serialized state: 4500 bytes
+contains 2000000?  BE:false  LE:false
+```
+
+Store the coin in the ledger instead — the obvious design, since it lets the
+contract track its own balance — and the generated ledger type is:
+
+```ts
+readonly held: { nonce: Uint8Array, color: Uint8Array,
+                 value: bigint, mt_index: bigint };
+```
+
+`value` in cleartext, readable by anyone. So the privacy is a construction you
+choose and keep choosing: the coin must stay a **witness argument** on every
+call, never ledger state.
+
+The cost is that the contract does not know what it holds, so the caller must
+rebuild each coin from `nonce`, `color`, `value` and `mt_index`. The first three
+are derived; `mt_index` comes from the indexer:
+
+```
+queryZSwapAndContractState(addr) -> zswap.filter(addr)
+coin_coms: MerkleTree { 31757: (70db1d7c…, Some(ContractAddress(3fe1db34…))) }
+```
+
+⚠️ That view lists every coin the contract ever **received**, including ones it
+has since spent — there is no unspent view, and `nullifiers` reads empty. Do not
+treat it as a list of available coins.
+
+## Where proving happens
+
+Proving needs the prover key and ZKIR that `compact compile` produced, and it
+takes the salaries as input — so there is deliberately no hosted prover. It runs
+on the operator's own machine either way.
+
+| | Browser | CLI / local service |
+| --- | --- | --- |
+| Who signs | the employer's wallet extension | whatever is in `.env` |
+| Works for any employer | yes | only when employer == operator |
+| Circuits without coin operations (`setPayroll`) | **works** | works |
+| Circuits with coin operations (`fundEmployee`, `payEmployee`) | **broken** | works |
+| Salaries leave the machine | no | no (localhost only) |
+| Prover key delivery | fetched from `public/zk` (10 MB+) | read from disk |
+
+### The browser cannot currently prove coin circuits
+
+`fundEmployee` and `payEmployee` fail with an empty `400` from the proof server,
+returned in about 4 ms — the request is rejected at parsing, before any proving
+starts. The same circuits prove fine from Node against the same server.
+
+Ruled out, each by test rather than by reasoning:
+
+- **Keys and ZKIR** — all circuits present and served, `fundEmployee.prover`
+  5.2 MB, HTTP 200.
+- **The ZK config provider** — `NodeZkConfigProvider` returns a plain `Buffer`
+  with no branding, so a fetch-based provider is equivalent.
+- **The contract, circuit and proof server** — a `probe` instance deployed with
+  the platform as its own employer let the CLI call the circuits directly. Both
+  `setPayroll` and `fundEmployee` proved and submitted.
+
+One real bug was found and fixed along the way: the DApp connector returns keys
+in **Bech32m** while the ledger works in hex, and the wallet provider was passing
+them through unconverted. Those getters are only read when a transaction creates
+coin outputs, which is exactly why `setPayroll` was unaffected. Fixing it did not
+resolve the 400, so at least one further cause remains, in transaction
+construction rather than in the contract.
+
+Until that is solved, funding and payment run through the local service.
+
+### The local service, and what it can see
+
+`npm run demo:server` exposes `POST /api/payroll/run`, which the page's **Fund
+and pay** button calls. It signs with the `.env` wallet, so it only works where
+the employer is the operator.
+
+What it receives is one period's derived material — amounts, nonces, and the
+employees' **public** keys. It does **not** receive the payroll passphrase:
+
+| | passphrase sent | derived material sent |
+| --- | --- | --- |
+| This month's amounts | visible | visible |
+| Other periods' commitments | can open | **cannot** |
+| Employees' spending keys | has them | **no** |
+
+That matters because the passphrase derives every nonce for every period and
+every employee keypair. Sending it would make a compromised service able to read
+and spend everything, forever.
+
+This is still the one step where the roster leaves the browser, even if only as
+far as `127.0.0.1`.
+
+## Funding and paying
+
+Funding and payment are separate transactions, and that is forced rather than
+chosen: `sendShielded` needs a coin's `mt_index`, and a coin received in the same
+transaction does not have one yet. A contract cannot receive and forward
+atomically.
+
+**Funding adds coins; paying spends them.** Adds commute, so ten funding
+transactions are independent and a stale view is still a valid one. Spends do
+not: each payment invalidates the view the next was built against. Observed
+exactly that — ten slots funded as ten transactions, then payments succeeded
+four times and failed on the fifth with `Invalid Transaction: Custom error: 170`,
+reproducibly at that slot.
+
+`payPeriod` batches all ten sends into one transaction, which removes the
+sequencing problem by construction and also removes a leak: ten payments publish
+ten events showing which slot settled when, where one transaction settles the
+month with no per-employee signal. It costs a **73 MB** prover key against 9 MB
+for a single payment, and it is all-or-nothing — a half-paid month can only be
+finished slot by slot.
+
+⚠️ **Unproven.** `payPeriod` compiles but has never run: verifier keys are fixed
+at deploy, so a contract deployed before the circuit existed has no key for it
+and `findDeployedContract` refuses. Testing it needs a redeploy.
+
+### Paying needs the recipient's encryption key
+
+`payEmployee` sends to a coin public key, but a shielded coin can only be
+*found* by someone whose encryption key the transaction was built with. Without
+it the payment succeeds and the money is unreachable. The `callTx` shorthand
+cannot carry the mapping, so payment uses `submitCallTx`:
+
+```ts
+additionalCoinEncPublicKeyMappings: new Map([[coinKey, encKey]])
+```
+
+The same requirement is documented on `peur.mintTo`.
+
+## Wave 1 is custodial — say so
+
+Employee keys are derived from the employer's passphrase, so no keys need
+collecting and payment works today. It also means **whoever holds the passphrase
+can spend every employee's salary**. Money moves to addresses the employer
+controls.
+
+That is defensible while the employer is holding the money anyway, and it stops
+being defensible the moment it is described as employees being paid. What is
+demonstrated is a working private payment rail, not employees in possession of
+their wages.
+
+The migration is per slot: when an employee supplies a real key it replaces the
+derived one in the roster, and the next period pays the real one.
+
+Running the service against an instance where the operator is also the employer
+collapses this further — one wallet as operator, employer and every employee.
+Fine for a demo, and worth stating plainly rather than leaving to be discovered.
+
 ## Deployments and instances
 
 `deployment.json` keys every deployment as `<networkId>/<contract>[:instance]`:
@@ -808,6 +987,22 @@ midnight-polisZK/
 ├── .wallet-state/                 # cached sync state (gitignored, 0600)
 └── payroll-secrets.*.json         # local cache of openings, rebuildable from chain (gitignored, 0600)
 ```
+
+## Status at a glance
+
+| Capability | State |
+| --- | --- |
+| Per-period commitments, salaries private | **working**, verified on chain |
+| Sealed openings recoverable from chain | **working**, cross-verified Node ↔ browser |
+| Filing payroll from the browser | **working** |
+| Contract holding shielded pEUR privately | **working**, verified byte level |
+| Funding slots (one tx each) | **working**, 10/10 |
+| Paying slot by slot | **partial** — 4/10, then `Custom error: 170` |
+| Paying a whole period in one tx | **compiles, never run** — needs a redeploy |
+| Proving coin circuits in the browser | **broken** — empty 400, cause unknown |
+| DUST sponsorship | **untested** — mechanism exists in the SDK |
+| Employees holding their own keys | **not started** — wave 1 is custodial |
+| Tax / net pay | **not started** |
 
 ## Not built yet
 

@@ -46,6 +46,11 @@ export interface PayrollLedger {
    * Opaque here: the browser never holds the wallet secret that opens it.
    */
   sealedFor: LedgerMap<bigint, LedgerMap<bigint, Uint8Array>>;
+  /** period -> employee index -> whether that slot is funded / paid. */
+  fundedFor: LedgerMap<bigint, LedgerMap<bigint, boolean>>;
+  paidFor: LedgerMap<bigint, LedgerMap<bigint, boolean>>;
+  /** period -> employee index -> hash of the payee's coin public key. */
+  payeeFor: LedgerMap<bigint, LedgerMap<bigint, Uint8Array>>;
 }
 
 interface LedgerMap<K, V> {

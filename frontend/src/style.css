@@ -453,3 +453,24 @@ button.primary {
   border-left: 3px solid var(--accent);
   border-radius: 7px;
 }
+
+/* The second action on the roster card. Visually subordinate to Submit, since
+   filing has to happen before funding means anything. */
+button.primary.secondary-action {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  margin-top: 10px;
+}
+
+/* Opt-in to replacing a month already on chain. Boxed because it changes what
+   the primary button does, and that should be impossible to miss. */
+.refile {
+  margin-top: 16px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-left: 3px solid #d08700;
+  border-radius: 7px;
+}
+.refile label { font-size: 13px; color: var(--text); }
+.refile .note { margin: 7px 0 0; }

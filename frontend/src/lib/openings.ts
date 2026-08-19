@@ -34,6 +34,8 @@ const PLAINTEXT_BYTES = SALARY_BYTES + NONCE_BYTES;
 const DOMAIN = {
   nonce: "polisZK/nonce/v1",
   seal: "polisZK/seal/v1",
+  employee: "polisZK/employee/v1",
+  coin: "polisZK/coin/v1",
 } as const;
 
 /**
@@ -197,4 +199,33 @@ export async function openSealed(
  */
 export async function keyFingerprint(employerKey: Uint8Array): Promise<string> {
   return toHex(await sha256("polisZK/fingerprint/v1", employerKey));
+}
+
+/**
+ * The seed for one employee's payment keypair. Mirrors the CLI exactly.
+ *
+ * Keyed by index only, never by period: a nonce changes every month, an
+ * employee's key must not. See `src/utils/payroll-openings.ts` for why these
+ * derived keys are custodial and what replacing them looks like.
+ */
+export async function deriveEmployeeSeed(
+  employerKey: Uint8Array,
+  index: number
+): Promise<Uint8Array> {
+  return sha256(DOMAIN.employee, employerKey, String(index));
+}
+
+/**
+ * The nonce of the coin that funds one slot.
+ *
+ * Derived so the coin can be rebuilt at payday. Distinct from the salary nonce
+ * — that one opens a commitment, this one identifies a coin — hence a separate
+ * domain tag, so the two can never collide.
+ */
+export async function sealedCoinNonce(
+  employerKey: Uint8Array,
+  period: number,
+  index: number
+): Promise<Uint8Array> {
+  return sha256(DOMAIN.coin, employerKey, `${period}:${index}`);
 }

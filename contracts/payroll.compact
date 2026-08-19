@@ -73,10 +73,41 @@ export ledger commitmentsFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
 // they alone hold the key, and they alone need the backup.
 export ledger sealedFor: Map<Uint<32>, Map<Uint<8>, Bytes<68>>>;
 
+// period -> employee index -> hash of the recipient's coin public key.
+//
+// A hash, not the key. A public map of the keys on this employer's payroll
+// would publish the employment relationships that everything else here exists
+// to hide, and the contract only ever needs to *check* a recipient, never to
+// name one — so the preimage can stay in the employer's spreadsheet.
+export ledger payeeFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
+
+// period -> employee index -> whether that slot has been funded.
+//
+// Funding and paying are separate because payroll is: a month is filed and
+// funded when it is run, and paid on payday. Tracking it per slot is what lets
+// a dashboard say "8 of 10 funded" rather than only "some money arrived".
+export ledger fundedFor: Map<Uint<32>, Map<Uint<8>, Boolean>>;
+
+// period -> employee index -> whether that slot has been paid.
+//
+// The flag is what makes paying twice impossible; without it a replayed call
+// would send a second coin for the same commitment. It reveals which slots are
+// settled but never for how much.
+export ledger paidFor: Map<Uint<32>, Map<Uint<8>, Boolean>>;
+
+// The token this instance pays in, fixed on the first payment.
+//
+// Without it, anyone could fund a slot with a token they minted themselves and
+// the contract would happily treat it as salary. Recorded once and then
+// enforced, so every later period is denominated in the same thing.
+export ledger payToken: Bytes<32>;
+export ledger payTokenSet: Boolean;
+
 constructor() {
   platform = disclose(ownPublicKey());
   employerAssigned = false;
   latestPeriod = 0;
+  payTokenSet = false;
 }
 
 // Hands the instance to its employer. Callable once, by the deployer only.
@@ -107,7 +138,8 @@ export circuit setPayroll(
   period: Uint<32>,
   salaries: Vector<10, Uint<60>>,
   nonces: Vector<10, Bytes<32>>,
-  sealedOpenings: Vector<10, Bytes<68>>
+  sealedOpenings: Vector<10, Bytes<68>>,
+  payees: Vector<10, Bytes<32>>
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
   assert(ownPublicKey() == employer, "only the employer may set payroll");
@@ -135,6 +167,15 @@ export circuit setPayroll(
   if (!sealedFor.member(p)) {
     sealedFor.insert(p, default<Map<Uint<8>, Bytes<68>>>);
   }
+  if (!payeeFor.member(p)) {
+    payeeFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
+  }
+  if (!paidFor.member(p)) {
+    paidFor.insert(p, default<Map<Uint<8>, Boolean>>);
+  }
+  if (!fundedFor.member(p)) {
+    fundedFor.insert(p, default<Map<Uint<8>, Boolean>>);
+  }
 
   for (const i of 0..10) {
     commitmentsFor.lookup(p).insert(
@@ -146,6 +187,11 @@ export circuit setPayroll(
     // Written in the same circuit as the commitment it opens, so a period can
     // never end up on chain with one and not the other.
     sealedFor.lookup(p).insert(i as Uint<8>, disclose(sealedOpenings[i]));
+    payeeFor.lookup(p).insert(i as Uint<8>, disclose(payees[i]));
+    // Re-filing a period resets its payment flags along with its commitments:
+    // a corrected month has not been paid, even if the month it replaced was.
+    paidFor.lookup(p).insert(i as Uint<8>, false);
+    fundedFor.lookup(p).insert(i as Uint<8>, false);
   }
 
   periods.insert(p);
@@ -157,6 +203,191 @@ export circuit setPayroll(
   if (p > latestPeriod) {
     latestPeriod = p;
   }
+}
+
+// Moves one employee's salary into the contract, ahead of payday.
+//
+// The amount is checked against the commitment on the way in, not just on the
+// way out. Funding a slot with the wrong figure would otherwise sit undetected
+// until `payEmployee` refused it — after ten proofs and a month of assuming the
+// payroll was covered.
+//
+// One coin per slot rather than one pot for the period. Two reasons, neither of
+// them privacy: a single pot has to be split on every payment, so payouts
+// serialise and two of them race; and a per-slot coin already carries exactly
+// the committed amount, so `payEmployee` moves it whole.
+export circuit fundEmployee(
+  period: Uint<32>,
+  index: Uint<8>,
+  salary: Uint<60>,
+  nonce: Bytes<32>,
+  coin: ShieldedCoinInfo
+): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(ownPublicKey() == employer, "only the employer may fund payroll");
+
+  const p = disclose(period);
+  const i = disclose(index);
+
+  assert(commitmentsFor.member(p), "no payroll filed for that period");
+  assert(commitmentsFor.lookup(p).member(i), "no such employee in that period");
+  assert(!fundedFor.lookup(p).lookup(i), "already funded");
+
+  assert(
+    commitmentsFor.lookup(p).lookup(i) ==
+      persistentHash<SalaryCommitment>(
+        SalaryCommitment { amount: salary, nonce: nonce }
+      ),
+    "salary and nonce do not open the commitment for that employee"
+  );
+
+  if (!payTokenSet) {
+    payToken = disclose(coin.color);
+    payTokenSet = true;
+  }
+  assert(payToken == disclose(coin.color), "wrong token for this payroll");
+  assert(coin.value == salary as Uint<128>, "coin does not hold the committed salary");
+
+  receiveShielded(disclose(coin));
+  fundedFor.lookup(p).insert(i, true);
+}
+
+// Pays one employee the exact amount committed for them.
+//
+// This is the circuit the whole design exists for. The commitment already on
+// chain is the payment authorisation: the caller must produce a (salary, nonce)
+// that hashes to it, and the coin that moves is required to carry exactly that
+// salary. Nobody — including the employer — can pay an employee an amount that
+// differs from what was committed for them, and no observer learns what any of
+// those amounts are.
+//
+// The coin is a witness rather than ledger state, deliberately. A contract that
+// stores its own `QualifiedShieldedCoinInfo` publishes the value in cleartext,
+// which would hand every salary to anyone reading the chain. Keeping it as an
+// argument means the caller must reconstruct the coin from the indexer, which
+// is a real cost, paid on purpose.
+export circuit payEmployee(
+  period: Uint<32>,
+  index: Uint<8>,
+  salary: Uint<60>,
+  nonce: Bytes<32>,
+  coin: QualifiedShieldedCoinInfo,
+  payee: ZswapCoinPublicKey
+): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(ownPublicKey() == employer, "only the employer may pay");
+
+  const p = disclose(period);
+  const i = disclose(index);
+
+  assert(commitmentsFor.member(p), "no payroll filed for that period");
+  assert(commitmentsFor.lookup(p).member(i), "no such employee in that period");
+  assert(fundedFor.lookup(p).lookup(i), "that slot has not been funded");
+  assert(!paidFor.lookup(p).lookup(i), "already paid");
+
+  // The opening must reproduce the commitment. This is what stops an employer
+  // paying a different figure than the one they published a commitment to.
+  assert(
+    commitmentsFor.lookup(p).lookup(i) ==
+      persistentHash<SalaryCommitment>(
+        SalaryCommitment { amount: salary, nonce: nonce }
+      ),
+    "salary and nonce do not open the commitment for that employee"
+  );
+
+  // And it must go to the person that slot was filed for, so marking a slot
+  // paid cannot be done by sending the money somewhere else.
+  assert(
+    payeeFor.lookup(p).lookup(i) == persistentHash<ZswapCoinPublicKey>(payee),
+    "recipient is not the payee filed for that employee"
+  );
+
+  // One token per instance, fixed the first time anyone is paid. Otherwise a
+  // slot could be settled with a token minted for the purpose.
+  if (!payTokenSet) {
+    payToken = disclose(coin.color);
+    payTokenSet = true;
+  }
+  assert(payToken == disclose(coin.color), "wrong token for this payroll");
+
+  // The coin must carry exactly the committed salary — not at least it, not a
+  // convenient round number. Sending less than the coin holds would leave the
+  // remainder stranded in the contract with nothing recording that it exists.
+  assert(coin.value == salary as Uint<128>, "coin does not hold the committed salary");
+
+  sendShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(disclose(payee)),
+    disclose(salary) as Uint<128>
+  );
+
+  paidFor.lookup(p).insert(i, true);
+}
+
+// Pays the whole period in one transaction.
+//
+// Ten separate payments do not work, and not by accident: each one spends a
+// coin the contract owns, so it invalidates the view the next payment was
+// built against. Adding coins commutes, spending them does not — which is why
+// funding ten slots as ten transactions is fine and paying them is not.
+//
+// Batching also removes a leak, the same one that makes `setPayroll` a single
+// call: ten payments publish ten events showing which slot settled when. One
+// transaction settles the month with no per-employee signal at all.
+//
+// All-or-nothing is a feature here. A half-paid month is a worse state to be in
+// than a month that failed cleanly and can be retried.
+export circuit payPeriod(
+  period: Uint<32>,
+  salaries: Vector<10, Uint<60>>,
+  nonces: Vector<10, Bytes<32>>,
+  coins: Vector<10, QualifiedShieldedCoinInfo>,
+  payees: Vector<10, ZswapCoinPublicKey>
+): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(ownPublicKey() == employer, "only the employer may pay");
+
+  const p = disclose(period);
+  assert(commitmentsFor.member(p), "no payroll filed for that period");
+
+  for (const i of 0..10) {
+    const idx = i as Uint<8>;
+
+    assert(fundedFor.lookup(p).lookup(idx), "a slot has not been funded");
+    assert(!paidFor.lookup(p).lookup(idx), "a slot has already been paid");
+
+    assert(
+      commitmentsFor.lookup(p).lookup(idx) ==
+        persistentHash<SalaryCommitment>(
+          SalaryCommitment { amount: salaries[i], nonce: nonces[i] }
+        ),
+      "salary and nonce do not open the commitment for that employee"
+    );
+    assert(
+      payeeFor.lookup(p).lookup(idx) == persistentHash<ZswapCoinPublicKey>(payees[i]),
+      "recipient is not the payee filed for that employee"
+    );
+    assert(payToken == disclose(coins[i].color), "wrong token for this payroll");
+    assert(
+      coins[i].value == salaries[i] as Uint<128>,
+      "coin does not hold the committed salary"
+    );
+
+    sendShielded(
+      disclose(coins[i]),
+      left<ZswapCoinPublicKey, ContractAddress>(disclose(payees[i])),
+      disclose(salaries[i]) as Uint<128>
+    );
+    paidFor.lookup(p).insert(idx, true);
+  }
+}
+
+// Pure, for the same reason `commitmentFor` is: the employer needs to compute
+// the payee hash locally when filing, and it must be the identical hash this
+// contract checks against — not a re-implementation in TypeScript that could
+// drift from the struct encoding Compact uses.
+export pure circuit payeeHash(payee: ZswapCoinPublicKey): Bytes<32> {
+  return persistentHash<ZswapCoinPublicKey>(payee);
 }
 
 // Pure: touches no ledger state, so the compiler exposes it in `pureCircuits`

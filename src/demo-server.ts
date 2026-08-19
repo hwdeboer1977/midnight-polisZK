@@ -2,6 +2,7 @@ import "dotenv/config";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
+import { fundAndPay } from "./utils/payroll-run.js";
 import { onboardEmployer } from "./utils/onboarding.js";
 import {
   EMPLOYER_ALLOWANCE,
@@ -171,6 +172,77 @@ const server = createServer((req, res) => {
    * company buy the service, and does that still stand" — not "who controls
    * this payroll", which only the contract can answer.
    */
+  /**
+   * Funds and pays a filed period.
+   *
+   * ⚠️ Signs with the platform wallet, so it only works where the employer IS
+   * the operator. It exists because circuits with coin operations cannot
+   * currently be proven through the browser — see `payroll-run.ts`.
+   *
+   * The request carries salaries and the payroll passphrase. Both stay on this
+   * machine — the service is bound to 127.0.0.1 — but this is the one place
+   * where "the roster never leaves your browser" stops being literally true,
+   * and it should be read as such rather than glossed over.
+   */
+  if (req.method === "POST" && url.pathname === "/api/payroll/run") {
+    void (async () => {
+      try {
+        const body = JSON.parse(await readBody(req)) as {
+          instance?: string;
+          period?: number;
+          slots?: {
+            salary?: string;
+            salaryNonce?: string;
+            coinNonce?: string;
+            payee?: string;
+            payeeEnc?: string;
+          }[];
+        };
+
+        if (!body.instance || !body.period || !body.slots?.length) {
+          return json(res, 400, {
+            error: "instance, period and slots are all required",
+          });
+        }
+
+        const hex = (value: string | undefined, field: string) => {
+          if (!value || !/^[0-9a-f]{64}$/i.test(value)) {
+            throw new Error(`${field} must be 64 hex characters`);
+          }
+          return Uint8Array.from(Buffer.from(value, "hex"));
+        };
+
+        // Note what is absent: the payroll passphrase. This takes only the
+        // material for the period being paid, so a compromised service learns
+        // one month's amounts rather than every period and every employee key.
+        const slots = body.slots.map((slot, i) => ({
+          salary: BigInt(slot.salary ?? "0"),
+          salaryNonce: hex(slot.salaryNonce, `slots[${i}].salaryNonce`),
+          coinNonce: hex(slot.coinNonce, `slots[${i}].coinNonce`),
+          payee: hex(slot.payee, `slots[${i}].payee`),
+          // Not run through `hex()`: an encryption public key is not 32 bytes,
+          // and the mapping wants it as the hex string the SDK compares against.
+          payeeEnc: (slot.payeeEnc ?? "").toLowerCase(),
+        }));
+
+        if (slots.some((slot) => !/^[0-9a-f]+$/.test(slot.payeeEnc))) {
+          return json(res, 400, {
+            error: "every slot needs a hex payeeEnc (the payee's encryption public key)",
+          });
+        }
+
+        startJob(res, `fund+pay ${body.instance} ${body.period}`, (log) =>
+          fundAndPay(body.instance!, body.period!, slots, log)
+        );
+      } catch (error) {
+        json(res, 400, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/registrations") {
     void (async () => {
       // Defaults to the network this server is pointed at. The same company on

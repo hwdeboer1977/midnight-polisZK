@@ -55,6 +55,7 @@ const PLAINTEXT_BYTES = SALARY_BYTES + NONCE_BYTES;
 const DOMAIN = {
   nonce: "polisZK/nonce/v1",
   seal: "polisZK/seal/v1",
+  employee: "polisZK/employee/v1",
 } as const;
 
 /**
@@ -194,4 +195,23 @@ export function openSealed(
 /** An all-zero blob, for periods filed before sealing existed. */
 export function isSealed(sealed: Uint8Array): boolean {
   return sealed.length === SEALED_BYTES && sealed.some((byte) => byte !== 0);
+}
+
+/**
+ * The seed for one employee's payment keypair.
+ *
+ * Keyed by index only, never by period. A nonce changes every month; an
+ * employee's key must not, or last month's payment becomes unclaimable the
+ * moment this month is filed.
+ *
+ * These are placeholder keys the employer can derive, which makes wave 1 work
+ * without collecting anything from anyone — and makes it CUSTODIAL. Whoever
+ * holds the passphrase can spend these salaries. That is defensible while the
+ * employer is holding the money anyway, and it stops being defensible the
+ * moment anyone calls it "the employee's wallet". The migration is per-slot:
+ * when a real key arrives, it replaces the derived one in the roster and the
+ * next period pays the real one.
+ */
+export function deriveEmployeeSeed(employerKey: Buffer, index: number): Uint8Array {
+  return new Uint8Array(sha256(DOMAIN.employee, employerKey, String(index)));
 }

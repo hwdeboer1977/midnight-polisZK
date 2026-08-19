@@ -7,6 +7,7 @@ import { Tile } from "../components/Tile";
 import { WalletPicker } from "../components/WalletPicker";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { formatPeur, group } from "../lib/format";
+import type { PayrollLedger } from "../lib/contracts";
 import { usePayrollInstances, type PayrollInstance } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
 
@@ -40,6 +41,19 @@ function Instance({ instance }: { instance: PayrollInstance }) {
       ? Number(state.commitmentsFor.lookup(latest).size())
       : 0;
 
+  /** How many slots of a period are marked done in one of the flag maps. */
+  const countFlags = (
+    map: typeof state extends null ? never : PayrollLedger["fundedFor"] | undefined,
+    period: bigint | null
+  ) => {
+    if (!map || !period || !map.member(period)) return 0;
+    let n = 0;
+    for (const [, done] of map.lookup(period)) if (done) n += 1;
+    return n;
+  };
+  const fundedCount = countFlags(state?.fundedFor, latest);
+  const paidCount = countFlags(state?.paidFor, latest);
+
   return (
     <section className="card">
       <h2>
@@ -66,6 +80,17 @@ function Instance({ instance }: { instance: PayrollInstance }) {
           }
           unit={latest ? `${periodName(latest)} · public aggregate` : "public aggregate"}
           accent
+        />
+        <Tile
+          label="Paid"
+          value={latest ? `${paidCount} / ${commitments}` : "—"}
+          unit={
+            latest
+              ? paidCount === commitments && commitments > 0
+                ? "settled"
+                : `${fundedCount} funded`
+              : "nothing filed yet"
+          }
         />
         <Tile
           label="Periods filed"

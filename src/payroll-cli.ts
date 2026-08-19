@@ -2,11 +2,13 @@ import "dotenv/config";
 import * as fs from "fs";
 import * as readline from "readline/promises";
 import chalk from "chalk";
+import { ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
 import { connect, readLedger, type Connection } from "./utils/contract.js";
 import { currentInstance } from "./utils/deployments.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { hex, toPublicKey } from "./utils/keys.js";
 import {
+  deriveEmployeeSeed,
   deriveEmployerKey,
   deriveNonce,
   isSealed,
@@ -624,11 +626,25 @@ async function main() {
             // BigInt, not the plain number: `period` is a Uint<32> in the
             // circuit and the generated binding types it as bigint. A JS number
             // is rejected at the runtime type check rather than coerced.
+            // Who each slot is payable to, hashed with the contract's own pure
+            // circuit so it matches what `payEmployee` will check.
+            const payees = salaries.map((_, index) => {
+              const keys = ZswapSecretKeys.fromSeed(
+                deriveEmployeeSeed(employerKey, index)
+              );
+              return conn.contractModule.pureCircuits.payeeHash({
+                bytes: Uint8Array.from(
+                  Buffer.from(String(keys.coinPublicKey).replace(/^0x/, ""), "hex")
+                ),
+              });
+            });
+
             const tx = await conn.deployed.callTx.setPayroll(
               BigInt(period),
               salaries,
               nonces,
-              sealedOpenings
+              sealedOpenings,
+              payees
             );
 
             writeSecrets(
