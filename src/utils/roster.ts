@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { PEUR_DECIMALS, PEUR_SCALE } from "./constructor-args.js";
 
 /**
  * The employer's roster spreadsheet.
@@ -21,7 +22,7 @@ export interface RosterRow {
   index: number;
   fullName: string;
   address: string;
-  /** Minor units (cents), as the contract counts them. */
+  /** Minor units (1e-6 pEUR), as the contract counts them. */
   salaryMinor: bigint;
 }
 
@@ -63,12 +64,12 @@ export function parseSalary(raw: unknown): bigint {
     text = text.replace(/,/g, "");
   }
 
-  if (!/^\d+(\.\d{1,2})?$/.test(text)) {
+  if (!new RegExp(`^\\d+(\\.\\d{1,${PEUR_DECIMALS}})?$`).test(text)) {
     throw new Error(`"${String(raw)}" is not a salary amount`);
   }
 
   const [whole, fraction = ""] = text.split(".");
-  return BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, "0"));
+  return BigInt(whole!) * PEUR_SCALE + BigInt(fraction.padEnd(PEUR_DECIMALS, "0"));
 }
 
 /** Reads the first worksheet, expecting a header row plus one row per employee. */

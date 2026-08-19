@@ -44,6 +44,10 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Vite binds to 127.0.0.1 by default, which inside WSL2 is the Linux VM's
+    // own loopback — a browser running on the Windows host cannot reach it.
+    // Binding all interfaces publishes it on the WSL IP so the host connects.
+    host: true,
     // The demo onboarding service runs separately and holds the platform key.
     // Proxying it keeps the browser on one origin, so no CORS setup is needed.
     proxy: { "/api": "http://127.0.0.1:8787" },

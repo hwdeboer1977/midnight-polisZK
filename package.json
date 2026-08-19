@@ -30,7 +30,10 @@
     "frontend:build": "npm run frontend:config && npm --prefix frontend run build",
     "roster:template": "npm run build && node dist/make-template.js",
     "onboard": "npm run build && node dist/onboard.js",
-    "demo:server": "npm run build && node dist/demo-server.js"
+    "demo:server": "npm run build && node dist/demo-server.js",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:down": "docker compose stop postgres",
+    "registry": "npm run build && node dist/registry-cli.js"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-js": "2.5.1",
@@ -49,11 +52,13 @@
     "dotenv": "^16.3.1",
     "effect": "^3.22.1",
     "exceljs": "^4.4.0",
+    "pg": "^8.23.0",
     "rxjs": "^7.8.2",
     "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.5.10",
     "nodemon": "^3.0.1",
     "typescript": "^5.9.2"

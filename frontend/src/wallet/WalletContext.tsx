@@ -37,6 +37,16 @@ interface WalletState {
 const WalletContext = createContext<WalletState | null>(null);
 
 /**
+ * How often to re-read balances while connected.
+ *
+ * Short enough that a mint appears without anyone thinking to press anything,
+ * long enough that it is not asking the wallet to do work every second. Wallet
+ * sync itself takes far longer than this, so polling faster would only produce
+ * the same answer sooner.
+ */
+const BALANCE_POLL_MS = 15_000;
+
+/**
  * Wallets inject one or more InitialAPI objects under `window.midnight`, keyed
  * by an arbitrary id, so the only correct way to find them is to enumerate it.
  */
@@ -101,6 +111,55 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
+  }, [api]);
+
+  /**
+   * Re-reads balances while connected, because the connector pushes nothing.
+   *
+   * Everything here is a snapshot taken when the wallet answered, and a coin
+   * that arrives afterwards — a mint landing, a payment clearing — is invisible
+   * to this page until someone asks again. Without this the balance silently
+   * disagrees with the wallet sitting open next to it, which reads as the app
+   * being wrong rather than merely behind.
+   *
+   * Also on focus and on becoming visible: a wallet is usually synced in another
+   * window, so coming back to this tab is the exact moment the figure is most
+   * likely stale and most likely being looked at.
+   */
+  useEffect(() => {
+    if (!api) return;
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const read = async () => {
+      // Overlapping reads would let a slow one land after a fast one and undo
+      // it; a hidden tab is not worth waking the wallet for.
+      if (inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        const next = await readAccount(api);
+        if (!cancelled) setAccount(next);
+      } catch {
+        // Deliberately silent. A background poll that fails says nothing the
+        // user can act on, and an error banner appearing on its own — while the
+        // page still works — is worse than a figure that updates a tick late.
+        // A real outage surfaces the moment they press Refresh or submit.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const timer = window.setInterval(read, BALANCE_POLL_MS);
+    window.addEventListener("focus", read);
+    document.addEventListener("visibilitychange", read);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", read);
+      document.removeEventListener("visibilitychange", read);
+    };
   }, [api]);
 
   const connect = useCallback(

@@ -4,7 +4,22 @@ import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { nativeToken } from "@midnight-ntwrk/ledger-v8";
 import chalk from "chalk";
 import { loadCompiledContract } from "./utils/contract.js";
-import { formatPeur, initialPeurSupply } from "./utils/constructor-args.js";
+import {
+  DEFAULT_PEUR_SUPPLY,
+  formatPeur,
+  parsePeurAmount,
+} from "./utils/constructor-args.js";
+
+/**
+ * Supply minted immediately after deploying pEUR.
+ *
+ * Lives here rather than beside the unit constants because those are shared with
+ * the browser bundle, which has no `process` to read.
+ */
+function initialPeurSupply(): bigint {
+  const raw = process.env.PEUR_INITIAL_SUPPLY;
+  return raw ? parsePeurAmount(raw) : DEFAULT_PEUR_SUPPLY;
+}
 import { currentInstance, deploymentKey, saveDeployment } from "./utils/deployments.js";
 import { MidnightProviders } from "./providers/midnight-providers.js";
 import { EnvironmentManager } from "./utils/environment.js";

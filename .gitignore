@@ -57,8 +57,13 @@ temp/
 # Private state store (LevelDB)
 midnight-level-db/
 
-# Employer's salaries + nonces (private half of the payroll state)
-payroll-secrets*.json
+# Employer's salaries + nonces (private half of the payroll state).
+# Not `payroll-secrets*.json`: that misses a backup like
+# `payroll-secrets.json.bak`, which holds exactly the same salaries.
+payroll-secrets*
+
+# Deployment records kept around before a redeploy.
+deployment.json.bak-*
 
 # Cached wallet sync state
 .wallet-state/
@@ -70,3 +75,6 @@ frontend/public/deployments.json
 
 # Contract modules copied into the frontend by frontend:config
 frontend/src/generated/
+
+# Who has drawn a demo pEUR allowance — local bookkeeping, not source.
+claims.json

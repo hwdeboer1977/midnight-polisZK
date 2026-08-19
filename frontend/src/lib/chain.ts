@@ -11,6 +11,21 @@ const INDEXERS: Record<string, string> = {
   preprod: "https://indexer.preprod.midnight.network/api/v4/graphql",
 };
 
+/**
+ * Where to get tNIGHT for each network, mirroring `src/utils/environment.ts`.
+ *
+ * tDUST is deliberately absent: it is not handed out but generated from tNIGHT
+ * once that tNIGHT is registered for generation, so there is nothing to link to.
+ *
+ * The local devnet has no faucet — its dev preset pre-funds a well-known account
+ * instead — and an empty string is how that is said.
+ */
+export const FAUCETS: Record<string, string> = {
+  undeployed: "",
+  preview: "https://midnight-tmnight-preview.nethermind.dev/",
+  preprod: "https://midnight-tmnight-preprod.nethermind.dev/",
+};
+
 /** Every contract action carries the state as it stood after that action. */
 const CONTRACT_STATE_QUERY = `
   query ContractState($address: HexEncoded!) {

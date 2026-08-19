@@ -7,12 +7,30 @@
  * transaction is built. `npm run deploy:peur` runs both steps.
  */
 
-/** Default initial supply: 1,000,000.00 pEUR, in minor units (cents). */
-export const DEFAULT_PEUR_SUPPLY = 100_000_000n;
+/**
+ * pEUR is denominated to six decimals.
+ *
+ * Not because payroll needs micro-cents, but because nothing on chain records a
+ * token's decimals: wallets fall back to Midnight's default of six, and a token
+ * that picks its own scale is rendered wrong in every wallet while looking right
+ * only here. Six is the number that makes an outside reader and this app agree.
+ */
+export const PEUR_DECIMALS = 6;
+
+/** 1 pEUR, in minor units. */
+export const PEUR_SCALE = 10n ** BigInt(PEUR_DECIMALS);
+
+/** Default initial supply: 1,000,000.000000 pEUR, in minor units. */
+export const DEFAULT_PEUR_SUPPLY = 1_000_000n * PEUR_SCALE;
 
 /** Matches the contract's Uint<48> bound on mint amounts. */
 export const MAX_PEUR_AMOUNT = (1n << 48n) - 1n;
 
+/**
+ * Deliberately free of Node globals: this module is copied into the frontend
+ * bundle so both sides share one definition of a minor unit. Anything reading
+ * `process.env` belongs with the CLI that calls it, not here.
+ */
 export function parsePeurAmount(raw: string): bigint {
   const value = raw.trim();
   if (!/^\d+$/.test(value)) {
@@ -26,17 +44,16 @@ export function parsePeurAmount(raw: string): bigint {
   return amount;
 }
 
-/** Supply minted immediately after deploying pEUR. */
-export function initialPeurSupply(): bigint {
-  const raw = process.env.PEUR_INITIAL_SUPPLY;
-  return raw ? parsePeurAmount(raw) : DEFAULT_PEUR_SUPPLY;
-}
-
-/** 12345678 -> "123,456.78" for display only; the ledger stores minor units. */
+/** 123456780000 -> "123,456.78" for display only; the ledger stores minor units. */
 export function formatPeur(minorUnits: bigint): string {
   const negative = minorUnits < 0n;
   const abs = negative ? -minorUnits : minorUnits;
-  const whole = (abs / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const cents = (abs % 100n).toString().padStart(2, "0");
-  return `${negative ? "-" : ""}${whole}.${cents}`;
+  const whole = (abs / PEUR_SCALE).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  // Trailing zeros trimmed to two, so ordinary amounts read as money rather than
+  // as "1,000.000000" — but a fraction finer than a cent is never hidden.
+  const fraction = (abs % PEUR_SCALE)
+    .toString()
+    .padStart(PEUR_DECIMALS, "0")
+    .replace(/(\d{2})(0+)$/, "$1");
+  return `${negative ? "-" : ""}${whole}.${fraction}`;
 }

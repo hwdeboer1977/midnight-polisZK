@@ -1,10 +1,31 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { WalletPicker } from "../components/WalletPicker";
 import { CopyRow } from "../components/CopyRow";
+import { loadDeployments, type Deployments } from "../lib/deployments";
 import { keyToHex } from "../lib/keys";
 import { useOnboarding } from "../lib/useOnboarding";
+import { usePayrollInstances } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
+
+/** The three public values the platform needs, shown before and after registering. */
+function CompanyKeys({
+  signingKey,
+  paymentKey,
+  feeAddress,
+}: {
+  signingKey: string;
+  paymentKey: string;
+  feeAddress: string;
+}) {
+  return (
+    <>
+      <CopyRow label="Signing key" value={signingKey} />
+      <CopyRow label="Payment key" value={paymentKey} />
+      <CopyRow label="Fee address" value={feeAddress} />
+    </>
+  );
+}
 
 /**
  * Employer registration.
@@ -23,7 +44,26 @@ export function Register() {
   const { account, networkId } = useWallet();
   const [company, setCompany] = useState("");
   const [copied, setCopied] = useState(false);
+  const [deployments, setDeployments] = useState<Deployments>({});
+  const [deploymentsRead, setDeploymentsRead] = useState(false);
   const { job, submitting, unavailable, start } = useOnboarding();
+
+  useEffect(() => {
+    void loadDeployments().then((loaded) => {
+      setDeployments(loaded);
+      setDeploymentsRead(true);
+    });
+  }, []);
+
+  // Registration is once per company, but the service only refuses a repeat of
+  // the same company name — a second name would deploy a second contract to the
+  // same key, splitting that employer's salaries across two of them. Asking the
+  // chain who already owns what is the check that actually holds.
+  const { instances, loading: readingPayroll } = usePayrollInstances(
+    networkId,
+    deployments,
+    account?.coinPublicKey ?? null
+  );
 
   if (!account) {
     return (
@@ -74,6 +114,52 @@ export function Register() {
     }
   }
 
+  const registered = instances.find((instance) => instance.role === "employer");
+  const checking = !deploymentsRead || readingPayroll;
+
+  // Only before anything has been attempted here: once a job exists, its own
+  // progress and result are what this page is reporting on. A job that has just
+  // finished is not yet visible on chain either.
+  if (registered && !job) {
+    return (
+      <>
+        <section className="card">
+          <h2>Your company is already registered</h2>
+          <p className="lead-sm">
+            This signing key controls a payroll contract on {networkId}. Registration
+            happens once per company — registering again would deploy a second,
+            unrelated contract and split your salaries across the two.
+          </p>
+          <CopyRow
+            badge={registered.deployment.instance ?? "payroll"}
+            value={registered.deployment.contractAddress}
+          />
+          <p className="note">
+            Upload a roster on the <Link to="/payroll">payroll page</Link>. To register a
+            different company, connect that company's signing key instead.
+          </p>
+        </section>
+
+        <section className="callout">
+          <h2>Your company keys</h2>
+          <CompanyKeys
+            signingKey={signingKeyHex ?? account.coinPublicKey}
+            paymentKey={account.encryptionPublicKey}
+            feeAddress={account.unshieldedAddress}
+          />
+          {keyError ? (
+            <p className="status error">Could not read the signing key: {keyError}</p>
+          ) : null}
+          <p className="note">
+            All three are public. We fund these with pEUR to pay salaries from, and with
+            the small amount of network fuel every transaction costs. None of them can
+            move money or change salaries on their own.
+          </p>
+        </section>
+      </>
+    );
+  }
+
   return (
     <>
       <section className="card">
@@ -96,12 +182,14 @@ export function Register() {
 
       <section className="callout">
         <h2>Your company keys</h2>
-        <CopyRow label="Signing key" value={signingKeyHex ?? account.coinPublicKey} />
+        <CompanyKeys
+          signingKey={signingKeyHex ?? account.coinPublicKey}
+          paymentKey={account.encryptionPublicKey}
+          feeAddress={account.unshieldedAddress}
+        />
         {keyError ? (
           <p className="status error">Could not read the signing key: {keyError}</p>
         ) : null}
-        <CopyRow label="Payment key" value={account.encryptionPublicKey} />
-        <CopyRow label="Fee address" value={account.unshieldedAddress} />
         <button
           className={copied ? "copy done wide" : "copy wide"}
           onClick={() => void copyAll()}
@@ -138,14 +226,18 @@ export function Register() {
               locks it to your signing key, permanently.
             </p>
             <button
-              disabled={!slug || !signingKeyHex || submitting || job?.status === "running"}
-              onClick={() => void start(slug, signingKeyHex!)}
+              disabled={
+                !slug || !signingKeyHex || submitting || checking || job?.status === "running"
+              }
+              onClick={() => void start(slug, signingKeyHex!, company.trim())}
             >
               {job?.status === "running"
                 ? "Creating…"
                 : submitting
                   ? "Starting…"
-                  : "Create my payroll contract"}
+                  : checking
+                    ? "Checking…"
+                    : "Create my payroll contract"}
             </button>
 
             {job?.status === "running" ? (

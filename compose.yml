@@ -46,3 +46,34 @@ services:
     environment:
       CFG_PRESET: 'dev'
       SIDECHAIN_BLOCK_BENEFICIARY: '04bcf7ad3be7a5c790460be82a713af570f22e0f801f6659ab8e84a52be6969e'
+
+  # Platform bookkeeping: which company registered, when, for how long, and
+  # whether they are still active.
+  #
+  # Deliberately separate from the chain and never authoritative over it. The
+  # contracts remain the only answer to "who controls this payroll"; this records
+  # the commercial relationship around it, which is not a thing a contract knows
+  # about. Reading ownership from here instead would reintroduce exactly the bug
+  # where a stale row outranks what the contract says.
+  #
+  # Credentials are local-only defaults and the port is bound to 127.0.0.1: this
+  # is a demo database, not one to expose.
+  postgres:
+    image: 'postgres:17'
+    ports:
+      - '127.0.0.1:5436:5432'
+    environment:
+      POSTGRES_USER: 'polis'
+      POSTGRES_PASSWORD: 'polis'
+      POSTGRES_DB: 'polis'
+    volumes:
+      - polis-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U polis -d polis']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  polis-db:

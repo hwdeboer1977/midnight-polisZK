@@ -5,7 +5,8 @@ import { MidnightProviders } from "../providers/midnight-providers.js";
 import { EnvironmentManager } from "./environment.js";
 import { loadCompiledContract } from "./contract.js";
 import { deploymentKey, getDeployment, saveDeployment } from "./deployments.js";
-import { toPublicKey } from "./keys.js";
+import { hex, toPublicKey } from "./keys.js";
+import { recordRegistration } from "./registry.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./wallet.js";
 
 export interface OnboardResult {
@@ -29,7 +30,9 @@ export interface OnboardResult {
 export async function onboardEmployer(
   instance: string,
   employerKey: string,
-  log: (line: string) => void = () => {}
+  log: (line: string) => void = () => {},
+  /** Display name for the registry. Falls back to the slug when not given. */
+  companyName?: string
 ): Promise<OnboardResult> {
   const slug = instance.trim();
   if (!/^[a-z0-9][a-z0-9-]{0,38}$/.test(slug)) {
@@ -102,6 +105,29 @@ export async function onboardEmployer(
     log("Assigning the employer…");
     const assignTx = await deployed.callTx.assignEmployer(employer);
     log("Assigned — this cannot be undone");
+
+    // Bookkeeping, deliberately after the chain work and deliberately not fatal.
+    // The contract is deployed and assigned by this point, and both are
+    // irreversible; turning a completed onboarding into a failure because a
+    // database was down would be a lie about what happened. The warning is loud
+    // so a missing row gets noticed now rather than found later.
+    try {
+      const registration = await recordRegistration({
+        companyName: companyName?.trim() || slug,
+        instance: slug,
+        networkId: network.networkId,
+        contractAddress,
+        employerKey: hex(employer.bytes),
+      });
+      log(
+        `Registered until ${registration.expiresAt.toISOString().slice(0, 10)} ` +
+          `(${registration.termMonths} months)`
+      );
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      log(`⚠️  Could not record the registration: ${message}`);
+      log("   The contract is live regardless — start the database with `npm run db:up`");
+    }
 
     return {
       instance: slug,

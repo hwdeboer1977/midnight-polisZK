@@ -12,13 +12,19 @@ import CompactStandardLibrary;
 // to this deployment and cannot be forged by another contract:
 //   tokenType(pad(32, "pEUR"), kernel.self())
 //
-// Minting is issuer-only and always pays the issuer. Keeping the recipient as
-// the caller avoids a key exchange entirely: a shielded coin can only be found
-// and spent by someone whose encryption key the transaction was built with, and
-// the issuer's own wallet already has it. Paying anyone else requires their coin
-// public key AND encryption public key.
+// ⚠️  DEMO TOKEN. Anyone may mint, in any amount, without permission. That makes
+// pEUR worthless as a store of value and it is meant to: this exists so a demo
+// can hand out payroll funds without a faucet queue or an operator in the loop.
+// A real stablecoin's whole claim is that supply is controlled and auditable
+// against reserves, which is exactly the property given up here. Restoring it is
+// one line — the issuer check removed from both circuits below.
+//
+// `mint` pays the caller, which avoids a key exchange entirely: a shielded coin
+// can only be found and spent by someone whose encryption key the transaction
+// was built with, and the caller's own wallet already has it. Paying anyone else
+// needs their coin public key AND encryption public key, which is `mintTo`.
 
-// The deployer. Only this key may mint.
+// The deployer. Recorded for display and provenance — it no longer gates minting.
 export ledger issuer: ZswapCoinPublicKey;
 
 // This deployment's token type, recorded on the first mint. Zero until then.
@@ -32,8 +38,11 @@ export ledger totalSupply: Uint<64>;
 // produce identical coins.
 export ledger mintCounter: Counter;
 
-// Amounts are minor units (cents), capped at Uint<48> — about 2.8 trillion EUR —
-// so accumulating into the Uint<64> supply cannot overflow in practice.
+// Amounts are minor units of 1e-6 pEUR, capped at Uint<48> — about 281 million
+// EUR per mint — so accumulating into the Uint<64> supply cannot overflow in
+// practice. Six decimals rather than cents because no token metadata exists on
+// chain for wallets to read: they fall back to Midnight's default of six, and a
+// token that picks anything else is rendered wrong everywhere but in this app.
 // The initial supply is NOT minted here. A deploy transaction cannot carry the
 // mint: the contract's address is not fixed until the transaction is built, so
 // `kernel.self()` in a constructor does not yet name this deployment — the mint
@@ -54,8 +63,6 @@ constructor() {
 // `additionalCoinEncPublicKeyMappings`. Get both from `npm run frontend` or the
 // recipient's `npm run peur`.
 export circuit mintTo(amount: Uint<48>, recipient: ZswapCoinPublicKey): [] {
-  assert(ownPublicKey() == issuer, "only the issuer may mint pEUR");
-
   tokenId = tokenType(pad(32, "pEUR"), kernel.self());
 
   const next = totalSupply + disclose(amount);
@@ -71,10 +78,8 @@ export circuit mintTo(amount: Uint<48>, recipient: ZswapCoinPublicKey): [] {
   );
 }
 
-// Tops up supply later. Same issuer check, same self-recipient.
+// Mints to the caller. Open to anyone — see the demo warning at the top.
 export circuit mint(amount: Uint<48>): [] {
-  assert(ownPublicKey() == issuer, "only the issuer may mint pEUR");
-
   // Recorded here rather than in the constructor, where `kernel.self()` would
   // not yet resolve to this deployment. Rewriting it every mint is idempotent.
   tokenId = tokenType(pad(32, "pEUR"), kernel.self());

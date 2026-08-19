@@ -217,6 +217,9 @@ code {
 .card > h2 { display: flex; align-items: center; gap: 10px; }
 .refresh { margin-left: auto; padding: 3px 10px; font-size: 11.5px; text-transform: none; letter-spacing: 0; }
 
+.tiles-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.tiles-head h2 { margin: 0; }
+
 .tiles.inline { margin-bottom: 16px; }
 .tiles.inline .tile { background: var(--line-soft); border-color: transparent; }
 

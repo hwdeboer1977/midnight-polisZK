@@ -1,33 +1,53 @@
 import "dotenv/config";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import chalk from "chalk";
-import { onboardEmployer, type OnboardResult } from "./utils/onboarding.js";
+import { onboardEmployer } from "./utils/onboarding.js";
+import {
+  EMPLOYER_ALLOWANCE,
+  fundEmployer,
+  mintExtra,
+  mintToRecipient,
+} from "./utils/funding.js";
+import { parsePeurAmount } from "./utils/constructor-args.js";
+import { EnvironmentManager } from "./utils/environment.js";
+import {
+  findRegistration,
+  listRegistrations,
+  type Registration,
+} from "./utils/registry.js";
 
 /**
- * Self-service onboarding for the demo.
+ * Self-service onboarding and funding for the demo.
  *
- * ⚠️  DEMO ONLY. This process holds the platform's own signing key and will
- * deploy a contract and spend fees for anyone who can reach it. There is no
- * authentication, no rate limiting and no approval step, so it binds to
+ * ⚠️  DEMO ONLY. This process holds the platform's own signing key. It will
+ * deploy a contract, spend fees and mint pEUR for anyone who can reach it: there
+ * is no authentication, no rate limiting and no approval step, so it binds to
  * localhost and refuses to start otherwise. In production this becomes an
  * authenticated endpoint on a real backend, where a human approves a company
- * before any contract is deployed.
+ * before any contract is deployed or any allowance is issued.
  *
- * Onboarding takes minutes, which is far too long to hold an HTTP request open,
- * so the work runs as a job the client polls.
+ * What does bound the damage is on chain rather than here. Funding is refused
+ * unless the contract itself names the requesting key as its employer, and the
+ * starter allowance is recorded so it can only be drawn once.
+ *
+ * Every operation takes minutes — far too long to hold an HTTP request open —
+ * so each runs as a job the client polls at /api/job/:id.
  */
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.DEMO_SERVER_PORT ?? 8787);
 
+/** Read once at startup so an unknown MIDNIGHT_NETWORK fails here, not per request. */
+const network = EnvironmentManager.getNetworkConfig();
+
 type Job =
   | { status: "running"; log: string[]; startedAt: string }
-  | { status: "done"; log: string[]; startedAt: string; result: OnboardResult }
+  | { status: "done"; log: string[]; startedAt: string; result: unknown }
   | { status: "failed"; log: string[]; startedAt: string; error: string };
 
 const jobs = new Map<string, Job>();
 
-/** One at a time: concurrent deploys would race for the same wallet coins. */
+/** One at a time: concurrent runs would race for the same wallet coins. */
 let busy = false;
 
 function json(res: ServerResponse, code: number, body: unknown) {
@@ -43,67 +63,238 @@ function json(res: ServerResponse, code: number, body: unknown) {
   res.end(payload);
 }
 
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 8_000) {
+        req.destroy();
+        reject(new Error("Body too large"));
+      }
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+/**
+ * Shapes a registration for the wire.
+ *
+ * `id` stays behind: it is a database detail, and a client that keys off it
+ * would break the moment these rows are rebuilt from `deployment.json`. The
+ * pair that actually identifies a registration is `(networkId, instance)`.
+ *
+ * `effectiveStatus` is the field worth sending. It folds an elapsed term into
+ * the answer, so a caller never compares an expiry against its own clock and
+ * reaches a different conclusion than the platform did.
+ */
+function toJson(row: Registration) {
+  return {
+    companyName: row.companyName,
+    instance: row.instance,
+    networkId: row.networkId,
+    contractAddress: row.contractAddress,
+    employerKey: row.employerKey,
+    registeredAt: row.registeredAt.toISOString(),
+    termMonths: row.termMonths,
+    expiresAt: row.expiresAt.toISOString(),
+    status: row.status,
+    effectiveStatus: row.effectiveStatus,
+  };
+}
+
+/**
+ * Runs one operation as a polled job.
+ *
+ * The wallet is a single resource, so a second request while one is in flight is
+ * refused rather than queued — waiting silently behind a job that takes minutes
+ * is indistinguishable from a hang.
+ */
+function startJob(
+  res: ServerResponse,
+  label: string,
+  run: (log: (line: string) => void) => Promise<unknown>
+) {
+  if (busy) {
+    return json(res, 409, {
+      error: "Another operation is already running — try again in a minute",
+    });
+  }
+
+  const id = randomUUID();
+  const job: Job = { status: "running", log: [], startedAt: new Date().toISOString() };
+  jobs.set(id, job);
+  busy = true;
+
+  console.log(chalk.blue(`▶ ${label}`));
+
+  void run((line) => {
+    const current = jobs.get(id);
+    if (current) current.log.push(line);
+    console.log(chalk.gray(`   ${line}`));
+  })
+    .then((result) => {
+      jobs.set(id, { ...job, status: "done", result });
+      console.log(chalk.green(`✔ ${label}`));
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      jobs.set(id, { ...job, status: "failed", error: message });
+      console.log(chalk.red(`✘ ${message}`));
+    })
+    .finally(() => {
+      busy = false;
+    });
+
+  return json(res, 202, { jobId: id });
+}
+
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://${HOST}:${PORT}`);
 
   if (req.method === "OPTIONS") return json(res, 204, {});
 
-  if (req.method === "GET" && url.pathname.startsWith("/api/onboard/")) {
-    const job = jobs.get(url.pathname.slice("/api/onboard/".length));
+  if (req.method === "GET" && url.pathname.startsWith("/api/job/")) {
+    const job = jobs.get(url.pathname.slice("/api/job/".length));
     return job ? json(res, 200, job) : json(res, 404, { error: "Unknown job" });
   }
 
-  if (req.method === "POST" && url.pathname === "/api/onboard") {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 8_000) req.destroy();
-    });
-    req.on("end", () => {
-      let parsed: { instance?: string; employerKey?: string };
+  /**
+   * The platform's record of who is registered.
+   *
+   * Read-only on purpose. Registrations are written by onboarding and ended by
+   * an operator at the CLI; exposing a write here would put the commercial
+   * relationship behind the same unauthenticated door as the demo faucet.
+   *
+   * Nothing this returns is authoritative over the chain. It answers "did this
+   * company buy the service, and does that still stand" — not "who controls
+   * this payroll", which only the contract can answer.
+   */
+  if (req.method === "GET" && url.pathname === "/api/registrations") {
+    void (async () => {
+      // Defaults to the network this server is pointed at. The same company on
+      // two networks is two registrations against two different chains, so
+      // answering across all of them by default would invite reading one for
+      // the other; `?network=all` asks for that explicitly.
+      const requested = url.searchParams.get("network")?.trim();
+      const networkId =
+        requested === "all" ? undefined : requested || network.networkId;
+      const instance = url.searchParams.get("instance")?.trim();
+
       try {
-        parsed = JSON.parse(body || "{}");
+        if (instance) {
+          if (!networkId) {
+            return json(res, 400, {
+              error: "An instance lookup needs one network — drop network=all",
+            });
+          }
+          const row = await findRegistration(networkId, instance);
+          return row
+            ? json(res, 200, toJson(row))
+            : json(res, 404, {
+                error: `No registration "${instance}" on ${networkId}`,
+              });
+        }
+
+        const rows = await listRegistrations(networkId);
+        return json(res, 200, {
+          networkId: networkId ?? "all",
+          registrations: rows.map(toJson),
+        });
+      } catch (cause) {
+        // A database that is down is an outage of this service, not a bad
+        // request. The caller can do nothing but retry, so 503 rather than 500
+        // — and say which command starts it, since this is a demo.
+        const message = cause instanceof Error ? cause.message : String(cause);
+        console.log(chalk.red(`✘ registrations: ${message}`));
+        return json(res, 503, {
+          error: "The registration database is unavailable — start it with `npm run db:up`",
+          detail: message,
+        });
+      }
+    })();
+    return;
+  }
+
+  if (req.method === "POST") {
+    void (async () => {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse((await readBody(req)) || "{}");
       } catch {
         return json(res, 400, { error: "Body must be JSON" });
       }
 
-      const { instance, employerKey } = parsed;
-      if (!instance || !employerKey) {
-        return json(res, 400, { error: "instance and employerKey are required" });
+      if (url.pathname === "/api/onboard") {
+        const instance = parsed.instance as string | undefined;
+        const employerKey = parsed.employerKey as string | undefined;
+        const companyName = parsed.companyName as string | undefined;
+        if (!instance || !employerKey) {
+          return json(res, 400, { error: "instance and employerKey are required" });
+        }
+        return startJob(res, `onboarding "${instance}"`, (log) =>
+          onboardEmployer(instance, employerKey, log, companyName)
+        );
       }
-      if (busy) {
-        return json(res, 409, {
-          error: "Another onboarding is already running — try again in a minute",
-        });
+
+      if (url.pathname === "/api/claim") {
+        const coinPublicKey = parsed.coinPublicKey as string | undefined;
+        const encryptionPublicKey = parsed.encryptionPublicKey as string | undefined;
+        if (!coinPublicKey || !encryptionPublicKey) {
+          return json(res, 400, {
+            // Both, because a coin minted without the encryption key is
+            // undetectable by its recipient and cannot be recovered.
+            error: "coinPublicKey and encryptionPublicKey are required",
+          });
+        }
+        return startJob(res, `funding ${coinPublicKey.slice(0, 16)}…`, (log) =>
+          fundEmployer(coinPublicKey, encryptionPublicKey, EMPLOYER_ALLOWANCE, log)
+        );
       }
 
-      const id = randomUUID();
-      const job: Job = { status: "running", log: [], startedAt: new Date().toISOString() };
-      jobs.set(id, job);
-      busy = true;
+      // The open faucet: mints pEUR to the caller, any amount, no questions.
+      // Distinct from /api/claim, which is the registered employer's once-only
+      // starter allowance and whose restrictions are deliberate.
+      if (url.pathname === "/api/faucet") {
+        const coinPublicKey = parsed.coinPublicKey as string | undefined;
+        const encryptionPublicKey = parsed.encryptionPublicKey as string | undefined;
+        if (!coinPublicKey || !encryptionPublicKey) {
+          return json(res, 400, {
+            error: "coinPublicKey and encryptionPublicKey are required",
+          });
+        }
 
-      console.log(chalk.blue(`▶ onboarding "${instance}" for ${employerKey.slice(0, 16)}…`));
+        let amount: bigint;
+        try {
+          amount = parsePeurAmount(String(parsed.amount ?? ""));
+        } catch (cause) {
+          return json(res, 400, {
+            error: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
 
-      void onboardEmployer(instance, employerKey, (line) => {
-        const current = jobs.get(id);
-        if (current) current.log.push(line);
-        console.log(chalk.gray(`   ${line}`));
-      })
-        .then((result) => {
-          jobs.set(id, { ...job, status: "done", result });
-          console.log(chalk.green(`✔ ${result.key} -> ${result.contractAddress}`));
-        })
-        .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          jobs.set(id, { ...job, status: "failed", error: message });
-          console.log(chalk.red(`✘ ${message}`));
-        })
-        .finally(() => {
-          busy = false;
-        });
+        return startJob(res, `minting to ${coinPublicKey.slice(0, 16)}…`, (log) =>
+          mintToRecipient(coinPublicKey, encryptionPublicKey, amount, log)
+        );
+      }
 
-      return json(res, 202, { jobId: id });
-    });
+      if (url.pathname === "/api/mint") {
+        let amount: bigint;
+        try {
+          amount = parsePeurAmount(String(parsed.amount ?? ""));
+        } catch (cause) {
+          return json(res, 400, {
+            error: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+        return startJob(res, `minting ${amount} minor units`, (log) =>
+          mintExtra(amount, log)
+        );
+      }
+
+      return json(res, 404, { error: "Not found" });
+    })();
     return;
   }
 
@@ -112,15 +303,19 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log();
-  console.log(chalk.yellow.bold("⚠️  DEMO ONBOARDING SERVICE — not for production"));
+  console.log(chalk.yellow.bold("⚠️  DEMO SERVICE — not for production"));
   console.log(
     chalk.gray(
-      "   Holds the platform signing key and deploys contracts on request,\n" +
-        "   with no authentication. Bound to localhost only."
+      "   Holds the platform signing key. Deploys contracts and mints pEUR\n" +
+        "   on request, with no authentication. Bound to localhost only."
     )
   );
   console.log();
-  console.log(chalk.cyan(`   http://${HOST}:${PORT}/api/onboard`));
-  console.log(chalk.gray(`   network: ${process.env.MIDNIGHT_NETWORK ?? "local"}`));
+  console.log(chalk.cyan(`   POST http://${HOST}:${PORT}/api/onboard`));
+  console.log(chalk.cyan(`   POST http://${HOST}:${PORT}/api/claim`));
+  console.log(chalk.cyan(`   POST http://${HOST}:${PORT}/api/mint`));
+  console.log(chalk.cyan(`   POST http://${HOST}:${PORT}/api/faucet`));
+  console.log(chalk.cyan(`   GET  http://${HOST}:${PORT}/api/registrations`));
+  console.log(chalk.gray(`   network: ${network.networkId}`));
   console.log();
 });

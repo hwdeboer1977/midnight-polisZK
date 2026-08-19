@@ -2,23 +2,29 @@ import { useEffect, useState } from "react";
 import { CopyRow } from "../components/CopyRow";
 import { Tile } from "../components/Tile";
 import { loadDeployments, type Deployments } from "../lib/deployments";
-import { formatPeur, group } from "../lib/format";
+import { PEUR_SCALE, formatPeur, group } from "../lib/format";
 import type { PeurLedger } from "../lib/contracts";
 import { useContractState } from "../lib/useContractState";
+import { useFaucet } from "../lib/useFunding";
 import { useWallet } from "../wallet/WalletContext";
-import { bytesToHex as hex, sameKey } from "../lib/keys";
+import { bytesToHex as hex, keyToHex, sameKey } from "../lib/keys";
 
+
+/** Matches the contract's Uint<48> bound on a single mint amount. */
+const MAX_MINT = (1n << 48n) - 1n;
 
 export function Peur() {
-  const { account, networkId } = useWallet();
+  const { account, networkId, refresh: refreshWallet } = useWallet();
   const [deployments, setDeployments] = useState<Deployments>({});
+  const [amount, setAmount] = useState("");
+  const { job: mintJob, submitting: minting, unavailable, mint } = useFaucet();
 
   useEffect(() => {
     void loadDeployments().then(setDeployments);
   }, []);
 
   const deployment = deployments[`${networkId}/peur`];
-  const { state, blockHeight, loading, error, refresh } = useContractState<PeurLedger>(
+  const { state, blockHeight, loading, error, refresh: refreshChain } = useContractState<PeurLedger>(
     networkId,
     "peur",
     deployment?.contractAddress
@@ -36,6 +42,16 @@ export function Peur() {
     );
   }
 
+  // Both halves of this page, because the two tiles come from two places: the
+  // supply is read from the chain, the balance is a snapshot the wallet handed
+  // over when it connected. Re-reading only the chain leaves the balance frozen
+  // at whatever the wallet had synced at connection time, which is how a funded
+  // employer ends up looking at 0.00 while their wallet shows the coin.
+  const refresh = () => {
+    void refreshWallet();
+    return refreshChain();
+  };
+
   const tokenId = state ? hex(state.tokenId) : deployment.tokenId;
   const held =
     account && tokenId
@@ -44,6 +60,18 @@ export function Peur() {
 
   const issuerIsYou =
     account && state ? sameKey(hex(state.issuer.bytes), account.coinPublicKey) : false;
+
+  // Parsed to minor units here, and sent as minor units, so the service's parser
+  // stays the one authority on what a valid amount is. This only decides where
+  // the decimal point goes — and refuses rather than rounds, because a mint that
+  // silently drops a digit is worse than one that will not start.
+  const typed = amount.trim().replace(/,/g, ".");
+  const mintable = (() => {
+    const match = /^(\d*)(?:\.(\d{1,6}))?$/.exec(typed);
+    if (!match || (!match[1] && !match[2])) return null;
+    const units = BigInt(match[1] || "0") * PEUR_SCALE + BigInt((match[2] ?? "").padEnd(6, "0"));
+    return units > 0n && units <= MAX_MINT ? units : null;
+  })();
 
   return (
     <>
@@ -92,17 +120,103 @@ export function Peur() {
 
       <section className="card">
         <h2>Minting</h2>
-        <p className="muted">
-          {issuerIsYou
-            ? "You are the issuer. Minting runs from the CLI: "
-            : "Issuer-only. Minting runs from the CLI: "}
-          <code>npm run peur</code>
-        </p>
-        <p className="note">
-          Doing it from the browser means building and proving a transaction here. The
-          connector API can delegate proving to the wallet, which is the path to take
-          when this page grows write support.
-        </p>
+        {!account ? (
+          <p className="muted">Connect a wallet to mint pEUR to it.</p>
+        ) : mintJob?.status === "done" ? (
+          <>
+            <p className="ok-line">
+              ✅ Minted {formatPeur(BigInt(mintJob.result.amount))} pEUR to your
+              shielded address.
+            </p>
+            <CopyRow label="Transaction" value={mintJob.result.txHash} />
+            <p className="note">
+              Use <strong>Refresh</strong> above to re-read the supply and your own
+              balance — the balance appears once the wallet has synced the new coin,
+              which is not instant.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="lead-sm">
+              ⚠️ Anyone can mint pEUR, in any amount. That is true of the contract and
+              not merely of this page: the issuer check was removed so a demo can fund
+              itself. It also means the supply figure above measures nothing.
+            </p>
+            <label className="field">
+              <span>Amount in pEUR</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={amount}
+                placeholder="1000"
+                onChange={(event) => setAmount(event.target.value)}
+              />
+            </label>
+            {mintable ? (
+              <p className="note">
+                = {String(mintable)} minor units ({formatPeur(mintable)} pEUR)
+              </p>
+            ) : typed ? (
+              <p className="status error">
+                An amount greater than zero, at most {formatPeur(MAX_MINT)} pEUR, with
+                no more than 6 decimal places.
+              </p>
+            ) : null}
+
+            <button
+              disabled={!mintable || minting || mintJob?.status === "running"}
+              onClick={() =>
+                // The connector speaks Bech32m; the service speaks hex. Converting
+                // here rather than there keeps the one decoder in the browser,
+                // where the 11 MB address-format WASM is already avoided.
+                mintable &&
+                void mint(
+                  keyToHex(account.coinPublicKey),
+                  keyToHex(account.encryptionPublicKey),
+                  mintable.toString()
+                )
+              }
+            >
+              {mintJob?.status === "running"
+                ? "Minting…"
+                : minting
+                  ? "Starting…"
+                  : "Mint to my wallet"}
+            </button>
+
+            {mintJob?.status === "running" ? (
+              <div className="joblog">
+                {mintJob.log.length === 0 ? <div>Starting…</div> : null}
+                {mintJob.log.map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))}
+                <p className="note">
+                  The platform wallet syncs before it can prove the mint, so this takes
+                  a few minutes. Leave this page open.
+                </p>
+              </div>
+            ) : null}
+
+            {mintJob?.status === "failed" ? (
+              <p className="status error">Could not mint: {mintJob.error}</p>
+            ) : null}
+
+            {unavailable ? (
+              <p className="note">
+                The demo service is not running. Start it with{" "}
+                <code>npm run demo:server</code>, or mint from the CLI with{" "}
+                <code>npm run peur</code>.
+              </p>
+            ) : null}
+
+            <p className="note">
+              The mint is signed by the platform wallet through the local service, not
+              by your browser — this page cannot build a transaction. The coin is still
+              yours: it is minted to the coin public key your wallet just handed over,
+              and only that key can spend it.
+            </p>
+          </>
+        )}
       </section>
     </>
   );

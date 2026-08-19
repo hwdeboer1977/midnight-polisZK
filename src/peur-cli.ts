@@ -118,8 +118,8 @@ async function main() {
     while (running) {
       console.log(chalk.cyan("--- Menu ---"));
       console.log("1. Show token status");
-      console.log("2. Mint more pEUR to yourself   (issuer)");
-      console.log("3. Send pEUR to someone else    (issuer)");
+      console.log("2. Mint more pEUR to yourself   (anyone)");
+      console.log("3. Send pEUR to someone else    (anyone)");
       console.log("4. Exit");
 
       const choice = await rl.question("\nYour choice: ");
@@ -136,7 +136,7 @@ async function main() {
 
         case "2": {
           console.log(
-            chalk.gray("\nAmount in minor units — 100 = 1.00 pEUR.")
+            chalk.gray("\nAmount in minor units — 1000000 = 1.00 pEUR.")
           );
           const answer = await rl.question("Amount: ");
           let amount: bigint;
@@ -173,7 +173,7 @@ async function main() {
           );
           const coinKey = (await rl.question("Recipient coin public key (hex): ")).trim();
           const encKey = (await rl.question("Recipient encryption public key (hex): ")).trim();
-          const rawAmount = await rl.question("Amount (minor units, 100 = 1.00 pEUR): ");
+          const rawAmount = await rl.question("Amount (minor units, 1000000 = 1.00 pEUR): ");
 
           let amount: bigint;
           let recipient: { bytes: Uint8Array };

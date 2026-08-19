@@ -120,10 +120,10 @@ paying them republishes the same numbers.
 ```bash
 npm run deploy:peur                                  # deploy, then mint
 npm run peur                                         # status / mint more
-PEUR_INITIAL_SUPPLY=250000000 npm run deploy:peur    # 2,500,000.00 pEUR
+PEUR_INITIAL_SUPPLY=2500000000000 npm run deploy:peur # 2,500,000.00 pEUR
 ```
 
-Amounts are minor units (cents): `100` = `1.00 pEUR`, capped at `Uint<48>` so
+Amounts are minor units of 1e-6 pEUR: `1000000` = `1.00 pEUR`, capped at `Uint<48>` so
 accumulating into the `Uint<64>` public supply cannot overflow.
 
 ### The initial mint is a second transaction
@@ -270,7 +270,7 @@ Balances are shown in **raw ledger units with digit grouping**, not scaled into
 display decimals. tDUST is denominated in STARs and fees in SPECKs; inventing a
 decimal conversion that the SDK does not define would produce confidently wrong
 numbers. pEUR is the exception and is formatted properly, because its minor units
-are defined by our own contract as cents.
+are defined by our own contract to six decimals.
 
 Wallets inject themselves into `window.midnight` under arbitrary keys, so the
 app enumerates that object rather than looking for a known name, and keeps

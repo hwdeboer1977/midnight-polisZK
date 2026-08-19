@@ -38,13 +38,25 @@ const GENERATED = path.join(process.cwd(), "frontend", "src", "generated");
  * two copies of validation logic drift, and a payroll file that parses
  * differently in the UI than in the CLI is the worst kind of bug.
  */
+/**
+ * Modules the browser and the CLI must agree on byte for byte.
+ *
+ * The roster parser decides what a salary cell means, and constructor-args
+ * decides what a minor unit is. Two copies of either would be free to drift, and
+ * the drift would show up as money — a salary parsed at one scale and paid at
+ * another — so they are copied rather than reimplemented.
+ */
+const SHARED = ["roster.ts", "constructor-args.ts"];
+
 function copySharedSource(): void {
   fs.mkdirSync(GENERATED, { recursive: true });
-  fs.copyFileSync(
-    path.join(process.cwd(), "src", "utils", "roster.ts"),
-    path.join(GENERATED, "roster.ts")
-  );
-  console.log("copied roster parser -> frontend/src/generated");
+  for (const file of SHARED) {
+    fs.copyFileSync(
+      path.join(process.cwd(), "src", "utils", file),
+      path.join(GENERATED, file)
+    );
+  }
+  console.log(`copied ${SHARED.join(", ")} -> frontend/src/generated`);
 }
 
 function copyContractModule(contractName: string): void {
