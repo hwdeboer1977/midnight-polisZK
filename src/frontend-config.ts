@@ -32,6 +32,7 @@ const OUT = path.join(process.cwd(), "frontend", "public", "deployments.json");
  * WASM — and two copies mean two distinct StateValue classes and decoding fails.
  */
 const GENERATED = path.join(process.cwd(), "frontend", "src", "generated");
+const PUBLIC = path.join(process.cwd(), "frontend", "public");
 
 /**
  * The roster parser is shared with the browser rather than reimplemented there:
@@ -70,6 +71,40 @@ function copyContractModule(contractName: string): void {
     if (fs.existsSync(source)) fs.copyFileSync(source, path.join(to, file));
   }
   console.log(`copied ${contractName} contract module -> frontend/src/generated`);
+}
+
+/**
+ * Copies the compiled ZK assets so the browser can fetch them.
+ *
+ * Submitting payroll from the page means proving in the browser, and proving
+ * needs the prover key and ZKIR that `compact compile` produced. The Node
+ * provider reads them off disk; a browser has to be served them, so the same
+ * `keys/` and `zkir/` layout is mirrored under `public/zk/<contract>/`.
+ *
+ * These are large — `setPayroll.prover` is around 10 MB — and they are build
+ * artifacts, so `public/zk` is gitignored rather than committed.
+ */
+function copyZkAssets(contractName: string): void {
+  const from = managedPath(contractName);
+  const to = path.join(PUBLIC, "zk", contractName);
+
+  let copied = 0;
+  for (const kind of ["keys", "zkir"]) {
+    const sourceDir = path.join(from, kind);
+    if (!fs.existsSync(sourceDir)) continue;
+    const targetDir = path.join(to, kind);
+    fs.mkdirSync(targetDir, { recursive: true });
+    for (const file of fs.readdirSync(sourceDir)) {
+      // Only what the prover actually asks for: the verifier keys are already
+      // on chain, and shipping them would double the payload for nothing.
+      if (!/\.(prover|verifier|bzkir)$/.test(file)) continue;
+      fs.copyFileSync(path.join(sourceDir, file), path.join(targetDir, file));
+      copied += 1;
+    }
+  }
+  if (copied > 0) {
+    console.log(`copied ${copied} ${contractName} ZK assets -> frontend/public/zk`);
+  }
 }
 
 interface Entry {
@@ -127,6 +162,7 @@ for (const [key, record] of listDeployments()) {
   }
 
   copyContractModule(record.contractName);
+  copyZkAssets(record.contractName);
   out[key] = entry;
   console.log(`${key}  ${record.contractAddress}${entry.tokenId ? `  token ${entry.tokenId}` : ""}`);
 }

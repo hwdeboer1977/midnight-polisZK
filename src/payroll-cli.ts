@@ -84,6 +84,96 @@ function writeSecrets(
   });
 }
 
+/**
+ * Reads a secret without echoing it.
+ *
+ * readline has no built-in masked input, so the output writer is swapped for
+ * one that drops everything but newlines while the answer is being typed. A
+ * passphrase scrolling up someone's terminal — and into their shell's
+ * scrollback — would undo the point of having one.
+ */
+async function askSecret(rl: readline.Interface, prompt: string): Promise<string> {
+  const iface = rl as unknown as {
+    _writeToOutput?: (chunk: string) => void;
+    output?: NodeJS.WritableStream;
+  };
+  const original = iface._writeToOutput;
+  let muted = false;
+
+  iface._writeToOutput = (chunk: string) => {
+    if (!muted) original?.call(iface, chunk);
+    else if (chunk.includes("\n")) original?.call(iface, "\n");
+  };
+
+  // The prompt is written synchronously inside question(), so muting straight
+  // after the call hides the answer without hiding the question.
+  const pending = rl.question(prompt);
+  muted = true;
+  try {
+    return (await pending).trim();
+  } finally {
+    muted = false;
+    iface._writeToOutput = original;
+  }
+}
+
+/**
+ * Asks for the passphrase that opens this instance's commitments.
+ *
+ * Confirmed by retyping when there is nothing on chain to check it against.
+ * Once a period has been filed, the passphrase is verified by actually opening
+ * one of its sealed openings, which is a far better test than retyping.
+ */
+async function askPassphrase(
+  rl: readline.Interface,
+  contractAddress: string,
+  confirm: boolean
+): Promise<Buffer> {
+  // The distinction between choosing one and recalling one is the whole
+  // question at this prompt, and getting it wrong here cannot be undone.
+  if (confirm) {
+    console.log(
+      chalk.yellow(
+        "\nYou are CREATING this passphrase now. Nothing has been filed against\n" +
+          "this contract yet, so there is no existing one to look up."
+      )
+    );
+    console.log(
+      chalk.gray(
+        "Save it where the company will still have it in a year — a password\n" +
+          "manager, not this machine alone.\n"
+      )
+    );
+  } else {
+    console.log(
+      chalk.gray("\nThe passphrase chosen when this contract was first filed.\n")
+    );
+  }
+
+  console.log(
+    chalk.gray(
+      "It derives every nonce and unlocks every sealed opening for this\n" +
+        "contract, and the browser asks for the same one. There is no reset:\n" +
+        "lose it and no commitment here can ever be reopened.\n"
+    )
+  );
+
+  const passphrase = await askSecret(
+    rl,
+    confirm ? "Choose a payroll passphrase: " : "Payroll passphrase: "
+  );
+  if (passphrase.length < 8) {
+    throw new Error("Use at least 8 characters");
+  }
+  if (confirm) {
+    const again = await askSecret(rl, "Confirm passphrase: ");
+    if (again !== passphrase) throw new Error("The two entries did not match");
+  }
+
+  console.log(chalk.gray("Deriving key (PBKDF2, deliberately slow)..."));
+  return deriveEmployerKey(passphrase, contractAddress);
+}
+
 /** 202603 -> "March 2026". */
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -127,16 +217,19 @@ function thisPeriod(): number {
  * so a blob that decrypts to the wrong thing is reported rather than written
  * into the file as though it were sound.
  */
-async function recoverOpenings(conn: Connection): Promise<void> {
+async function recoverOpenings(
+  conn: Connection,
+  rl: readline.Interface
+): Promise<void> {
   const ledger = await readLedger(conn);
   if (!ledger) {
     console.log(chalk.red("\n❌ No contract state on chain.\n"));
     return;
   }
-  const employerKey = deriveEmployerKey(
-    EnvironmentManager.getMasterSeedHex(),
-    conn.contractAddress
-  );
+
+  // Nothing to confirm against here: a wrong passphrase simply fails to open
+  // the blobs, which the loop below reports per period.
+  const employerKey = await askPassphrase(rl, conn.contractAddress, false);
 
   const periods = Array.from(ledger.periods as Iterable<bigint>).sort((a, b) =>
     a < b ? -1 : a > b ? 1 : 0
@@ -147,12 +240,7 @@ async function recoverOpenings(conn: Connection): Promise<void> {
     return;
   }
 
-  console.log(
-    chalk.gray(
-      `\nRecovering from ${conn.contractAddress}\n` +
-        `using the wallet secret from ${EnvironmentManager.describeWalletSecret()}.\n`
-    )
-  );
+  console.log(chalk.gray(`\nRecovering from ${conn.contractAddress}\n`));
 
   let recovered = 0;
   let failed = 0;
@@ -507,10 +595,21 @@ async function main() {
           // people on the same salary do not produce the same commitment — and
           // every one of them is recomputable from the wallet secret alone, so
           // there is no longer a file whose loss is unrecoverable.
-          const employerKey = deriveEmployerKey(
-            EnvironmentManager.getMasterSeedHex(),
-            conn.contractAddress
-          );
+          // Confirmed by retyping only when the contract holds nothing to check
+          // against; after that a wrong passphrase is caught below by failing to
+          // reproduce an existing commitment.
+          let employerKey: Buffer;
+          try {
+            const ledger = await readLedger(conn);
+            const filed =
+              ledger && Array.from(ledger.periods as Iterable<bigint>).length > 0;
+            employerKey = await askPassphrase(rl, conn.contractAddress, !filed);
+          } catch (error) {
+            console.error(
+              chalk.red(`❌ ${error instanceof Error ? error.message : String(error)}\n`)
+            );
+            break;
+          }
           const nonces = salaries.map((_, index) =>
             deriveNonce(employerKey, period, index)
           );
@@ -522,8 +621,11 @@ async function main() {
             console.log(
               chalk.gray("\nProving and submitting (this takes a few minutes)...")
             );
+            // BigInt, not the plain number: `period` is a Uint<32> in the
+            // circuit and the generated binding types it as bigint. A JS number
+            // is rejected at the runtime type check rather than coerced.
             const tx = await conn.deployed.callTx.setPayroll(
-              period,
+              BigInt(period),
               salaries,
               nonces,
               sealedOpenings
@@ -673,7 +775,7 @@ async function main() {
 
         case "6": {
           try {
-            await recoverOpenings(conn);
+            await recoverOpenings(conn, rl);
           } catch (error) {
             console.error(chalk.red("❌ Recovery failed:"), error);
           }

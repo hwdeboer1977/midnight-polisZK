@@ -78,3 +78,6 @@ frontend/src/generated/
 
 # Who has drawn a demo pEUR allowance — local bookkeeping, not source.
 claims.json
+
+# Compiled ZK assets copied for the browser prover (large build artifacts)
+frontend/public/zk/

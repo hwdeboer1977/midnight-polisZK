@@ -5,10 +5,32 @@ import { ContractState, type ChargedState } from "@midnight-ntwrk/compact-runtim
  * indexer and the runtime that can deserialize what it returns. The indexer
  * sends `access-control-allow-origin: *`, so the browser can query it directly.
  */
-const INDEXERS: Record<string, string> = {
+export const INDEXERS: Record<string, string> = {
   undeployed: "http://127.0.0.1:8088/api/v4/graphql",
   preview: "https://indexer.preview.midnight.network/api/v4/graphql",
   preprod: "https://indexer.preprod.midnight.network/api/v4/graphql",
+};
+
+/** The websocket half, needed by the indexer provider when submitting. */
+export const INDEXER_WS: Record<string, string> = {
+  undeployed: "ws://127.0.0.1:8088/api/v4/graphql/ws",
+  preview: "wss://indexer.preview.midnight.network/api/v4/graphql/ws",
+  preprod: "wss://indexer.preprod.midnight.network/api/v4/graphql/ws",
+};
+
+/**
+ * Proving runs on the employer's own machine, for every network.
+ *
+ * There is no hosted proof server and there should not be: proving takes the
+ * salaries as input, so a remote prover would be handed exactly the figures
+ * this design keeps off the chain. The server sends
+ * `access-control-allow-origin` for the page's origin, so the browser reaches
+ * it directly.
+ */
+export const PROOF_SERVERS: Record<string, string> = {
+  undeployed: "http://127.0.0.1:6300",
+  preview: "http://127.0.0.1:6300",
+  preprod: "http://127.0.0.1:6300",
 };
 
 /**

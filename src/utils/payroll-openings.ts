@@ -1,29 +1,39 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  pbkdf2Sync,
+  randomBytes,
+} from "crypto";
 
 /**
  * Salary commitment openings: how they are derived, and how they are stored on
  * chain so losing a local file is survivable.
  *
- * A commitment is `H(salary, nonce)`. The commitment itself lives on chain
- * forever, keyed by period — but a commitment nobody can open proves nothing,
- * and until now the only copy of the nonces was `payroll-secrets.json`. Losing
- * that file lost the ability to demonstrate what anyone was paid, permanently
- * and silently.
+ * A commitment is `H(salary, nonce)`. The commitment lives on chain forever,
+ * keyed by period — but a commitment nobody can open proves nothing, and the
+ * only copy of the nonces used to be `payroll-secrets.json`. Losing that file
+ * lost the ability to demonstrate what anyone was paid, permanently and
+ * silently.
  *
- * Two independent changes fix that, and either alone would leave a gap:
+ * Two independent changes fix that, and either alone leaves a gap:
  *
- *   1. Nonces are DERIVED, not random. Everything needed to recompute them is
- *      the wallet secret the employer already backs up, so there is no second
- *      secret that can be lost separately from the wallet.
+ *   1. Nonces are DERIVED from a passphrase, not random. Everything needed to
+ *      recompute them is one secret the employer already has to remember, so
+ *      there is no file whose loss is unrecoverable.
  *
  *   2. The opening is SEALED and stored on chain. Derivation recovers the
  *      nonce, but opening a commitment also needs the salary — and if the
  *      roster spreadsheet is gone too, a derived nonce alone is not enough.
- *      Sealed openings put the amount on chain as well, readable only by the
- *      employer's key.
+ *      Sealing puts the amount on chain as well, readable only by the employer.
  *
- * Together: the chain holds everything, and one backed-up wallet secret opens
- * it. Nothing on the employer's disk is load-bearing any more.
+ * Together: the chain holds everything, and one passphrase opens it.
+ *
+ * The passphrase is shared with the browser deliberately. `setPayroll` requires
+ * the employer's own key, so any employer who is not also the platform operator
+ * must submit from their browser wallet — and a page can never reach the wallet
+ * seed. Deriving from the seed here would leave every browser-filed period
+ * unopenable by this tool. One root, both tools.
  */
 
 /** Bytes of ciphertext stored per employee per period. Must match payroll.compact. */
@@ -43,10 +53,21 @@ const PLAINTEXT_BYTES = SALARY_BYTES + NONCE_BYTES;
  * the same wallet secret.
  */
 const DOMAIN = {
-  employer: "polisZK/employer/v1",
   nonce: "polisZK/nonce/v1",
   seal: "polisZK/seal/v1",
 } as const;
+
+/**
+ * PBKDF2 work factor. Must match `frontend/src/lib/openings.ts` exactly — the
+ * two derive the same key from the same passphrase, and that is what lets a
+ * period filed in the browser be recovered here.
+ */
+export const KDF_ITERATIONS = 600_000;
+
+/** Salt: binds the key to one instance, so two contracts never share a key. */
+export function kdfSalt(contractAddress: string): string {
+  return `polisZK/kdf/v1|${contractAddress.toLowerCase()}`;
+}
 
 function sha256(...parts: (string | Uint8Array)[]): Buffer {
   const hash = createHash("sha256");
@@ -57,14 +78,34 @@ function sha256(...parts: (string | Uint8Array)[]): Buffer {
 /**
  * The employer's root secret for one payroll instance.
  *
- * Bound to the contract address as well as the wallet, so the same employer
- * running two instances derives unrelated nonces for each. Without that, two
- * instances filing the same period would produce identical commitments for
- * identical salaries, which leaks equality across contracts that are supposed
- * to know nothing about each other.
+ * A passphrase rather than the wallet seed, because the browser cannot reach a
+ * seed and both tools must derive the same key: `setPayroll` requires the
+ * employer's own signature, and for any employer who is not also the operator
+ * that means submitting from the browser wallet. A root only the CLI could
+ * compute would leave those periods permanently unopenable here.
+ *
+ * PBKDF2 rather than a plain hash because the input is human-chosen: a single
+ * SHA-256 would let anyone holding the public commitments grind candidate
+ * passphrases at billions per second. The salt binds the key to the contract,
+ * so the same passphrase on two instances yields unrelated keys.
  */
-export function deriveEmployerKey(masterSeedHex: string, contractAddress: string): Buffer {
-  return sha256(DOMAIN.employer, masterSeedHex.toLowerCase(), contractAddress.toLowerCase());
+export function deriveEmployerKey(passphrase: string, contractAddress: string): Buffer {
+  return pbkdf2Sync(
+    passphrase,
+    kdfSalt(contractAddress),
+    KDF_ITERATIONS,
+    32,
+    "sha256"
+  );
+}
+
+/**
+ * A fingerprint of the derived key, for spotting a mistyped passphrase.
+ *
+ * One-way, and computed over the derived key rather than the passphrase.
+ */
+export function keyFingerprint(employerKey: Buffer): string {
+  return sha256("polisZK/fingerprint/v1", employerKey).toString("hex");
 }
 
 /**

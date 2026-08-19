@@ -131,13 +131,12 @@ A commitment is only useful if it can still be opened, and the opening — the
 `(salary, nonce)` pair — is exactly what a hash does not contain. Two mechanisms
 keep it recoverable, because either one alone leaves a gap:
 
-**Nonces are derived, not random.** `nonce(period, i)` is a hash over the
-employer's wallet secret, the contract address, the period, and the index, so
-every nonce ever used is recomputable from a recovery phrase that is already
-backed up. Binding to the contract address matters: without it, one employer
-running two instances would produce identical commitments for identical
-salaries, leaking equality between contracts meant to know nothing about each
-other.
+**Nonces are derived, not random.** `nonce(period, i)` is a hash over a key
+derived from the employer's passphrase, the contract address, the period, and
+the index, so every nonce ever used is recomputable. Binding to the contract
+address matters: without it, one employer running two instances would produce
+identical commitments for identical salaries, leaking equality between contracts
+meant to know nothing about each other.
 
 **Openings are sealed on chain.** `sealedFor[period][i]` holds the salary and
 nonce encrypted to the employer's key — AES-256-GCM, 68 bytes: a 12-byte IV, 40
@@ -157,8 +156,47 @@ the employer who wrote it, since they alone hold the key.
 
 `payroll-secrets.<INSTANCE>.json` (gitignored, mode 0600) is therefore a
 **cache**, not the source of truth. Menu option 6 rebuilds it from the chain
-using nothing but the wallet recovery phrase, and verifies every recovered
-opening against its on-chain commitment before writing it.
+using nothing but the passphrase, and verifies every recovered opening against
+its on-chain commitment before writing it.
+
+#### Why the root is a passphrase
+
+The root is PBKDF2-SHA256, 600,000 iterations, salted with
+`polisZK/kdf/v1|<contractAddress>`. Identical in `src/utils/payroll-openings.ts`
+and `frontend/src/lib/openings.ts` — verified by deriving in Node and opening
+the resulting blob in the browser — so a period filed from either tool can be
+recovered by the other.
+
+That sharing is not a nicety. `setPayroll` requires the employer's own key, so
+any employer who is not also the platform operator must submit from their
+browser wallet, and a web page can never reach a wallet seed. A root only the
+CLI could compute would leave every browser-filed period permanently unopenable
+by the CLI.
+
+Two better-looking options were tried first and both fail:
+
+- **A wallet signature over a fixed message.** The obvious substitute for a
+  seed, and it does not work: the connector signs **non-deterministically**, so
+  the same message yields a different signature every time and every derived
+  nonce would be unreproducible. Worth knowing before reaching for it again.
+- **Encrypting to the employer's own public key.** Elegant, and dead on arrival:
+  the connector exposes no decrypt operation, so the ciphertext could never be
+  opened again.
+
+PBKDF2 rather than a plain hash because the input is human-chosen — a single
+SHA-256 would let anyone holding the public commitments grind candidates at
+billions per second.
+
+The cost is real and should be stated plainly: **the passphrase cannot be
+reset.** Lose it and every commitment on that instance becomes permanently
+unopenable. What is stored, in the browser's localStorage and nowhere else, is a
+one-way fingerprint of the derived key — enough to catch a typo, useless to an
+attacker.
+
+Wrong passphrases are caught before anything is sent. Once a period exists, the
+derived key must open one of its sealed openings or submission is refused; on an
+empty contract there is nothing to check against, so both tools ask for the
+passphrase twice.
 
 `commitmentFor(amount, nonce)` is a **pure** circuit, so the CLI evaluates it
 locally with no transaction to check a local record against the chain, using the
@@ -482,9 +520,30 @@ text cells land on the same minor unit; they did not always, and a salary that
 parsed differently depending on how Excel happened to store the cell was off by
 a factor of 10,000.
 
-Upload it in the browser (`/payroll`) to check it: parsing happens **in the page**,
-so the file is never uploaded anywhere, and the preview shows exactly which figure
-becomes public. Then submit from the CLI, which needs the file path:
+Upload it in the browser (`/payroll`) to check it and submit it: parsing happens
+**in the page**, so the file is never uploaded anywhere, and the preview shows
+exactly which figure becomes public before the Submit button does anything.
+
+#### Submitting from the browser is usually the only option
+
+`setPayroll` asserts `ownPublicKey() == employer`. The CLI signs with whatever
+is in `.env` — the platform's wallet — so it can only file payroll for an
+employer who is also the operator. Every other employer holds their key in a
+browser wallet, and must submit from the page.
+
+Three parties do the work and none of them sees everything: the proof server on
+localhost proves the circuit and never learns which wallet is submitting; the
+wallet balances, signs, and submits and never sees the salaries; the page holds
+the salaries and forgets them on navigation. There is deliberately no hosted
+proof server — proving takes the salaries as input, so a remote prover would be
+handed exactly the figures this design keeps off chain.
+
+Proving needs the compiled prover key and ZKIR, which a browser cannot read off
+disk, so `npm run frontend:config` copies `contracts/managed/<name>/{keys,zkir}`
+into `frontend/public/zk/`. That directory is gitignored: it is a build
+artifact, and `setPayroll.prover` alone is about 10 MB.
+
+The CLI route still works when the operator is the employer:
 
 ```bash
 INSTANCE=acme npm run payroll    # option 3: Set payroll from roster.xlsx

@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createLogger, defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
@@ -5,6 +7,8 @@ import wasm from "vite-plugin-wasm";
 // The Compact runtime ships sourcemaps that reference source files it does not
 // publish, so Vite warns once per module on every start. The warnings say
 // nothing actionable — filter just those and leave every other warning intact.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const logger = createLogger();
 const isSourcemapNoise = (message: string) =>
   message.includes("points to missing source files");
@@ -27,6 +31,14 @@ export default defineConfig({
   // extension anyway. esbuild's dep pre-bundling cannot handle the wasm
   // import, hence the exclusions.
   plugins: [react(), wasm()],
+  resolve: {
+    alias: {
+      // Both are packages written for Node that the indexer provider pulls in.
+      // See the shim files for what each one gets wrong in a browser build.
+      "isomorphic-ws": path.resolve(__dirname, "src/shims/isomorphic-ws.ts"),
+      assert: path.resolve(__dirname, "src/shims/assert.ts"),
+    },
+  },
   build: { target: "esnext" },
   esbuild: { target: "esnext" },
   optimizeDeps: {

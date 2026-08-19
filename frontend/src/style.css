@@ -408,3 +408,48 @@ ul.plain { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; 
 
 .install-links { border-top: 1px solid var(--line-soft); padding-top: 12px; margin-top: 12px; }
 .install-links a { color: var(--accent); }
+
+/* The main action on the roster card: full width so it reads as the step that
+   follows the table rather than a control sitting beside it. */
+button.primary {
+  display: block;
+  width: 100%;
+  margin: 16px 0 4px;
+  padding: 11px 18px;
+  font-size: 15px;
+}
+
+/* Passphrase entry on the roster card. Stacked labels rather than a row: these
+   are the last thing read before an irreversible submit, so they should not
+   compete for width with anything. */
+.passphrase { margin-top: 18px; }
+.passphrase label {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.passphrase input {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.passphrase input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* First-time passphrase creation. Called out because the difference between
+   "choose one now" and "type the one you have" is the whole question someone
+   asks at this point, and getting it wrong here is unrecoverable. */
+.passphrase .first-time {
+  padding: 11px 13px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 7px;
+}

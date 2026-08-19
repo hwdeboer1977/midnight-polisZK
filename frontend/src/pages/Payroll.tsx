@@ -127,7 +127,7 @@ export function Payroll() {
     void loadDeployments().then(setDeployments);
   }, []);
 
-  const { instances, loading, error } = usePayrollInstances(
+  const { instances, loading, error, refresh } = usePayrollInstances(
     networkId,
     deployments,
     account?.coinPublicKey ?? null
@@ -191,7 +191,20 @@ export function Payroll() {
           <Instance instance={instance} />
         </ErrorBoundary>
       ))}
-      {asEmployer.length > 0 ? <RosterUpload /> : null}
+      {asEmployer.length > 0 ? (
+        <RosterUpload
+          // The first instance this key is employer of. An employer controlling
+          // several would need to pick; nobody does yet, and a selector for a
+          // list of one is worse than no selector.
+          target={{
+            name: asEmployer[0]!.name,
+            contractAddress: asEmployer[0]!.deployment.contractAddress,
+          }}
+          // A filed period changes the ledger this page is showing, so re-read
+          // rather than leaving the tiles a month behind until someone reloads.
+          onSubmitted={refresh}
+        />
+      ) : null}
     </>
   );
 }
