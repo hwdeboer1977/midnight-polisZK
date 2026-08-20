@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CopyRow } from "../components/CopyRow";
+import { ServiceUnavailable } from "../components/ServiceUnavailable";
 import { Tile } from "../components/Tile";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { PEUR_SCALE, formatPeur, group } from "../lib/format";
@@ -202,11 +203,7 @@ export function Peur() {
             ) : null}
 
             {unavailable ? (
-              <p className="note">
-                The demo service is not running. Start it with{" "}
-                <code>npm run demo:server</code>, or mint from the CLI with{" "}
-                <code>npm run peur</code>.
-              </p>
+              <ServiceUnavailable what="minting" />
             ) : null}
 
             <p className="note">

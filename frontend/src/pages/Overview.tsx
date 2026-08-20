@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { ServiceUnavailable } from "../components/ServiceUnavailable";
 import { Tile } from "../components/Tile";
 import { WalletPicker } from "../components/WalletPicker";
 import { FAUCETS } from "../lib/chain";
@@ -273,10 +274,7 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
               ) : null}
 
               {unavailable ? (
-                <p className="note">
-                  The demo service is not running. Start it with{" "}
-                  <code>npm run demo:server</code>.
-                </p>
+                <ServiceUnavailable what="pEUR allowance" />
               ) : null}
             </>
           )}

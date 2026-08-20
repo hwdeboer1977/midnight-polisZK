@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { servedLocally } from "../lib/origin";
 import type { ParsedRoster } from "../generated/roster";
 import { submitPayroll, walletCanProve, type SubmitResult } from "../lib/submitPayroll";
 import {
@@ -87,14 +88,27 @@ export function RosterUpload({
   const [proveHere, setProveHere] = useState(false);
   // The service route is unavailable unless the operator is the employer, so
   // the choice collapses to one option and the checkbox stops being a choice.
-  const serviceUsable = target?.operatorIsEmployer ?? false;
+  //
+  // It is also unavailable on a hosted build: `/api/*` is a dev-server proxy to
+  // a local process holding the platform key, and there is no such process
+  // behind a deployed origin. Detected by origin rather than probed, because
+  // the answer never changes for a given deployment.
+  const serviceUsable = (target?.operatorIsEmployer ?? false) && servedLocally;
   // Not every wallet can prove: 1AM can (in-tab WASM), Lace cannot and needs
   // the local proof server. Offering a toggle that cannot work is worse than
   // not offering it.
   const canDelegate = api ? walletCanProve(api) : false;
   const useBrowser = proveHere || !serviceUsable;
   /** Let the wallet generate the proofs instead of the local proof server. */
+  // On by default wherever the wallet can prove. A hosted build has no local
+  // proof server to fall back to, so defaulting off meant the first thing a
+  // visitor did was fail against 127.0.0.1:6300. 1AM proves in-tab, so the
+  // salaries stay on this machine either way — the difference is speed, not
+  // exposure — and the box is still there to turn it off.
   const [delegateProving, setDelegateProving] = useState(false);
+  useEffect(() => {
+    if (canDelegate) setDelegateProving(true);
+  }, [canDelegate]);
   const [roster, setRoster] = useState<ParsedRoster | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -552,12 +566,15 @@ export function RosterUpload({
                   {" "}
                   — the salaries, the passphrase and the proving all stay in the page,
                   and your own wallet signs.
+                  {/* Two different reasons the service can be out, and saying
+                      the wrong one sends someone hunting the wrong problem. */}
                   {!serviceUsable ? (
                     <>
                       {" "}
                       <strong>
-                        Required here: this contract&rsquo;s employer is your wallet, not
-                        the platform, and the service can only sign as the platform.
+                        {!servedLocally
+                          ? "Required here: the local payroll service runs on your own machine and this app is served from the web, so there is nothing to hand the run to."
+                          : "Required here: this contract\u2019s employer is your wallet, not the platform, and the service can only sign as the platform."}
                       </strong>
                     </>
                   ) : null}
