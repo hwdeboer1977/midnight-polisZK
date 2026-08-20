@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import type { ParsedRoster } from "../generated/roster";
 import { submitPayroll, walletCanProve, type SubmitResult } from "../lib/submitPayroll";
 import {
@@ -281,24 +282,37 @@ export function RosterUpload({
 
   return (
     <section className="card">
-      <h2>Upload roster</h2>
+      <h2>Run new payroll</h2>
 
       {target && outstanding ? (
         <p className="note first-time">
-          <strong>{outstanding} is filed but not fully paid.</strong> Upload the same
-          roster again to fund and pay it — the chain stores commitments, not salaries,
-          so the amounts have to come from the file that produced them.
+          <strong>{outstanding} is filed but not fully paid.</strong> Load the same
+          workbook again to fund and pay it — the chain stores commitments, not
+          salaries, so the amounts have to come from the file that produced them.
         </p>
       ) : null}
 
+      <p className="lead-sm">
+        A payroll period is one month's figures for the people already on your{" "}
+        <Link to="/employer/roster">roster</Link>. Load the workbook for the month
+        you are filing; the period it is for is read from the sheet.
+      </p>
+
       <label className="upload">
         <input type="file" accept=".xlsx" onChange={(e) => void onFile(e)} />
-        <span>{busy ? "Reading…" : "Choose an .xlsx file"}</span>
+        <span>{busy ? "Reading…" : "Choose this period's .xlsx"}</span>
       </label>
       <p className="note">
         Year and Month above the table, then columns: {ROSTER_COLUMNS.join(" · ")}.
         Generate a starting point with <code>npm run roster:template</code>. Parsed in
         your browser — the file is never uploaded anywhere.
+      </p>
+      {/* Said out loud because the workbook carries both, and an employer should
+          not be left thinking they re-create the company every month. */}
+      <p className="note">
+        The same workbook carries the employee keys and this month's salaries, so
+        filing a period is also what keeps your roster current. Only the amounts
+        belong to the period — the people carry across months.
       </p>
 
       {error ? <p className="status error">Could not read {fileName}: {error}</p> : null}

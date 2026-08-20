@@ -1,0 +1,343 @@
+import { Link } from "react-router-dom";
+import { CopyRow } from "../components/CopyRow";
+import { EXPLORERS } from "../lib/chain";
+import { formatPeur, group } from "../lib/format";
+import { useNetworkStats } from "../lib/useNetworkStats";
+import { useWallet } from "../wallet/WalletContext";
+
+/**
+ * What the network publishes about itself. The default landing spot inside the
+ * app, deliberately: someone opening it for the first time should meet the
+ * system, not a wallet prompt. Nothing here needs a wallet, because nothing
+ * here is anyone's private business.
+ */
+export function Public() {
+  const { networkId } = useWallet();
+  const { stats, loading, error } = useNetworkStats(networkId);
+  const explorer = EXPLORERS[networkId] ?? "";
+  const peurContract = stats.deployed.find((d) => d.deployment.contractName === "peur");
+  const payrollContracts = stats.deployed.filter(
+    (d) => d.deployment.contractName === "payroll"
+  );
+
+  return (
+    <>
+      <section className="net-head">
+        <h1 className="brand-head">
+          IncomeLayer<span className="zk">ZK</span> Network
+        </h1>
+        <p className="lede">
+          Private payroll and social protection with publicly verifiable
+          aggregates. Every figure below is derived directly from on-chain
+          contract state — no individual salary, identity or payment amount is
+          exposed.
+        </p>
+      </section>
+
+      {error ? <p className="status error">Could not read the chain: {error}</p> : null}
+
+      <h2 className="eyebrow">Network</h2>
+      <div className="stats">
+        <Stat
+          value={loading ? "…" : group(BigInt(stats.employers))}
+          label="Registered employers"
+          note="payroll contracts with an employer assigned"
+        />
+        <Stat
+          value={loading ? "…" : group(BigInt(stats.workersCovered))}
+          label="Workers covered"
+          note="headcount on the latest filed period"
+        />
+        <Stat
+          value={
+            loading
+              ? "…"
+              : `${group(BigInt(stats.periodsSettled))} of ${group(BigInt(stats.periodsFiled))}`
+          }
+          label="Periods settled"
+          note="every slot in the period paid"
+        />
+      </div>
+
+      <h2 className="eyebrow">Payroll</h2>
+      <div className="stats two">
+        <Stat
+          value={loading ? "…" : `€${formatPeur(stats.payrollFiled)}`}
+          label="Gross payroll filed"
+          accent
+          note="committed on chain, proved consistent with the rows behind it"
+        />
+        <Stat
+          value={loading ? "…" : `€${formatPeur(stats.payrollSettled)}`}
+          label="Gross payroll settled"
+          note="periods where every worker has actually been paid"
+        />
+      </div>
+
+      <p className="note">
+        Amounts are in <strong>pEUR</strong>, the euro stablecoin salaries settle
+        in — see <a href="#settlement">settlement asset</a> below.
+      </p>
+
+      {/* The identity the system exists to make publicly checkable — with three
+          of its four terms absent, because the contract does not carry them.
+          Filling them in from a tax rate would be arithmetic performed by this
+          page, not a fact proved by a circuit, on the one page whose claim is
+          that its figures can be verified.
+
+          WHEN THE CONTRACT CARRIES ALL FOUR: delete both notes below and the
+          `pending` class, and fill the three dashed terms. The prose exists to
+          be transparent about a prototype; once the figures are real the strip
+          explains itself, and paragraphs of caveat around a working identity
+          would only make it look uncertain. */}
+      <section className="card pending">
+        <h2>Payroll breakdown — not yet in the contract</h2>
+        <div className="identity">
+          <div className="term real">
+            <span className="term-value">
+              {loading ? "…" : `€${formatPeur(stats.payrollFiled)}`}
+            </span>
+            <span className="term-label">Gross payroll filed</span>
+          </div>
+          <span className="op">=</span>
+          <div className="term">
+            <span className="term-value">—</span>
+            <span className="term-label">Tax withheld</span>
+          </div>
+          <span className="op">+</span>
+          <div className="term">
+            <span className="term-value">—</span>
+            <span className="term-label">Social contributions assessed</span>
+          </div>
+          <span className="op">+</span>
+          <div className="term">
+            <span className="term-value">—</span>
+            <span className="term-label">Net payroll due</span>
+          </div>
+        </div>
+        <p className="note">
+          This is the property worth having: anyone can check that gross equals
+          tax plus contributions plus net, across every employer, without seeing
+          a single worker's figures. It is not claimed yet. The contract commits
+          to <em>one</em> amount per employee — the roster's gross salary — and
+          pays it out whole, so nothing is withheld and the three right-hand
+          terms have no on-chain source. Adding them means four separately
+          committed vectors instead of one, and a circuit that proves the sum:
+          a contract change and a redeploy.
+        </p>
+        <p className="note">
+          The labels are deliberate. <em>Assessed</em> and <em>due</em> are what
+          a payroll filing can prove; <em>received</em> and <em>paid</em> would
+          need contracts that actually take custody of the money, and those do
+          not exist either.
+        </p>
+      </section>
+
+      {/* One box rather than two cards and two loose paragraphs: here the
+          sentence is the point, and the two figures are its evidence. */}
+      <section className="card">
+        <h2>Privacy</h2>
+        <div className="figures">
+          <div className="figure-cell">
+            <div className="figure-value">
+              {loading ? "…" : group(BigInt(stats.commitments))}
+            </div>
+            <div className="figure-label">Salary commitments</div>
+            <div className="figure-note">
+              one opaque commitment per worker per payroll period
+            </div>
+          </div>
+          <div className="figure-cell">
+            <div className="figure-value">0</div>
+            <div className="figure-label">Individual salaries published</div>
+            <div className="figure-note">
+              not withheld — the ledger has no field for one
+            </div>
+          </div>
+        </div>
+        <p className="note">
+          What is <em>not</em> here: no individual salary, no employee name or
+          address, no holder of any pEUR balance, and no amount for any single
+          payment. Those are not withheld from this page — they were never
+          published in the first place.
+        </p>
+      </section>
+
+      <h2 className="eyebrow">Social protection fund</h2>
+      {/* The social-protection half of the story has no contracts yet, and a
+          dashboard that invents its figures would break exactly the promise the
+          rest of the page is making. */}
+      <section className="card pending">
+        <h2>Not yet deployed</h2>
+        <div className="flow">
+          <span>Contributions</span>
+          <span className="arrow">→</span>
+          <span className="node">Social Protection Fund</span>
+          <span className="arrow">→</span>
+          <span>Benefits</span>
+        </div>
+
+        {/* The four metrics named but not filled. The shape of the answer is
+            real information; a made-up number in its place would not be, and
+            this page's whole claim is that its figures can be checked. */}
+        <div className="stats pending-stats">
+          {[
+            "Contributions received",
+            "Benefits paid",
+            "Fund balance",
+            "Claims settled",
+          ].map((label) => (
+            <div className="stat" key={label}>
+              <div className="stat-value">—</div>
+              <div className="stat-label">{label}</div>
+            </div>
+          ))}
+        </div>
+
+        <p className="note">
+          Pooled totals, with no individual recoverable — that is what makes a
+          fund's solvency checkable by anyone without exposing a single claimant.
+          They are blank because the fund and claim contracts are not built, so
+          there is nothing on chain to sum. Every figure above this line can be
+          checked against the contracts below; these four would be decoration.
+        </p>
+      </section>
+
+      <section className="card">
+        <h2>Deployed on Midnight {networkId}</h2>
+        {payrollContracts.length === 0 ? (
+          <p className="muted">
+            {loading ? "Reading deployments…" : `No payroll contracts on ${networkId} yet.`}
+          </p>
+        ) : (
+          payrollContracts.map((entry) => (
+            <div key={entry.name} className="deployed-row">
+              <CopyRow badge={entry.label} value={entry.deployment.contractAddress} />
+              {explorer ? (
+                <a
+                  className="explorer"
+                  href={`${explorer}${entry.deployment.contractAddress}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  Explorer ↗
+                </a>
+              ) : null}
+            </div>
+          ))
+        )}
+        <p className="note">
+          One contract per employer, assigned once and permanently. The platform
+          deploys it and then cannot write payroll to it, cannot reassign it and
+          cannot take it back.
+        </p>
+      </section>
+
+      {/* Its own section rather than a row in the contract list: which asset
+          salaries settle in is a property of the system, and the caveats that
+          come with a demo token deserve to be read rather than skimmed past in
+          a footnote. */}
+      <section className="card" id="settlement">
+        <h2>Settlement asset — pEUR</h2>
+        <p className="lead-sm">
+          Salaries settle in shielded <strong>pEUR</strong>. Individual balances
+          and payment amounts are not public.
+        </p>
+
+        {peurContract ? (
+          <div className="deployed-row">
+            <CopyRow badge="pEUR issuer" value={peurContract.deployment.contractAddress} />
+            {explorer ? (
+              <a
+                className="explorer"
+                href={`${explorer}${peurContract.deployment.contractAddress}`}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                Explorer ↗
+              </a>
+            ) : null}
+          </div>
+        ) : (
+          <p className="muted">No pEUR deployment on {networkId} yet.</p>
+        )}
+
+        {stats.peurSupply !== null ? (
+          <div className="row">
+            <div className="k">Test token supply</div>
+            <div className="v">€{formatPeur(stats.peurSupply)}</div>
+          </div>
+        ) : null}
+
+        <p className="warn-line">
+          ⚠ Demo asset — permissionless minting is enabled for testing.
+        </p>
+
+        {/* Everything below is documentation rather than a fact about the
+            system, so it is one click away instead of in the way. */}
+        <details className="details">
+          <summary>Technical details</summary>
+          <p className="note">
+            Anyone may mint pEUR, in any amount, without permission. That makes
+            it worthless as a store of value and is deliberate: a demo should not
+            need a faucet queue or an operator in the loop. So the supply above
+            measures the faucet, not economic activity, which is why it is kept
+            out of the aggregates. A real deployment settles in an asset whose
+            supply is controlled and auditable against reserves — restoring that
+            is one issuer check in the contract.
+          </p>
+          <p className="note">
+            pEUR is shielded, so a balance is a set of coins in the Zswap tree
+            rather than a number attached to an address. Nobody's holding is
+            public and neither is the value of any single transfer.
+          </p>
+          <p className="note">
+            Contract addresses are searchable on an explorer; a token type is not
+            — it is a derived identifier, and shielded coins leave only
+            commitments behind. To confirm pEUR exists, read this contract's own
+            ledger, which holds its token id, issuer and total supply, rather
+            than looking for a balance.
+          </p>
+        </details>
+      </section>
+
+      <section className="card">
+        <h2>Where to go next</h2>
+        <div className="next-areas">
+          <Link to="/employer" className="area-link">
+            <strong>Employer</strong>
+            <span>File a payroll period, fund it, pay it.</span>
+          </Link>
+          <Link to="/employee" className="area-link">
+            <strong>Employee</strong>
+            <span>Your own income record — visible only to you.</span>
+          </Link>
+          <Link to="/claim" className="area-link">
+            <strong>Claim</strong>
+            <span>Prove an entitlement without revealing what it rests on.</span>
+          </Link>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function Stat({
+  value,
+  label,
+  note,
+  accent,
+}: {
+  value: string;
+  label: string;
+  note: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className={accent ? "stat accent" : "stat"}>
+      <div className="stat-value">{value}</div>
+      <div className="stat-label">{label}</div>
+      <div className="stat-note">{note}</div>
+    </div>
+  );
+}

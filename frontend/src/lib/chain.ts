@@ -42,6 +42,20 @@ export const PROOF_SERVERS: Record<string, string> = {
  * The local devnet has no faucet — its dev preset pre-funds a well-known account
  * instead — and an empty string is how that is said.
  */
+/**
+ * Block-explorer base URL, per network. A contract address is appended.
+ *
+ * Empty where no explorer is known, and the UI renders no link rather than a
+ * guessed one: a dead "Explorer ↗" in front of a technical reviewer is worse
+ * than no link at all, because the whole point of that list is that the
+ * frontend can be walked back to a real deployed system.
+ */
+export const EXPLORERS: Record<string, string> = {
+  undeployed: "",
+  preview: "",
+  preprod: "",
+};
+
 export const FAUCETS: Record<string, string> = {
   undeployed: "",
   preview: "https://midnight-tmnight-preview.nethermind.dev/",

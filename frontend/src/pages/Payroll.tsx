@@ -3,8 +3,7 @@ import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { RosterUpload } from "../components/RosterUpload";
-import { Tile } from "../components/Tile";
-import { WalletPicker } from "../components/WalletPicker";
+import { StageGate } from "../components/StageGate";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { formatPeur, group } from "../lib/format";
 import type { PayrollLedger } from "../lib/contracts";
@@ -25,79 +24,118 @@ function periodName(period: bigint): string {
   return month ? `${month} ${Math.floor(n / 100)}` : String(period);
 }
 
-function Instance({ instance }: { instance: PayrollInstance }) {
-  const { name, deployment, state, blockHeight, role } = instance;
+/**
+ * Payroll history: one row per period filed, newest first.
+ *
+ * The employer sees the aggregate for each month here and the private rows
+ * behind it in the filing flow below; the public page sees only the totals.
+ * That contrast is the whole architecture, and putting the months in a table
+ * rather than a stack of cards is what makes it readable at a glance.
+ */
+function PeriodHistory({ instance }: { instance: PayrollInstance }) {
+  const { state, blockHeight, role, deployment, name } = instance;
 
   // Newest first: the month someone is looking for is almost always the last
   // one filed, and a correction to an old month should not bury it.
   const periods = state
     ? Array.from(state.periods).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0))
     : [];
-  const latest = state && state.latestPeriod > 0n ? state.latestPeriod : null;
-  const counts = state?.employeeCountFor;
-  const totals = state?.totalPayrollFor;
-  const commitments =
-    state && latest && state.commitmentsFor.member(latest)
-      ? Number(state.commitmentsFor.lookup(latest).size())
-      : 0;
+
+  const countFor = (period: bigint) =>
+    state?.employeeCountFor.member(period) ? Number(state.employeeCountFor.lookup(period)) : 0;
+  const grossFor = (period: bigint) =>
+    state?.totalPayrollFor.member(period) ? state.totalPayrollFor.lookup(period) : 0n;
 
   /** How many slots of a period are marked done in one of the flag maps. */
-  const countFlags = (
-    map: typeof state extends null ? never : PayrollLedger["fundedFor"] | undefined,
-    period: bigint | null
-  ) => {
-    if (!map || !period || !map.member(period)) return 0;
+  const countFlags = (map: PayrollLedger["fundedFor"] | undefined, period: bigint) => {
+    if (!map || !map.member(period)) return 0;
     let n = 0;
     for (const [, done] of map.lookup(period)) if (done) n += 1;
     return n;
   };
-  const fundedCount = countFlags(state?.fundedFor, latest);
-  const paidCount = countFlags(state?.paidFor, latest);
 
   return (
     <section className="card">
       <h2>
-        <span className="badge">{name}</span>
+        <span className="badge">{deployment.instance ?? name}</span>
         {role === "platform" ? <span className="tag">you deployed this</span> : null}
       </h2>
 
-      <div className="tiles inline">
-        <Tile
-          label="Employees"
-          value={
-            latest && counts?.member(latest)
-              ? group(counts!.lookup(latest))
-              : "—"
-          }
-          unit={latest ? periodName(latest) : "no payroll filed yet"}
-        />
-        <Tile
-          label="Total payroll"
-          value={
-            latest && totals?.member(latest)
-              ? formatPeur(totals.lookup(latest))
-              : "—"
-          }
-          unit={latest ? `${periodName(latest)} · public aggregate` : "public aggregate"}
-          accent
-        />
-        <Tile
-          label="Paid"
-          value={latest ? `${paidCount} / ${commitments}` : "—"}
-          unit={
-            latest
-              ? paidCount === commitments && commitments > 0
-                ? "settled"
-                : `${fundedCount} funded`
-              : "nothing filed yet"
-          }
-        />
-        <Tile
-          label="Periods filed"
-          value={state ? String(periods.length) : "—"}
-          unit={blockHeight ? `block ${group(BigInt(blockHeight))}` : "months on chain"}
-        />
-      </div>
+      {periods.length === 0 ? (
+        <p className="muted">No periods filed on this contract yet.</p>
+      ) : (
+        <>
+          <table className="roster">
+            <thead>
+              <tr>
+                <th>Period</th>
+                <th className="num">Workers</th>
+                <th className="num">Gross</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {periods.map((period) => {
+                const workers = countFor(period);
+                const funded = countFlags(state?.fundedFor, period);
+                const paid = countFlags(state?.paidFor, period);
+                return (
+                  <tr key={String(period)}>
+                    <td>{periodName(period)}</td>
+                    <td className="num">{workers}</td>
+                    <td className="num">€{formatPeur(grossFor(period))}</td>
+                    <td>
+                      {workers > 0 && paid === workers ? (
+                        <span className="ok-line">Settled</span>
+                      ) : funded === workers && workers > 0 ? (
+                        <span className="muted">Funded</span>
+                      ) : (
+                        <span className="muted">Filed</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* Stated once, below the table, rather than as three columns of
+              dashes. A column that never has a value is not information; it is
+              a reminder of something missing, repeated once per row. */}
+          <p className="note">
+            The current contract commits one gross salary per employee. Tax,
+            social contributions and net salary are outside this prototype —
+            everything in the table above is read from the contract's own public
+            ledger.
+          </p>
+
+          <details className="details">
+            <summary>Commitments per period</summary>
+            {periods.map((period) => {
+              const rows =
+                state && state.commitmentsFor.member(period)
+                  ? Array.from(state.commitmentsFor.lookup(period))
+                  : [];
+              return (
+                <details className="details" key={String(period)}>
+                  <summary>
+                    {periodName(period)} — {rows.length} commitments
+                  </summary>
+                  {rows.map(([index, commitment]) => (
+                    <CopyRow key={String(index)} label={`#${index}`} value={hex(commitment)} />
+                  ))}
+                </details>
+              );
+            })}
+            <p className="note">
+              Each commitment is a hash of one salary and a secret nonce. Opaque
+              without the nonce, which only you hold — so no salary is derivable
+              from what is published here. Every period stays on chain, so a past
+              month remains provable after later ones are filed.
+            </p>
+          </details>
+        </>
+      )}
 
       <CopyRow label="Contract" value={deployment.contractAddress} />
       {state && !state.employerAssigned ? (
@@ -106,39 +144,8 @@ function Instance({ instance }: { instance: PayrollInstance }) {
           <div className="v warn-text">no employer assigned yet</div>
         </div>
       ) : null}
-
-      {state && periods.length > 0
-        ? periods.map((period) => {
-            const rows = state.commitmentsFor.member(period)
-              ? Array.from(state.commitmentsFor.lookup(period))
-              : [];
-            const total = state.totalPayrollFor.member(period)
-              ? formatPeur(state.totalPayrollFor.lookup(period))
-              : "—";
-            return (
-              <details className="details" key={String(period)}>
-                <summary>
-                  {periodName(period)} — {total} pEUR, {rows.length} commitments
-                </summary>
-                {rows.map(([index, commitment]) => (
-                  <CopyRow
-                    key={String(index)}
-                    label={`#${index}`}
-                    value={hex(commitment)}
-                  />
-                ))}
-              </details>
-            );
-          })
-        : null}
-
-      {commitments > 0 ? (
-        <p className="note">
-          Each commitment is a hash of one salary and a secret nonce. Opaque without
-          the nonce, which only you hold — so no salary is derivable from what is
-          published here. Every period stays on chain, so a past month remains
-          provable after later ones are filed.
-        </p>
+      {blockHeight ? (
+        <p className="note">Read at block {group(BigInt(blockHeight))}.</p>
       ) : null}
     </section>
   );
@@ -158,17 +165,27 @@ export function Payroll() {
     account?.coinPublicKey ?? null
   );
 
+  const head = (
+    <section className="area-head">
+      <h1>Payroll</h1>
+      <p className="lede">
+        One row per month filed. The private figures behind each row never left
+        your machine — what is on chain is the aggregate and one opaque
+        commitment per worker.
+      </p>
+    </section>
+  );
+
   if (!account) {
     return (
       <>
-        <section className="card">
-          <h2>Payroll</h2>
-          <p className="lead-sm">
-            Connect your company signing key to see your payroll contract. You will only
-            ever see contracts your key controls.
-          </p>
-        </section>
-        <WalletPicker heading="Choose your signing key" subject="signing key" />
+        {head}
+        <StageGate
+          title="Setup first"
+          needs="Filing a period needs your company signing key, and you will only ever see contracts that key controls. Connect and register on Setup."
+          to="/employer/setup"
+          action="Go to Setup"
+        />
       </>
     );
   }
@@ -190,30 +207,29 @@ export function Payroll() {
 
   if (mine.length === 0) {
     return (
-      <section className="card">
-        <h2>No payroll contract yet</h2>
-        <p className="lead-sm">
-          This signing key does not control a payroll contract on {networkId}.
-        </p>
-        <p className="note">
-          {instances.length > 0
-            ? `${instances.length} contract${instances.length === 1 ? "" : "s"} exist on this network, none of them yours.`
-            : "No contracts have been deployed on this network yet."}{" "}
-          <Link to="/register">Register your company</Link> to get one.
-        </p>
+      <>
+        {head}
+        <StageGate
+          title="Setup first"
+          needs={`This signing key does not control a payroll contract on ${networkId}. Register your organization to be assigned one.`}
+          to="/employer/setup"
+          action="Go to Setup"
+        />
         {error ? <p className="status error">{error}</p> : null}
-      </section>
+      </>
     );
   }
 
   return (
     <>
+      {head}
+
       {error ? <p className="status error">Could not read state: {error}</p> : null}
       {mine.map((instance) => (
         // Per instance, not around the list: one contract left on an older
         // version of the ledger should not hide the others.
         <ErrorBoundary key={instance.name} what={instance.name}>
-          <Instance instance={instance} />
+          <PeriodHistory instance={instance} />
         </ErrorBoundary>
       ))}
       {asEmployer.length > 0 ? (

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
-import { OnboardingSteps } from "../components/OnboardingSteps";
 import { Tile } from "../components/Tile";
 import { WalletPicker } from "../components/WalletPicker";
 import { FAUCETS } from "../lib/chain";
@@ -18,7 +17,18 @@ import { EMPLOYER_ALLOWANCE, useClaim } from "../lib/useFunding";
 import { usePayrollInstances } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
 
-export function Overview() {
+/**
+ * The wallet-and-contract detail behind Setup, split in two.
+ *
+ * `variant="funding"` is what an employer does — balances, the keys people pay
+ * them at, and claiming pEUR. `variant="technical"` is what a reviewer reads —
+ * raw addresses and deployed contracts. Setup renders the first inline and the
+ * second behind a disclosure, because one page holding both at the same weight
+ * had become a debug console with a registration form at the top.
+ */
+export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "technical" }) {
+  const showFunding = variant !== "technical";
+  const showTechnical = variant !== "funding";
   const { account, networkId, refresh: refreshWallet } = useWallet();
   const [deployments, setDeployments] = useState<Deployments>({});
   const [deploymentsRead, setDeploymentsRead] = useState(false);
@@ -40,13 +50,7 @@ export function Overview() {
   );
   const { job: claimJob, submitting: claiming, unavailable, claim } = useClaim();
 
-  if (!account)
-    return (
-      <>
-        <OnboardingSteps current={1} />
-        <WalletPicker />
-      </>
-    );
+  if (!account) return <WalletPicker />;
 
   const tokenId = deployments[`${networkId}/peur`]?.tokenId;
   const peur = tokenId
@@ -98,10 +102,8 @@ export function Overview() {
 
   return (
     <>
-      {myPayroll.length === 0 ? (
-        <OnboardingSteps current={checkingPayroll ? null : 2} />
-      ) : null}
-
+      {showFunding ? (
+        <>
       <div className="tiles-head">
         <h2>Balances</h2>
         <button className="ghost refresh" onClick={reread} disabled={refreshing}>
@@ -126,7 +128,10 @@ export function Overview() {
           accent
         />
       </div>
+        </>
+      ) : null}
 
+      {showFunding ? (
       <section className="callout">
         <h2>Keys to receive pEUR</h2>
         <CopyRow label="Coin public key" value={account.coinPublicKey} />
@@ -138,6 +143,9 @@ export function Overview() {
         </p>
       </section>
 
+      ) : null}
+
+      {showTechnical ? (
       <section className="card">
         <h2>Addresses</h2>
         <CopyRow label="Unshielded" value={account.unshieldedAddress} />
@@ -152,6 +160,9 @@ export function Overview() {
         </p>
       </section>
 
+      ) : null}
+
+      {showTechnical ? (
       <section className="card">
         <h2>Contracts on {networkId}</h2>
 
@@ -179,12 +190,14 @@ export function Overview() {
         ) : (
           <p className="note">
             No payroll contract is registered to this signing key.{" "}
-            <Link to="/register">Register your company</Link> to get one.
+            <Link to="/employer/setup">Register your company</Link> to get one.
           </p>
         )}
       </section>
 
-      {myPayroll.length > 0 ? (
+      ) : null}
+
+      {showFunding && myPayroll.length > 0 ? (
         <section className="card">
           <h2>Get funded</h2>
           <ol className="next">
