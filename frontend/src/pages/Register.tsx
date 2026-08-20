@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { ServiceUnavailable } from "../components/ServiceUnavailable";
 import { WalletPicker } from "../components/WalletPicker";
 import { CopyRow } from "../components/CopyRow";
 import { loadDeployments, type Deployments } from "../lib/deployments";
@@ -258,11 +259,7 @@ export function Register() {
             ) : null}
 
             {unavailable ? (
-              <p className="note">
-                The onboarding service is not running. Start it with{" "}
-                <code>npm run demo:server</code>, or send the details above to the
-                platform operator instead.
-              </p>
+              <ServiceUnavailable what="onboarding" />
             ) : null}
 
             <p className="note">
