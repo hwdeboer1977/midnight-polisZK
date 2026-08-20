@@ -2,13 +2,11 @@ import "dotenv/config";
 import * as fs from "fs";
 import * as readline from "readline/promises";
 import chalk from "chalk";
-import { ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
 import { connect, readLedger, type Connection } from "./utils/contract.js";
 import { currentInstance } from "./utils/deployments.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { hex, toPublicKey } from "./utils/keys.js";
 import {
-  deriveEmployeeSeed,
   deriveEmployerKey,
   deriveNonce,
   isSealed,
@@ -506,7 +504,8 @@ async function main() {
         case "3": {
           console.log(
             chalk.gray(
-              "\nA roster spreadsheet with columns: Full name | Address | Monthly gross salary.\n" +
+              "\nA roster spreadsheet with columns: Full name | Address | Monthly gross " +
+                "salary | Coin public key | Encryption public key.\n" +
                 "Generate a starting point with `npm run roster:template`.\n"
             )
           );
@@ -514,6 +513,7 @@ async function main() {
           const file = answer.trim() || "roster-template.xlsx";
 
           let salaries: bigint[];
+          let payeeKeys: string[];
           let period: number;
           try {
             const roster = await parseRosterWorkbook(file);
@@ -533,6 +533,9 @@ async function main() {
             }
 
             salaries = roster.rows.map((row) => row.salaryMinor);
+            // Real employees' keys, from the roster. Derived ones would make
+            // the employer the owner of every salary they just paid out.
+            payeeKeys = roster.rows.map((row) => row.coinPublicKey);
 
             // The workbook carries the period, so the month filed is the month
             // the file was prepared for. The prompt confirms rather than asks:
@@ -628,16 +631,11 @@ async function main() {
             // is rejected at the runtime type check rather than coerced.
             // Who each slot is payable to, hashed with the contract's own pure
             // circuit so it matches what `payEmployee` will check.
-            const payees = salaries.map((_, index) => {
-              const keys = ZswapSecretKeys.fromSeed(
-                deriveEmployeeSeed(employerKey, index)
-              );
-              return conn.contractModule.pureCircuits.payeeHash({
-                bytes: Uint8Array.from(
-                  Buffer.from(String(keys.coinPublicKey).replace(/^0x/, ""), "hex")
-                ),
-              });
-            });
+            const payees = payeeKeys.map((key) =>
+              conn.contractModule.pureCircuits.payeeHash({
+                bytes: Uint8Array.from(Buffer.from(key, "hex")),
+              })
+            );
 
             const tx = await conn.deployed.callTx.setPayroll(
               BigInt(period),

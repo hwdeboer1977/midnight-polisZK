@@ -1,8 +1,7 @@
 import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
-import { ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { fetchContractState, INDEXERS, INDEXER_WS } from "./chain";
-import { deriveEmployeeSeed, deriveEmployerKey, deriveNonce, sealedCoinNonce } from "./openings";
+import { deriveEmployerKey, deriveNonce, sealedCoinNonce } from "./openings";
 import { submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
 import { connectContract, type ProvingMode } from "./submitPayroll";
 
@@ -36,6 +35,21 @@ export interface StepProgress {
  * Salaries come from the caller — the chain holds only commitments, so the
  * amounts have to come from the roster or the sealed openings.
  */
+/**
+ * The two public keys one payment needs, from the roster.
+ *
+ * Both, always. The coin public key names the recipient inside the circuit; the
+ * encryption public key is what the coin's ciphertext is encrypted to. Supply
+ * only the first and the payment succeeds, the contract marks the slot paid,
+ * and the employee's wallet never sees a thing.
+ */
+export interface PayeeKeys {
+  /** Hex, 32 bytes. */
+  coinPublicKey: string;
+  /** Hex. */
+  encryptionPublicKey: string;
+}
+
 export function slotStates(
   ledger: any,
   period: number,
@@ -182,6 +196,7 @@ export async function payPeriod(options: {
   period: number;
   round: number;
   slots: SlotState[];
+  payees: PayeeKeys[];
   leaves: number[];
   onProgress?: StepProgress;
 }): Promise<number> {
@@ -194,6 +209,7 @@ export async function payPeriod(options: {
     period,
     round,
     slots,
+    payees: payeeKeys,
     leaves,
   } = options;
   const onProgress = options.onProgress ?? (() => {});
@@ -218,10 +234,9 @@ export async function payPeriod(options: {
   const encMappings: [string, string][] = [];
 
   for (const [index, slot] of slots.entries()) {
-    const employee = ZswapSecretKeys.fromSeed(
-      await deriveEmployeeSeed(employerKey, index)
-    );
-    const payee = toHexBytes(String(employee.coinPublicKey).replace(/^0x/, ""));
+    const keys = payeeKeys[index];
+    if (!keys) throw new Error(`No payee keys for employee ${index + 1}`);
+    const payee = toHexBytes(keys.coinPublicKey);
 
     salaryNonces.push(await deriveNonce(employerKey, period, index));
     coins.push({
@@ -236,8 +251,8 @@ export async function payPeriod(options: {
     // a shielded coin is only discoverable by someone whose encryption key the
     // transaction was built with.
     encMappings.push([
-      Array.from(payee, (b) => b.toString(16).padStart(2, "0")).join(""),
-      String(employee.encryptionPublicKey).replace(/^0x/, "").toLowerCase(),
+      keys.coinPublicKey.toLowerCase(),
+      keys.encryptionPublicKey.toLowerCase(),
     ]);
   }
 
@@ -321,6 +336,8 @@ export async function fundAndPayPeriod(options: {
   tokenId: string;
   period: number;
   salaries: bigint[];
+  /** The employees' public keys, in roster order. See {@link PayeeKeys}. */
+  payees: PayeeKeys[];
   provingMode?: ProvingMode;
   onProgress?: StepProgress;
 }): Promise<RunResult> {
@@ -413,6 +430,7 @@ export async function fundAndPayPeriod(options: {
   const fresh = slots.map((s) => ({ ...s, funded: true }));
 
   const paid = await payPeriod({
+    payees: options.payees,
     round,
     providers: contractProviders,
     compiledContract,
@@ -552,10 +570,20 @@ export async function fundAndPayViaService(options: {
   contractAddress: string;
   period: number;
   salaries: bigint[];
+  /** The employees' public keys, in roster order. See {@link PayeeKeys}. */
+  payees: PayeeKeys[];
   passphrase: string;
   onProgress?: StepProgress;
 }): Promise<RunResult> {
-  const { instance, networkId, contractAddress, period, salaries, passphrase } = options;
+  const {
+    instance,
+    networkId,
+    contractAddress,
+    period,
+    salaries,
+    payees: payeeKeys,
+    passphrase,
+  } = options;
   const onProgress = options.onProgress ?? (() => {});
 
   onProgress("Deriving this period's material (PBKDF2, deliberately slow)…");
@@ -577,17 +605,16 @@ export async function fundAndPayViaService(options: {
   // amounts and cannot open another period or spend anyone's salary.
   const slots = [];
   for (const [index, salary] of salaries.entries()) {
-    const employee = ZswapSecretKeys.fromSeed(
-      await deriveEmployeeSeed(employerKey, index)
-    );
+    const keys = payeeKeys[index];
+    if (!keys) throw new Error(`No payee keys for employee ${index + 1}`);
     slots.push({
       salary: salary.toString(),
       salaryNonce: toHex(await deriveNonce(employerKey, period, index)),
       coinNonce: toHex(await sealedCoinNonce(employerKey, period, round, index)),
-      payee: String(employee.coinPublicKey).replace(/^0x/, "").toLowerCase(),
+      payee: keys.coinPublicKey.toLowerCase(),
       // Public half only. Without it the coin is created and the payee's wallet
       // can never find it — paid, and unreachable.
-      payeeEnc: String(employee.encryptionPublicKey).replace(/^0x/, "").toLowerCase(),
+      payeeEnc: keys.encryptionPublicKey.toLowerCase(),
     });
   }
 

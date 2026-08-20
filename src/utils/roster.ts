@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { bech32m } from "@scure/base";
 import { PEUR_DECIMALS, PEUR_SCALE } from "./constructor-args.js";
 
 /**
@@ -13,7 +14,40 @@ export const ROSTER_COLUMNS = [
   "Full name",
   "Address",
   "Monthly gross salary",
+  "Coin public key",
+  "Encryption public key",
 ] as const;
+
+/**
+ * Both keys, because a shielded coin needs both to arrive.
+ *
+ * The coin public key names the recipient inside the circuit — it is what
+ * `payeeFor` commits to. The encryption public key is what the coin's
+ * ciphertext is encrypted to, and without it the payment still happens and the
+ * employee's wallet can never see it: paid, and unreachable. The employee reads
+ * both off their own dashboard and sends them to their employer; neither is a
+ * secret, and neither lets the employer spend anything.
+ */
+export const KEY_COLUMNS = { coin: 4, encryption: 5 } as const;
+
+/**
+ * Decodes a Bech32m key to hex, the form contracts and the SDK both work in.
+ *
+ * Validated at upload rather than at payday. Midnight keys carry a Bech32m
+ * checksum, so a mistyped one fails here — while the roster is still on screen
+ * and one cell away from being fixed. The same typo caught at payday has
+ * already cost a filing and a funding round, and a wrong-but-valid key is not
+ * detectable at all, which is exactly why the recoverable case should not also
+ * be left to chance.
+ */
+export function keyToHex(key: string): string {
+  const value = key.trim();
+  if (/^[0-9a-fA-F]{64}$/.test(value)) return value.toLowerCase();
+
+  // Midnight's strings run past bech32's default 90-character limit.
+  const { words } = bech32m.decode(value as `${string}1${string}`, 1023);
+  return Array.from(bech32m.fromWords(words), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /**
  * How many employees payroll.compact carries.
@@ -61,6 +95,10 @@ export interface RosterRow {
   address: string;
   /** Minor units (1e-6 pEUR), as the contract counts them. */
   salaryMinor: bigint;
+  /** Hex, 32 bytes. Hashed into `payeeFor`; the preimage stays here. */
+  coinPublicKey: string;
+  /** Hex. Never reaches the chain — it is an input to building the coin. */
+  encryptionPublicKey: string;
 }
 
 export interface RosterProblem {
@@ -176,10 +214,18 @@ export async function parseRosterWorkbook(
     const fullName = String(cell(1) ?? "").trim();
     const address = String(cell(2) ?? "").trim();
     const rawSalary = cell(3);
+    const rawCoinKey = String(cell(KEY_COLUMNS.coin) ?? "").trim();
+    const rawEncKey = String(cell(KEY_COLUMNS.encryption) ?? "").trim();
 
     // A blank line in the middle of a roster is a mistake worth reporting; a
     // fully blank trailing line is just spreadsheet padding.
-    if (!fullName && !address && (rawSalary === null || rawSalary === undefined || rawSalary === "")) {
+    if (
+      !fullName &&
+      !address &&
+      !rawCoinKey &&
+      !rawEncKey &&
+      (rawSalary === null || rawSalary === undefined || rawSalary === "")
+    ) {
       return;
     }
 
@@ -196,7 +242,50 @@ export async function parseRosterWorkbook(
       });
     }
 
-    rows.push({ index: rows.length, fullName, address, salaryMinor });
+    // Both keys are required, not optional-with-a-fallback. A slot filed
+    // without them cannot be paid to anyone who can spend it, and the failure
+    // would land after filing and funding rather than here.
+    let coinPublicKey = "";
+    let encryptionPublicKey = "";
+    try {
+      if (!rawCoinKey) throw new Error("missing coin public key");
+      coinPublicKey = keyToHex(rawCoinKey);
+      if (coinPublicKey.length !== 64) {
+        throw new Error("coin public key is not 32 bytes");
+      }
+    } catch (error) {
+      problems.push({
+        row: rowNumber,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      if (!rawEncKey) throw new Error("missing encryption public key");
+      encryptionPublicKey = keyToHex(rawEncKey);
+    } catch (error) {
+      problems.push({
+        row: rowNumber,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Two employees sharing a key is a copy-paste slip, and it pays one person
+    // twice while stranding the other's salary in a key they do not hold.
+    if (coinPublicKey && rows.some((row) => row.coinPublicKey === coinPublicKey)) {
+      problems.push({
+        row: rowNumber,
+        message: "coin public key is already used by another employee",
+      });
+    }
+
+    rows.push({
+      index: rows.length,
+      fullName,
+      address,
+      salaryMinor,
+      coinPublicKey,
+      encryptionPublicKey,
+    });
   });
 
   if (rows.length !== ROSTER_SIZE) {
@@ -288,7 +377,13 @@ function readPeriod(
  */
 export async function writeRosterTemplate(
   filePath: string,
-  sample: { fullName: string; address: string; salary: string }[] = [],
+  sample: {
+    fullName: string;
+    address: string;
+    salary: string;
+    coinPublicKey?: string;
+    encryptionPublicKey?: string;
+  }[] = [],
   period?: { year: number; month: number }
 ): Promise<void> {
   const workbook = new ExcelJS.Workbook();
@@ -299,6 +394,9 @@ export async function writeRosterTemplate(
   sheet.getColumn(2).width = 42;
   sheet.getColumn(3).width = 22;
   sheet.getColumn(3).numFmt = "#,##0.00";
+  // Bech32m keys are long. Narrower and Excel shows a column of ####.
+  sheet.getColumn(KEY_COLUMNS.coin).width = 64;
+  sheet.getColumn(KEY_COLUMNS.encryption).width = 64;
 
   sheet.getCell("A1").value = "Payroll period";
   sheet.getCell("A1").font = { bold: true };
@@ -333,6 +431,18 @@ export async function writeRosterTemplate(
   };
 
   const HEADER_ROW = 4;
+
+  // Said once, in the file, because whoever collects the keys is not
+  // necessarily the person who read the dashboard explaining them. It goes
+  // ABOVE the header: `parseRosterWorkbook` skips everything up to the header
+  // row, and a line of prose below it parses as one more employee.
+  const help = sheet.getCell(`A${HEADER_ROW - 1}`);
+  help.value =
+    "Each employee sends you both keys from their own dashboard — neither is a " +
+    "secret, and neither lets you spend their salary. Without them the payment " +
+    "is made and their wallet can never find it.";
+  help.font = { italic: true, size: 10 };
+
   const header = sheet.getRow(HEADER_ROW);
   ROSTER_COLUMNS.forEach((label, i) => {
     header.getCell(i + 1).value = label;
@@ -348,7 +458,11 @@ export async function writeRosterTemplate(
     // scale from a salary stored as a number.
     const salary = sample[i]?.salary;
     row.getCell(3).value = salary ? Number(salary) : null;
+    // Text, so Excel cannot decide a long key is a number and round it.
+    row.getCell(KEY_COLUMNS.coin).value = sample[i]?.coinPublicKey ?? null;
+    row.getCell(KEY_COLUMNS.encryption).value = sample[i]?.encryptionPublicKey ?? null;
   }
+
 
   await workbook.xlsx.writeFile(filePath);
 }

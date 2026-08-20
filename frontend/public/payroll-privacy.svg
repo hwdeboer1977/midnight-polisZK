@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 486" width="720" height="486" role="img" aria-label="A payroll period where every employee name, gross, tax, social insurance contribution and net pay is sealed, and only the headcount and the four column totals are public">
+  <defs>
+    <style>
+      .ink    { fill: #16213E; }
+      .seal   { fill: #3D4F7C; }
+      .hair   { stroke: #C3CCDC; stroke-width: 1; }
+      .rule   { stroke: #16213E; stroke-width: 2; }
+      .amber  { fill: #E8A33D; }
+      .amberS { stroke: #E8A33D; stroke-width: 2; fill: none; }
+      .t      { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; fill: #16213E; }
+      .num    { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+      .head   { font-size: 11px; letter-spacing: 0.07em; fill: #6B7A96; }
+      .title  { font-size: 17px; font-weight: 600; }
+      .meta   { font-size: 12px; fill: #6B7A96; }
+      .tot    { font-size: 14px; font-weight: 600; }
+      .totlab { font-size: 12px; font-weight: 600; fill: #16213E; }
+      .leg    { font-size: 11.5px; fill: #4A5A78; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="720" height="486" fill="#FFFFFF"/>
+
+  <text class="t title" x="40" y="40">Payroll · August 2026</text>
+  <rect class="amberS" x="586" y="26" width="94" height="22" rx="11"/>
+  <text class="t num" x="633" y="41" font-size="12" font-weight="600" fill="#B57917" text-anchor="middle">10 employees</text>
+  <text class="t meta" x="40" y="60">one employer · one period</text>
+
+  <text class="t head" x="40"  y="92">EMPLOYEE</text>
+  <text class="t head" x="300" y="92" text-anchor="end">GROSS</text>
+  <text class="t head" x="420" y="92" text-anchor="end">INCOME TAX</text>
+  <text class="t head" x="560" y="92" text-anchor="end">SOCIAL INSURANCE</text>
+  <text class="t head" x="690" y="92" text-anchor="end">NET PAY</text>
+  <line class="hair" x1="40" y1="100" x2="690" y2="100"/>
+
+  <g>
+    <circle class="ink" cx="47" cy="118" r="6"/><rect class="seal" x="62" y="112" width="104" height="13" rx="3"/><rect class="seal" x="220" y="112" width="80" height="13" rx="3"/><rect class="seal" x="344" y="112" width="76" height="13" rx="3"/><rect class="seal" x="484" y="112" width="76" height="13" rx="3"/><rect class="seal" x="610" y="112" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="144" r="6"/><rect class="seal" x="62" y="138" width="82"  height="13" rx="3"/><rect class="seal" x="220" y="138" width="80" height="13" rx="3"/><rect class="seal" x="344" y="138" width="76" height="13" rx="3"/><rect class="seal" x="484" y="138" width="76" height="13" rx="3"/><rect class="seal" x="610" y="138" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="170" r="6"/><rect class="seal" x="62" y="164" width="120" height="13" rx="3"/><rect class="seal" x="220" y="164" width="80" height="13" rx="3"/><rect class="seal" x="344" y="164" width="76" height="13" rx="3"/><rect class="seal" x="484" y="164" width="76" height="13" rx="3"/><rect class="seal" x="610" y="164" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="196" r="6"/><rect class="seal" x="62" y="190" width="94"  height="13" rx="3"/><rect class="seal" x="220" y="190" width="80" height="13" rx="3"/><rect class="seal" x="344" y="190" width="76" height="13" rx="3"/><rect class="seal" x="484" y="190" width="76" height="13" rx="3"/><rect class="seal" x="610" y="190" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="222" r="6"/><rect class="seal" x="62" y="216" width="112" height="13" rx="3"/><rect class="seal" x="220" y="216" width="80" height="13" rx="3"/><rect class="seal" x="344" y="216" width="76" height="13" rx="3"/><rect class="seal" x="484" y="216" width="76" height="13" rx="3"/><rect class="seal" x="610" y="216" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="248" r="6"/><rect class="seal" x="62" y="242" width="76"  height="13" rx="3"/><rect class="seal" x="220" y="242" width="80" height="13" rx="3"/><rect class="seal" x="344" y="242" width="76" height="13" rx="3"/><rect class="seal" x="484" y="242" width="76" height="13" rx="3"/><rect class="seal" x="610" y="242" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="274" r="6"/><rect class="seal" x="62" y="268" width="130" height="13" rx="3"/><rect class="seal" x="220" y="268" width="80" height="13" rx="3"/><rect class="seal" x="344" y="268" width="76" height="13" rx="3"/><rect class="seal" x="484" y="268" width="76" height="13" rx="3"/><rect class="seal" x="610" y="268" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="300" r="6"/><rect class="seal" x="62" y="294" width="88"  height="13" rx="3"/><rect class="seal" x="220" y="294" width="80" height="13" rx="3"/><rect class="seal" x="344" y="294" width="76" height="13" rx="3"/><rect class="seal" x="484" y="294" width="76" height="13" rx="3"/><rect class="seal" x="610" y="294" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="326" r="6"/><rect class="seal" x="62" y="320" width="108" height="13" rx="3"/><rect class="seal" x="220" y="320" width="80" height="13" rx="3"/><rect class="seal" x="344" y="320" width="76" height="13" rx="3"/><rect class="seal" x="484" y="320" width="76" height="13" rx="3"/><rect class="seal" x="610" y="320" width="80" height="13" rx="3"/>
+    <circle class="ink" cx="47" cy="352" r="6"/><rect class="seal" x="62" y="346" width="98"  height="13" rx="3"/><rect class="seal" x="220" y="346" width="80" height="13" rx="3"/><rect class="seal" x="344" y="346" width="76" height="13" rx="3"/><rect class="seal" x="484" y="346" width="76" height="13" rx="3"/><rect class="seal" x="610" y="346" width="80" height="13" rx="3"/>
+  </g>
+
+  <line class="rule" x1="40" y1="376" x2="690" y2="376"/>
+
+  <text class="t totlab" x="40" y="400">Period total</text>
+  <text class="t num tot" x="300" y="400" text-anchor="end" fill="#B57917">€ 41 771.50</text>
+  <text class="t num tot" x="420" y="400" text-anchor="end" fill="#B57917">€ 8 354.30</text>
+  <text class="t num tot" x="560" y="400" text-anchor="end" fill="#B57917">€ 1 144.54</text>
+  <text class="t num tot" x="690" y="400" text-anchor="end" fill="#B57917">€ 33 417.20</text>
+
+  <text class="t meta" x="40" y="428" font-size="11">each employee is paid their net as a shielded coin — settled on chain, amount never visible</text>
+
+  <rect class="seal" x="40" y="454" width="24" height="10" rx="3"/>
+  <text class="t leg" x="72" y="463">Private — never leaves the employer's machine</text>
+  <rect class="amber" x="392" y="454" width="24" height="10" rx="3"/>
+  <text class="t leg" x="424" y="463">Public on chain — provably correct</text>
+</svg>

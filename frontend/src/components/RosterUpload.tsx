@@ -14,7 +14,13 @@ import { useWallet } from "../wallet/WalletContext";
 // a file is actually chosen keeps it out of the initial bundle entirely.
 const loadParser = () => import("../generated/roster");
 
-const ROSTER_COLUMNS = ["Full name", "Address", "Monthly gross salary"] as const;
+const ROSTER_COLUMNS = [
+  "Full name",
+  "Address",
+  "Monthly gross salary",
+  "Coin public key",
+  "Encryption public key",
+] as const;
 // Mirrors ROSTER_SIZE in the generated roster module, which mirrors the
 // contract. Three copies of one number is two too many; the generated module is
 // the one to trust if they ever disagree.
@@ -210,6 +216,10 @@ export function RosterUpload({
             tokenId: peur.tokenId,
             period: roster.period,
             salaries: roster.rows.map((row) => row.salaryMinor),
+            payees: roster.rows.map((row) => ({
+              coinPublicKey: row.coinPublicKey,
+              encryptionPublicKey: row.encryptionPublicKey,
+            })),
             provingMode: delegateProving ? "wallet" : "local",
             onProgress: setPayStep,
           })
@@ -222,6 +232,10 @@ export function RosterUpload({
             contractAddress: target.contractAddress,
             period: roster.period,
             salaries: roster.rows.map((row) => row.salaryMinor),
+            payees: roster.rows.map((row) => ({
+              coinPublicKey: row.coinPublicKey,
+              encryptionPublicKey: row.encryptionPublicKey,
+            })),
             passphrase,
             onProgress: setPayStep,
           })
@@ -250,6 +264,7 @@ export function RosterUpload({
         passphrase,
         period: roster.period,
         salaries: roster.rows.map((row) => row.salaryMinor),
+        payees: roster.rows.map((row) => row.coinPublicKey),
         onProgress: setStep,
       });
       setSubmitted(result);
@@ -316,6 +331,7 @@ export function RosterUpload({
                 <th>#</th>
                 <th>Full name</th>
                 <th>Address</th>
+                <th>Pays to</th>
                 <th className="num">Monthly gross</th>
               </tr>
             </thead>
@@ -325,13 +341,20 @@ export function RosterUpload({
                   <td className="muted">{row.index}</td>
                   <td>{row.fullName}</td>
                   <td className="muted">{row.address}</td>
+                  {/* Enough of the key to compare against what the employee
+                      sent, without a column of 64 characters per row. */}
+                  <td className="mono" title={row.coinPublicKey}>
+                    {row.coinPublicKey
+                      ? `${row.coinPublicKey.slice(0, 8)}…${row.coinPublicKey.slice(-6)}`
+                      : "—"}
+                  </td>
                   <td className="num">{formatPeur(row.salaryMinor)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={3}>
+                <td colSpan={4}>
                   Total <span className="muted">— the only figure that becomes public</span>
                 </td>
                 <td className="num total">{formatPeur(roster.totalMinor)}</td>
@@ -345,7 +368,8 @@ export function RosterUpload({
                 Ready: {ROSTER_SIZE} employees
                 {roster.period ? ` for ${periodName(roster.period)}` : ""}. Only the total
                 and one commitment per employee will be published; the names and addresses
-                above stay here.
+                above stay here. Each employee's coin public key is published only as a
+                hash, so the chain shows that a slot has a payee without showing who.
               </p>
 
               {target ? (

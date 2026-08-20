@@ -202,11 +202,16 @@ export async function keyFingerprint(employerKey: Uint8Array): Promise<string> {
 }
 
 /**
- * The seed for one employee's payment keypair. Mirrors the CLI exactly.
+ * The seed for one employee's payment keypair.
  *
- * Keyed by index only, never by period: a nonce changes every month, an
- * employee's key must not. See `src/utils/payroll-openings.ts` for why these
- * derived keys are custodial and what replacing them looks like.
+ * LEGACY. Payees come from the roster now: the employee generates their own
+ * keys in their own wallet and sends the public halves to their employer.
+ * Deriving them from the employer's passphrase made every salary spendable by
+ * the employer, which is custodial payroll wearing a privacy costume.
+ *
+ * Kept because `payeeFor` is immutable: a period filed before the change
+ * commits to a derived key, and paying it still needs this. Re-file such a
+ * period against real keys rather than reaching for it.
  */
 export async function deriveEmployeeSeed(
   employerKey: Uint8Array,

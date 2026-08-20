@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { OnboardingSteps } from "../components/OnboardingSteps";
 import { Tile } from "../components/Tile";
 import { WalletPicker } from "../components/WalletPicker";
 import { FAUCETS } from "../lib/chain";
@@ -39,7 +40,13 @@ export function Overview() {
   );
   const { job: claimJob, submitting: claiming, unavailable, claim } = useClaim();
 
-  if (!account) return <WalletPicker />;
+  if (!account)
+    return (
+      <>
+        <OnboardingSteps current={1} />
+        <WalletPicker />
+      </>
+    );
 
   const tokenId = deployments[`${networkId}/peur`]?.tokenId;
   const peur = tokenId
@@ -91,6 +98,10 @@ export function Overview() {
 
   return (
     <>
+      {myPayroll.length === 0 ? (
+        <OnboardingSteps current={checkingPayroll ? null : 2} />
+      ) : null}
+
       <div className="tiles-head">
         <h2>Balances</h2>
         <button className="ghost refresh" onClick={reread} disabled={refreshing}>

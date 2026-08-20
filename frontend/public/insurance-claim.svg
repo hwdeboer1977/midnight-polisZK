@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 740 490" width="740" height="490" role="img" aria-label="Sealed monthly salary attestations feed a zero-knowledge proof; the fund learns only that the claim is valid, while the benefit amount and duration stay sealed and only pooled aggregates are public">
+  <defs>
+    <style>
+      .ink   { fill: #16213E; }
+      .seal  { fill: #3D4F7C; }
+      .hair  { stroke: #C3CCDC; stroke-width: 1; }
+      .box   { fill: none; stroke: #16213E; stroke-width: 2; }
+      .amber { fill: #E8A33D; }
+      .go    { fill: #2E8B6F; }
+      .goS   { stroke: #2E8B6F; stroke-width: 2.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .flow  { stroke: #3D4F7C; stroke-width: 2; fill: none; stroke-linecap: round; }
+      .t     { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; fill: #16213E; }
+      .num   { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+      .title { font-size: 17px; font-weight: 600; }
+      .meta  { font-size: 12px; fill: #6B7A96; }
+      .head  { font-size: 10.5px; letter-spacing: 0.08em; fill: #6B7A96; }
+      .lab   { font-size: 12px; fill: #16213E; }
+      .val   { font-size: 14px; font-weight: 600; }
+      .leg   { font-size: 11.5px; fill: #4A5A78; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="740" height="490" fill="#FFFFFF"/>
+
+  <text class="t title" x="40" y="40">Unemployment claim · what each party learns</text>
+  <text class="t meta" x="40" y="59">neither the salary history nor the benefit is ever disclosed</text>
+
+  <!-- left: sealed salary history -->
+  <text class="t head" x="40" y="94">SALARY HISTORY</text>
+  <text class="t meta" x="40" y="110">24 monthly attestations</text>
+  <g class="seal">
+    <rect x="40" y="124" width="20" height="20" rx="3"/><rect x="68" y="124" width="20" height="20" rx="3"/><rect x="96" y="124" width="20" height="20" rx="3"/><rect x="124" y="124" width="20" height="20" rx="3"/>
+    <rect x="40" y="152" width="20" height="20" rx="3"/><rect x="68" y="152" width="20" height="20" rx="3"/><rect x="96" y="152" width="20" height="20" rx="3"/><rect x="124" y="152" width="20" height="20" rx="3"/>
+    <rect x="40" y="180" width="20" height="20" rx="3"/><rect x="68" y="180" width="20" height="20" rx="3"/><rect x="96" y="180" width="20" height="20" rx="3"/><rect x="124" y="180" width="20" height="20" rx="3"/>
+    <rect x="40" y="208" width="20" height="20" rx="3"/><rect x="68" y="208" width="20" height="20" rx="3"/><rect x="96" y="208" width="20" height="20" rx="3"/><rect x="124" y="208" width="20" height="20" rx="3"/>
+    <rect x="40" y="236" width="20" height="20" rx="3"/><rect x="68" y="236" width="20" height="20" rx="3"/><rect x="96" y="236" width="20" height="20" rx="3"/><rect x="124" y="236" width="20" height="20" rx="3"/>
+    <rect x="40" y="264" width="20" height="20" rx="3"/><rect x="68" y="264" width="20" height="20" rx="3"/><rect x="96" y="264" width="20" height="20" rx="3"/><rect x="124" y="264" width="20" height="20" rx="3"/>
+  </g>
+
+  <path class="flow" d="M158 204 L206 204"/>
+  <path class="flow" d="M206 204 L196 198 M206 204 L196 210"/>
+
+  <!-- centre: the proof -->
+  <rect class="box" x="222" y="112" width="256" height="180" rx="8"/>
+  <text class="t head" x="240" y="136">ZERO-KNOWLEDGE PROOF</text>
+
+  <path class="goS" d="M242 158 L248 164 L260 150"/>
+  <text class="t lab" x="270" y="162">minimum work history met</text>
+
+  <path class="goS" d="M242 190 L248 196 L260 182"/>
+  <text class="t lab" x="270" y="194">employer accredited</text>
+
+  <path class="goS" d="M242 222 L248 228 L260 214"/>
+  <text class="t lab" x="270" y="226">benefit derived from salary</text>
+
+  <path class="goS" d="M242 254 L248 260 L260 246"/>
+  <text class="t lab" x="270" y="258">contributions were paid</text>
+
+  <path class="flow" d="M490 204 L538 204"/>
+  <path class="flow" d="M538 204 L528 198 M538 204 L528 210"/>
+
+  <!-- right: what the fund learns -->
+  <rect x="552" y="112" width="148" height="180" rx="8" fill="#E8A33D" opacity="0.10"/>
+  <rect x="552" y="112" width="148" height="180" rx="8" fill="none" stroke="#E8A33D" stroke-width="2"/>
+  <text class="t head" x="568" y="136" fill="#B57917">THE FUND LEARNS</text>
+
+  <path class="goS" d="M568 164 L574 170 L586 156"/>
+  <text class="t lab" x="594" y="169" font-size="11.5">claim is valid</text>
+
+  <text class="t lab" x="568" y="202" font-size="10.5" fill="#6B7A96">benefit amount</text>
+  <rect class="seal" x="568" y="210" width="88" height="13" rx="3"/>
+
+  <text class="t lab" x="568" y="248" font-size="10.5" fill="#6B7A96">duration</text>
+  <rect class="seal" x="568" y="256" width="62" height="13" rx="3"/>
+
+  <text class="t meta" x="568" y="284" font-size="9.5">paid as a shielded coin</text>
+
+  <text class="t meta" x="40" y="312" font-size="11">individual salaries · benefit amount · duration · who the claimant is — none of it crosses</text>
+
+  <line class="hair" x1="40" y1="330" x2="700" y2="330"/>
+
+  <!-- pooled fund -->
+  <text class="t head" x="40" y="356">POOLED FUND · THE ONLY PUBLIC FIGURES</text>
+
+  <text class="t lab" x="40"  y="386" font-size="10.5" fill="#6B7A96">contributions received</text>
+  <text class="t num val" x="40"  y="408" fill="#16213E">€ 68 672.40</text>
+
+  <text class="t lab" x="210" y="386" font-size="10.5" fill="#6B7A96">benefits paid</text>
+  <text class="t num val" x="210" y="408" fill="#16213E">€ 14 400.36</text>
+
+  <text class="t lab" x="380" y="386" font-size="10.5" fill="#6B7A96">balance</text>
+  <text class="t num val" x="380" y="408" fill="#B57917">€ 54 272.04</text>
+
+  <text class="t lab" x="550" y="386" font-size="10.5" fill="#6B7A96">claims settled</text>
+  <text class="t num val" x="550" y="408" fill="#16213E">6</text>
+
+  <text class="t meta" x="40" y="430" font-size="10.5">totals across every accredited employer — solvency checkable by anyone, no individual recoverable</text>
+
+  <!-- legend -->
+  <rect class="seal" x="40" y="458" width="24" height="10" rx="3"/>
+  <text class="t leg" x="72" y="467">Private</text>
+  <rect class="amber" x="140" y="458" width="24" height="10" rx="3"/>
+  <text class="t leg" x="172" y="467">Public on chain</text>
+  <rect class="go" x="272" y="458" width="24" height="10" rx="3"/>
+  <text class="t leg" x="304" y="467">Proved, not revealed</text>
+</svg>

@@ -1,5 +1,5 @@
 import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
-import { Transaction, ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
+import { Transaction } from "@midnight-ntwrk/ledger-v8";
 import { FetchZkConfigProvider } from "@midnight-ntwrk/midnight-js-fetch-zk-config-provider";
 import { fromHex, toHex } from "@midnight-ntwrk/midnight-js-utils";
 import { CompiledContract } from "@midnight-ntwrk/compact-js";
@@ -11,7 +11,6 @@ import { createProofProvider, ZKConfigProvider } from "@midnight-ntwrk/midnight-
 import { pipe } from "effect";
 import { fetchContractState, INDEXERS, INDEXER_WS, PROOF_SERVERS } from "./chain";
 import {
-  deriveEmployeeSeed,
   deriveEmployerKey,
   deriveNonce,
   keyFingerprint,
@@ -420,6 +419,14 @@ export async function submitPayroll(options: {
   passphrase: string;
   period: number;
   salaries: bigint[];
+  /**
+   * Each employee's coin public key, hex, in roster order. These used to be
+   * derived from the employer's own passphrase, which meant the employer held
+   * every employee's spending key — the salaries were paid to the employer
+   * wearing ten hats. Real keys come from the roster, so the money lands
+   * somewhere only the employee can spend from.
+   */
+  payees: string[];
   onProgress?: SubmitProgress;
 }): Promise<SubmitResult> {
   const {
@@ -431,7 +438,14 @@ export async function submitPayroll(options: {
     passphrase,
     period,
     salaries,
+    payees: payeeKeys,
   } = options;
+
+  if (payeeKeys.length !== salaries.length) {
+    throw new Error(
+      `${salaries.length} salaries but ${payeeKeys.length} payee keys — the roster is inconsistent`
+    );
+  }
   const onProgress = options.onProgress ?? (() => {});
 
   const indexer = INDEXERS[networkId];
@@ -473,16 +487,9 @@ export async function submitPayroll(options: {
   // Who each slot is payable to, as the hash the circuit will check against.
   // Computed with the contract's own pure circuit rather than reimplementing
   // the struct encoding here, for the same reason commitments are.
-  const payees: Uint8Array[] = [];
-  for (let index = 0; index < salaries.length; index += 1) {
-    const seed = await deriveEmployeeSeed(employerKey, index);
-    const keys = ZswapSecretKeys.fromSeed(seed);
-    payees.push(
-      (contractModule as any).pureCircuits.payeeHash({
-        bytes: fromHex(String(keys.coinPublicKey).replace(/^0x/, "")),
-      })
-    );
-  }
+  const payees: Uint8Array[] = payeeKeys.map((key) =>
+    (contractModule as any).pureCircuits.payeeHash({ bytes: fromHex(key) })
+  );
 
   onProgress("Proving the circuit — this takes a few minutes…");
   // BigInt, not the plain number: `period` is a Uint<32> in the circuit and the

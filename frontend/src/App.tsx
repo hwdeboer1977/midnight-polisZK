@@ -6,35 +6,50 @@ import { Payroll } from "./pages/Payroll";
 import { Peur } from "./pages/Peur";
 import { useWallet } from "./wallet/WalletContext";
 
+// preview is the only live network. preprod is listed but unselectable, so the
+// picker says "more is coming" without letting anyone pick a network that
+// cannot answer; flip `live` when its deployment lands. The local devnet stays
+// out entirely — it is a developer's own machine, not a network to announce.
 const NETWORKS = [
-  { id: "preview", label: "preview" },
-  { id: "preprod", label: "preprod" },
-  { id: "undeployed", label: "local devnet" },
+  { id: "preview", label: "preview", live: true },
+  { id: "preprod", label: "preprod (coming soon)", live: false },
 ];
 
-function Header() {
+function Header({ isLanding }: { isLanding: boolean }) {
   const { networkId, setNetworkId, wallet, account, disconnect } = useWallet();
 
   return (
     <div className="top">
       <div>
-        <Link to="/" className="wordmark">
-          midnight-polis<span className="zk">ZK</span>
-        </Link>
-        <p className="sub">Private payroll on Midnight</p>
+        {/* The landing hero carries the wordmark itself, at full size; repeating
+            it in the masthead directly above would just be an echo. */}
+        {isLanding ? null : (
+          <Link to="/" className="wordmark">
+            IncomeLayer<span className="zk">ZK</span>
+          </Link>
+        )}
       </div>
       <div className="top-right">
-        <select
-          aria-label="Network"
-          value={networkId}
-          onChange={(event) => setNetworkId(event.target.value)}
-        >
-          {NETWORKS.map((network) => (
-            <option key={network.id} value={network.id}>
-              {network.label}
-            </option>
-          ))}
-        </select>
+        {/* Which testnet you are on is an operator's concern, not a visitor's.
+            It belongs beside the app, not in the first thing anyone reads. */}
+        {isLanding ? null : NETWORKS.length > 1 ? (
+          <select
+            className="net-select"
+            aria-label="Network"
+            value={networkId}
+            onChange={(event) => setNetworkId(event.target.value)}
+          >
+            {NETWORKS.map((network) => (
+              <option key={network.id} value={network.id} disabled={!network.live}>
+                {network.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="net" title="Network">
+            {NETWORKS[0].label}
+          </span>
+        )}
         {account && wallet ? (
           <div className="chip">
             <span className="dot" />
@@ -80,7 +95,7 @@ export function App() {
 
   return (
     <main className={isLanding ? "wide" : undefined}>
-      <Header />
+      <Header isLanding={isLanding} />
       {isLanding ? null : <Nav />}
       {error ? <p className="status error">{error}</p> : null}
       <Routes>

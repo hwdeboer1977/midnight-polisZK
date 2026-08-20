@@ -30,7 +30,14 @@ const period = { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
 await writeRosterTemplate(target, SAMPLE, period);
 console.log(`Wrote ${target}`);
 console.log(`Period:  Year ${period.year} | Month ${period.month}  (rows 1-2)`);
-console.log("Columns: Full name | Address | Monthly gross salary  (row 4)");
+console.log(
+  "Columns: Full name | Address | Monthly gross salary | Coin public key | " +
+    "Encryption public key  (row 4)"
+);
+console.log(
+  "The two key columns are left blank on purpose: they are real wallet keys, one " +
+    "employee at a time. Each employee copies both from their own dashboard."
+);
 console.log(
   "Only the salaries reach the chain, and only as private inputs folded into the public total."
 );
