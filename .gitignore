@@ -72,13 +72,21 @@ deployment.json.bak-*
 # Frontend build output and generated config
 frontend/node_modules/
 frontend/dist/
-frontend/public/deployments.json
+# Committed on purpose. A Vercel build has no Compact compiler and no
+# contracts/managed, so it cannot produce any of the three artifacts below —
+# they have to arrive with the repo or the hosted app has no contract
+# addresses, no contract modules and no proving keys.
+# frontend/public/deployments.json
 
-# Contract modules copied into the frontend by frontend:config
-frontend/src/generated/
+# Contract modules copied into the frontend by frontend:config (~600 kB).
+# frontend/src/generated/
 
 # Who has drawn a demo pEUR allowance — local bookkeeping, not source.
 claims.json
 
-# Compiled ZK assets copied for the browser prover (large build artifacts)
-frontend/public/zk/
+# Compiled ZK assets for the browser prover (~47 MB).
+#
+# Large, and committed anyway: the browser fetches them at proving time and a CI
+# runner cannot rebuild them. Proving keys are public by construction, so there
+# is nothing here to protect — the cost is repo size, not secrecy.
+# frontend/public/zk/

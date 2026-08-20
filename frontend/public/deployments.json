@@ -1,0 +1,43 @@
+{
+  "undeployed/payroll:acme": {
+    "contractAddress": "fe9fa91ba431a3c73c369fa658c6b6cb71e001f1207bc6b9ce83a4aeb09cc269",
+    "contractName": "payroll",
+    "networkId": "undeployed",
+    "instance": "acme"
+  },
+  "undeployed/peur": {
+    "contractAddress": "e943b865d661df10eb2700551dea72981a91dd1928b69f7185f9b820f28691ab",
+    "contractName": "peur",
+    "networkId": "undeployed"
+  },
+  "preview/peur": {
+    "contractAddress": "eefd3c255ed64dce05cd8c9b357b95aae94be6aef6ad009069af7836af481d91",
+    "contractName": "peur",
+    "networkId": "preview",
+    "tokenId": "822ff41d171c4ee9b42342d5881716bcc3a1ae74c4f08299f948c0b6929443f3"
+  },
+  "undeployed/payroll:polis-pilot": {
+    "contractAddress": "78867311ca0c25bd42384b6f18f01d26f37642179a1184a6bc1c55a00baaccb6",
+    "contractName": "payroll",
+    "networkId": "undeployed",
+    "instance": "polis-pilot"
+  },
+  "undeployed/payroll:selfserve-demo": {
+    "contractAddress": "1076e27946294970e26f86ac1fed447ce02aac0928960cfa35011ec3ac689667",
+    "contractName": "payroll",
+    "networkId": "undeployed",
+    "instance": "selfserve-demo"
+  },
+  "undeployed/payroll:blockstat-solutions-bv": {
+    "contractAddress": "3424c627dfa6df54258656cdd1e3c3650751764c6122e5fa29ea0cbfef8123f4",
+    "contractName": "payroll",
+    "networkId": "undeployed",
+    "instance": "blockstat-solutions-bv"
+  },
+  "preview/payroll:blockstat-solution-3": {
+    "contractAddress": "225836c5205003d1681e7336127675322d352900d415e14835b12dc8cab807e1",
+    "contractName": "payroll",
+    "networkId": "preview",
+    "instance": "blockstat-solution-3"
+  }
+}
