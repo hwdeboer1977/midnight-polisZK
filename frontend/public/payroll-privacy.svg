@@ -48,10 +48,10 @@
   <line class="rule" x1="40" y1="376" x2="690" y2="376"/>
 
   <text class="t totlab" x="40" y="400">Period total</text>
-  <text class="t num tot" x="300" y="400" text-anchor="end" fill="#B57917">€ 41 771.50</text>
-  <text class="t num tot" x="420" y="400" text-anchor="end" fill="#B57917">€ 8 354.30</text>
-  <text class="t num tot" x="560" y="400" text-anchor="end" fill="#B57917">€ 1 144.54</text>
-  <text class="t num tot" x="690" y="400" text-anchor="end" fill="#B57917">€ 33 417.20</text>
+  <text class="t num tot" x="300" y="400" text-anchor="end" fill="#B57917">€ 40 780.00</text>
+  <text class="t num tot" x="420" y="400" text-anchor="end" fill="#B57917">€ 14 747.51</text>
+  <text class="t num tot" x="560" y="400" text-anchor="end" fill="#B57917">€ 1 223.40</text>
+  <text class="t num tot" x="690" y="400" text-anchor="end" fill="#B57917">€ 24 809.09</text>
 
   <text class="t meta" x="40" y="428" font-size="11">each employee is paid their net as a shielded coin — settled on chain, amount never visible</text>
 

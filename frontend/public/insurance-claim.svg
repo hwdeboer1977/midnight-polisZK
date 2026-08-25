@@ -27,7 +27,7 @@
 
   <!-- left: sealed salary history -->
   <text class="t head" x="40" y="94">SALARY HISTORY</text>
-  <text class="t meta" x="40" y="110">24 monthly attestations</text>
+  <text class="t meta" x="40" y="110">one month’s sealed opening</text>
   <g class="seal">
     <rect x="40" y="124" width="20" height="20" rx="3"/><rect x="68" y="124" width="20" height="20" rx="3"/><rect x="96" y="124" width="20" height="20" rx="3"/><rect x="124" y="124" width="20" height="20" rx="3"/>
     <rect x="40" y="152" width="20" height="20" rx="3"/><rect x="68" y="152" width="20" height="20" rx="3"/><rect x="96" y="152" width="20" height="20" rx="3"/><rect x="124" y="152" width="20" height="20" rx="3"/>
@@ -80,21 +80,21 @@
   <line class="hair" x1="40" y1="330" x2="700" y2="330"/>
 
   <!-- pooled fund -->
-  <text class="t head" x="40" y="356">POOLED FUND · THE ONLY PUBLIC FIGURES</text>
+  <text class="t head" x="40" y="356">POOLED FUND · WHAT IS PUBLIC</text>
 
-  <text class="t lab" x="40"  y="386" font-size="10.5" fill="#6B7A96">contributions received</text>
-  <text class="t num val" x="40"  y="408" fill="#16213E">€ 68 672.40</text>
+  <text class="t lab" x="40"  y="386" font-size="10.5" fill="#6B7A96">claims settled</text>
+  <text class="t lab" x="40"  y="408" font-size="11" fill="#16213E">a count, not an amount</text>
 
-  <text class="t lab" x="210" y="386" font-size="10.5" fill="#6B7A96">benefits paid</text>
-  <text class="t num val" x="210" y="408" fill="#16213E">€ 14 400.36</text>
+  <text class="t lab" x="210" y="386" font-size="10.5" fill="#6B7A96">fund balance</text>
+  <text class="t lab" x="210" y="408" font-size="11" fill="#16213E">not published at all</text>
 
-  <text class="t lab" x="380" y="386" font-size="10.5" fill="#6B7A96">balance</text>
-  <text class="t num val" x="380" y="408" fill="#B57917">€ 54 272.04</text>
+  <text class="t lab" x="380" y="386" font-size="10.5" fill="#6B7A96">tax withheld</text>
+  <text class="t lab" x="380" y="408" font-size="11" fill="#16213E">a real total</text>
 
   <text class="t lab" x="550" y="386" font-size="10.5" fill="#6B7A96">claims settled</text>
   <text class="t num val" x="550" y="408" fill="#16213E">6</text>
 
-  <text class="t meta" x="40" y="430" font-size="10.5">totals across every accredited employer — solvency checkable by anyone, no individual recoverable</text>
+  <text class="t meta" x="40" y="430" font-size="10.5">the fund is deliberately NOT publicly solvent: its balance is a shielded coin, and publishing it would leak every benefit</text>
 
   <!-- legend -->
   <rect class="seal" x="40" y="458" width="24" height="10" rx="3"/>

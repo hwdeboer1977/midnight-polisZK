@@ -73,21 +73,24 @@ export function Landing() {
         <div className="usecase-text">
           <h2>A claim against it</h2>
           <p>
-            Twenty-four sealed monthly attestations go into a zero-knowledge proof.
-            The fund learns one thing: the claim is valid. Not the salary history it
-            was derived from, not the benefit amount, not the duration, not who the
-            claimant is.
+            One month's sealed opening and a proof of membership in that month's
+            claim tree. The fund learns that the claim is valid. Not the salary it
+            was derived from, not the benefit paid, not which employer she left,
+            not who she is — and she is indistinguishable from everyone terminated
+            in the same month across every employer here.
           </p>
           <p className="note">
-            Only the pooled figures are public — contributions in, benefits out,
-            balance. Anyone can check the fund is solvent; no one can recover an
-            individual from it.
+            What settles publicly is a count and one opaque nullifier.{" "}
+            <strong>The fund's balance is not published</strong> — it is a shielded
+            coin, so this fund is deliberately not publicly solvent. That cannot be
+            fixed without also revealing what each claimant received, because
+            successive balances would give away the differences between them.
           </p>
         </div>
         <figure className="figure">
           <img
             src="/insurance-claim.svg"
-            alt="An unemployment claim. Sealed monthly salary attestations feed a zero-knowledge proof; the fund learns only that the claim is valid, while the benefit amount and duration stay sealed and only pooled fund totals are public."
+            alt="An unemployment claim. One month's sealed salary opening feeds a zero-knowledge proof; the fund learns only that the claim is valid, while the benefit amount and the claimant stay sealed. The fund publishes counts and withholding totals — never its balance."
           />
         </figure>
       </section>

@@ -48,9 +48,30 @@ function remember(coinPublicKey: string, hash: string): void {
 export function ClaimKey({
   coinPublicKey,
   bare,
+  employerOf,
+  ended,
 }: {
   coinPublicKey: string;
   bare?: boolean;
+  /**
+   * The instance this wallet is the EMPLOYER of, if any.
+   *
+   * An employer's own wallet is not a claimant, and telling one to send a hash
+   * to their employer is telling them to send it to themselves. Harmless while
+   * testing with one wallet; obviously wrong to anyone reading the page.
+   */
+  employerOf?: string | null;
+  /**
+   * Whether an employer has already attested a final period for this wallet.
+   *
+   * It changes what this panel means entirely. Before termination, deriving a
+   * key is something to do in time. After it, the anchor is already written and
+   * the only question is whether a passphrase reproduces it — which this page
+   * cannot answer, because the hash sits inside an opaque commitment. The claim
+   * bundle carries it in the clear, so the check happens at claim time and
+   * reports precisely.
+   */
+  ended?: boolean;
 }) {
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -68,6 +89,20 @@ export function ClaimKey({
   }, [coinPublicKey]);
 
   const mismatch = confirm.length > 0 && passphrase !== confirm;
+
+  if (employerOf && !known && !hash) {
+    return (
+      <section className="callout">
+        <h2>Claim keys are for employees</h2>
+        <p className="note" style={{ marginTop: 0 }}>
+          This wallet is the employer of <strong>{employerOf}</strong>, so it has
+          no benefit to claim — a claim needs the wallet a period was filed
+          <em> for</em>, and yours files them. Your employees each derive their
+          own key here and send you the hash.
+        </p>
+      </section>
+    );
+  }
 
   async function derive() {
     setError(null);
@@ -106,13 +141,24 @@ export function ClaimKey({
         rooted in a passphrase instead — precisely so that nobody who has ever
         paid you can recognise a claim as yours.
       </p>
-      {/* Said before deriving, not only after. The consequence of leaving it
-          until you need it is that you cannot do it at all. */}
-      <p className="problems" style={{ marginTop: 0 }}>
-        Do this while you are still employed. Your employer writes the hash into
-        the statement that ends your employment, and that statement can only be
-        made once — so a claim key chosen afterwards is one no claim can use.
-      </p>
+      {ended ? (
+        <p className="note" style={{ marginTop: 0 }}>
+          <strong>Use the passphrase you gave your employer.</strong> Your
+          employment has ended, so the hash inside that statement is already
+          fixed — deriving the same key again is exactly what the claim below
+          needs. If you never chose one, no passphrase will match, and the claim
+          will say so rather than failing obscurely.
+        </p>
+      ) : (
+        /* Said before deriving, not only after. The consequence of leaving it
+           until you need it is that you cannot do it at all. */
+        <p className="problems" style={{ marginTop: 0 }}>
+          Do this while you are still employed. Your employer writes the hash
+          into the statement that ends your employment, and that statement can
+          only be made once — so a claim key chosen afterwards is one no claim
+          can use.
+        </p>
+      )}
 
       <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
         <input
@@ -194,28 +240,62 @@ export function ClaimKey({
   if (known && !hash && !reopened) {
     return (
       <section className="callout claim-key-done">
-        <p className="ok-line" style={{ margin: 0 }}>
-          ✓ Claim key set up — give your employer this hash before they end your
-          employment
-        </p>
+        {/* The employer case has to be handled here too, not only before a key
+            exists. A wallet that has already derived one falls straight through
+            to this panel — which is how it came to tell an employer to send
+            themselves a hash. */}
+        {employerOf ? (
+          <p className="ok-line" style={{ margin: 0 }}>
+            ✓ Claim key set up — for wherever <em>you</em> are an employee
+          </p>
+        ) : (
+          <p className="ok-line" style={{ margin: 0 }}>
+            ✓ Claim key set up — give your employer this hash before they end your
+            employment
+          </p>
+        )}
         <CopyRow label="Claim key hash" value={known} />
-        <p className="note" style={{ marginTop: 8 }}>
-          Remembered by this browser, not by the chain — nothing anywhere records
-          that you have one until your employer writes it into a termination.
-          On another browser this will look unset; deriving it again from the
-          same passphrase gives the same hash.{" "}
-          <button type="button" className="ghost" onClick={() => setReopened(true)}>
-            Derive again
-          </button>
+        {employerOf ? (
+          <p className="note" style={{ marginTop: 8 }}>
+            This wallet is the employer of <strong>{employerOf}</strong>, so it
+            has nothing to claim there. A key is still worth having if you are
+            also on someone else's payroll on IncomeLayerZK — it is derived from
+            your passphrase and your own wallet, not from any one employer, so
+            the same hash works wherever you are an employee.
+          </p>
+        ) : (
+          <p className="note" style={{ marginTop: 8 }}>
+            Remembered by this browser, not by the chain — nothing anywhere
+            records that you have one until your employer writes it into a
+            termination. On another browser this will look unset; deriving it
+            again from the same passphrase gives the same hash.
+          </p>
+        )}
+        {/* Its own line. Inside the paragraph it landed between "same" and
+            "hash", which read as a rendering fault rather than a control. */}
+        {/* Worded without "your employer", so it is still true on a wallet that
+            has none. The risk is the same either way: an anchor is write-once
+            wherever it was written. */}
+        <p className="note warn" style={{ marginTop: 8 }}>
+          A <strong>different</strong> passphrase gives a different hash — and if
+          an employer has already written the old one into a termination, that
+          statement cannot be changed and the new key is useless.
         </p>
+        <button type="button" className="ghost" onClick={() => setReopened(true)}>
+          Derive again
+        </button>
       </section>
     );
   }
 
   return (
-    <section className={known || hash ? "callout" : "callout claim-key-todo"}>
+    <section className={known || hash || ended ? "callout" : "callout claim-key-todo"}>
       <h2>
-        {hash || known ? "Your claim key" : "Claim key — not set up yet"}
+        {hash || known
+          ? "Your claim key"
+          : ended
+            ? "Your claim key — needed for the claim below"
+            : "Claim key — not set up yet"}
       </h2>
       {body}
     </section>

@@ -175,13 +175,23 @@ export function Employee() {
 
       {error ? <p className="status error">{error}</p> : null}
 
-      {/* First, and outside every branch. It is the most consequential thing on
-          this page and the only one with a closing window: the employer writes
-          the hash into a write-once termination, so an employee who reaches the
-          end of their employment without having done it can never claim. It was
-          at the bottom, under the balance and the periods table — nothing told
-          anyone they were missing it until it was too late to fix. */}
-      <ClaimKey coinPublicKey={account.coinPublicKey} />
+      {/* Ordered by what this wallet needs next.
+          
+          While employed, the claim key comes first: it is the only thing here
+          with a closing window, since the employer writes the hash into a
+          write-once termination and an employee who reaches their last day
+          without one can never claim.
+          
+          Once employment has ended that reverses. The key is already anchored
+          or already lost, and what a claimant needs now is the final payslip —
+          it is a required input to a claim and only their former employer can
+          reissue it. */}
+      {rows.some((row) => row.ended) ? null : (
+        <ClaimKey
+          coinPublicKey={account.coinPublicKey}
+          employerOf={employerOf}
+        />
+      )}
 
       {/* Outside the wallet-dependent branches, because a payslip is readable in
           every state this page can be in — including the one that used to be a
@@ -197,6 +207,14 @@ export function Employee() {
         }}
       />
 
+      {rows.some((row) => row.ended) ? (
+        <ClaimKey
+          coinPublicKey={account.coinPublicKey}
+          employerOf={employerOf}
+          ended
+        />
+      ) : null}
+
       {loading ? (
         <p className="muted">Checking payroll contracts for periods that name you…</p>
       ) : rows.length === 0 ? (
@@ -210,19 +228,14 @@ export function Employee() {
                 : "No payroll found"}
             </h2>
             {employerOf ? (
-              <>
-                <p className="lead-sm" style={{ marginTop: 0 }}>
-                  This wallet is the employer of{" "}
-                  <strong>{employerOf}</strong>, so no period names it as a
-                  payee — an employer files payroll, they are not on it. Nothing
-                  is wrong.
-                </p>
-                <div className="actions">
-                  <Link className="button" to="/employer">
-                    Go to Employer
-                  </Link>
-                </div>
-              </>
+              // Short, because the claim-key panel above now carries the
+              // explanation. Saying "this wallet is the employer of X" twice on
+              // one page made it read as two different findings.
+              <div className="actions" style={{ marginTop: 0 }}>
+                <Link className="button" to="/employer">
+                  Go to Employer
+                </Link>
+              </div>
             ) : (
               <>
                 <p className="lead-sm" style={{ marginTop: 0 }}>
@@ -238,14 +251,14 @@ export function Employee() {
                 </div>
               </>
             )}
-          </section>
 
-          {showKeys ? (
-            <PayrollKeys account={account} wallet={walletName} />
-          ) : null}
-
-          <details className="details">
-            <summary>Why can't I see my payroll?</summary>
+            {/* Inside the panel that raises the question. It used to sit below
+                every other card on the page, which is the one place someone
+                asking "why can't I see my payroll" will not look. */}
+            <details className="details">
+              <summary>
+                {employerOf ? "Why does an employer see nothing here?" : "Why can't I see my payroll?"}
+              </summary>
             <p className="note">
               Your employer files a hash of your <strong>coin public key</strong>{" "}
               for each period, and this page finds your periods by recomputing
@@ -263,9 +276,14 @@ export function Employee() {
             <p className="note">
               Nothing about you is published, so there is nobody to ask on your
               behalf: send your employer both keys again and have them re-file
-              the period.
-            </p>
-          </details>
+                the period.
+              </p>
+            </details>
+          </section>
+
+          {showKeys ? (
+            <PayrollKeys account={account} wallet={walletName} />
+          ) : null}
         </>
       ) : (
         <>
