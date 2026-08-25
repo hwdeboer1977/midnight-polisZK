@@ -593,9 +593,14 @@ table.roster .mono {
 }
 .file-picker:hover { opacity: 0.85; }
 .file-picker input { display: none; }
+/* Loaded is a different state, not a slightly darker button. The tick plus the
+   filename is the confirmation; the fill makes it visible without reading. */
 .file-picker.done {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--ok, #2E8B6F);
+  border-style: solid;
+  background: color-mix(in srgb, var(--ok, #2E8B6F) 12%, transparent);
+  color: var(--ok, #2E8B6F);
+  font-weight: 650;
 }
 /* Focus lands on the hidden input, so the ring has to be drawn on the label. */
 .file-picker:focus-within {

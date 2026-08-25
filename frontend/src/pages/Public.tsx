@@ -112,7 +112,7 @@ export function Public() {
         <div className="identity">
           <div className="term real">
             <span className="term-value">
-              {loading ? "…" : `€${formatPeur(stats.payrollFiled)}`}
+              {loading ? "…" : `€${formatPeurTile(stats.payrollFiled)}`}
             </span>
             <span className="term-label">Gross payroll filed</span>
           </div>
@@ -133,7 +133,7 @@ export function Public() {
           <span className="op">+</span>
           <div className="term real">
             <span className="term-value">
-              {loading ? "…" : `€${formatPeur(stats.netFiled)}`}
+              {loading ? "…" : `€${formatPeurTile(stats.netFiled)}`}
             </span>
             <span className="term-label">Net payroll</span>
           </div>
@@ -385,7 +385,9 @@ export function Public() {
         {stats.peurSupply !== null ? (
           <div className="row">
             <div className="k">Test token supply</div>
-            <div className="v">€{formatPeur(stats.peurSupply)}</div>
+            <div className="v" title={`Exactly €${formatPeur(stats.peurSupply)}`}>
+              €{formatPeurTile(stats.peurSupply)}
+            </div>
           </div>
         ) : null}
 

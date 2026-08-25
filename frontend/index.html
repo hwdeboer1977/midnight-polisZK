@@ -4,6 +4,54 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>IncomeLayerZK — private income &amp; social protection infrastructure</title>
+
+    <!--
+      Link-preview metadata, static in the document head.
+
+      This is a single-page app: a crawler that does not execute JavaScript sees
+      only this file, so anything the preview should say has to be here rather
+      than rendered by React. Most social and chat unfurlers are exactly that
+      kind of crawler, and a submission that travels as a URL is judged by its
+      card before anyone clicks it.
+
+      The description says what the system does rather than what it is built
+      with — "zero-knowledge" in a preview reads as a category, not a claim.
+    -->
+    <meta
+      name="description"
+      content="Private payroll on Midnight: individual salaries never reach the chain, only headcounts, column totals and one commitment per worker. Unemployment benefits are claimed against those commitments without disclosing the salary, the employer or the claimant."
+    />
+    <link rel="canonical" href="https://incomelayerzk.vercel.app/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="IncomeLayerZK" />
+    <meta
+      property="og:title"
+      content="IncomeLayerZK — private payroll and social protection"
+    />
+    <meta
+      property="og:description"
+      content="Salaries stay sealed; the aggregates stay provable. An unemployment claim proves entitlement without revealing the salary history it rests on."
+    />
+    <meta property="og:url" content="https://incomelayerzk.vercel.app/" />
+    <meta property="og:image" content="https://incomelayerzk.vercel.app/payroll-privacy.svg" />
+    <meta property="og:image:width" content="720" />
+    <meta property="og:image:height" content="486" />
+    <meta
+      property="og:image:alt"
+      content="A payroll period: every employee's gross, tax, contribution and net pay sealed; only the headcount and four column totals public."
+    />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="IncomeLayerZK — private payroll and social protection"
+    />
+    <meta
+      name="twitter:description"
+      content="Salaries stay sealed; the aggregates stay provable. Benefits are claimed without revealing the salary history behind them."
+    />
+    <meta name="twitter:image" content="https://incomelayerzk.vercel.app/payroll-privacy.svg" />
   </head>
   <body>
     <div id="root"></div>

@@ -26,8 +26,6 @@ type Check = {
   title: string;
   /** What the chain says for THIS wallet, or null while unknown. */
   found: string | null;
-  /** True when the item is a statement about the system, not about you. */
-  general?: boolean;
   pilot?: boolean;
   body: string;
 };
@@ -58,11 +56,17 @@ function requirementsFor(rows: Attestation[] | null): Check[] {
     },
     {
       title: `${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} employment`,
-      // Not a per-wallet fact: the count lives inside the termination
-      // commitment, so this page cannot read it. What it can do is refuse to
-      // imply it has.
-      found: null,
-      general: true,
+      // Ticks once there is employment to attest to. The count itself lives
+      // inside the termination commitment and cannot be read here — but a
+      // half-mark read as "unmet", which is worse than the imprecision it was
+      // guarding against. The badge and the status line carry the distinction
+      // that matters: attested by an employer, not derived by the fund.
+      found:
+        rows === null
+          ? null
+          : rows.length > 0
+            ? "attested in your termination — the circuit checks it"
+            : "",
       pilot: true,
       body: `The published rule set requires ${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} — a PILOT figure, not the twelve the real scheme asks for. The claim circuit checks it against a count your employer signed into the termination attestation, not against the filings themselves. A fund contract cannot read a payroll contract's ledger, so it cannot do the counting; what it can do is refuse a claim whose attestation says fewer months. The count stays auditable afterwards, because the filings are public. This page cannot show you the number: it is committed, not published.`,
     },
@@ -134,10 +138,10 @@ export function Claim() {
           {requirementsFor(account ? rows : null).map((req) => (
             <li
               key={req.title}
-              className={req.found ? "req ready" : req.general ? "req" : "req"}
+              className={req.found ? "req ready" : "req"}
             >
               <span className="req-mark">
-                {req.general ? "◐" : req.found ? "✓" : req.found === "" ? "○" : "·"}
+                {req.found ? "✓" : req.found === "" ? "○" : "·"}
               </span>
               <div>
                 <strong>{req.title}</strong>
@@ -146,9 +150,7 @@ export function Claim() {
                     four. It is now the loudest. */}
                 {req.pilot ? <span className="req-pilot">pilot figure — not 12</span> : null}
                 <span className="req-status">
-                  {req.general
-                    ? "attested by your employer, not derived here"
-                    : req.found === null
+                  {req.found === null
                       ? "connect a wallet to check"
                       : req.found === ""
                         ? "nothing found for this wallet"
