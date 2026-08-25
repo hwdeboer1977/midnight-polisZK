@@ -5,6 +5,7 @@ import { fetchContractState } from "../lib/chain";
 import { decodePayrollLedger, loadContract } from "../lib/contracts";
 import { CopyRow } from "../components/CopyRow";
 import { ClaimKey } from "../components/ClaimKey";
+import { FilePicker } from "../components/FilePicker";
 import { formatPeur } from "../lib/format";
 import {
   forNetwork,
@@ -13,8 +14,7 @@ import {
   type Deployments,
 } from "../lib/deployments";
 import { periodName } from "../generated/roster";
-import { bytesToHex, keyToHex } from "../lib/keys";
-import { payslipFromLocation } from "../lib/payslip";
+import { bytesToHex, keyToHex, sameKey } from "../lib/keys";
 import { checkPayslip, type CheckedPayslip } from "../lib/checkPayslip";
 import { useWallet } from "../wallet/WalletContext";
 
@@ -25,6 +25,15 @@ interface Attestation {
   contractAddress: string;
   paid: boolean;
   funded: boolean;
+  /**
+   * Whether the employer has attested that this was the final period.
+   *
+   * Public state — `terminationFor` has a key per terminated slot — so an
+   * employee can learn from the chain that their employment ended, rather than
+   * only from being told. What it commits to stays private: the months worked
+   * and the claim-key hash are inside the commitment, not beside it.
+   */
+  ended: boolean;
   /** The commitment published for this slot — opaque without the opening. */
   commitment: string;
   /**
@@ -54,6 +63,15 @@ interface Attestation {
 export function Employee() {
   const { account, networkId, wallet } = useWallet();
   const [rows, setRows] = useState<Attestation[]>([]);
+  /**
+   * The instance this wallet is the EMPLOYER of, if any.
+   *
+   * Read in the same pass as the periods, because "no payroll found" has two
+   * very different causes and only one of them is a problem. An employer's own
+   * wallet matches no payee hash and never will — telling them to check their
+   * keys sends them looking for a mistake that is not there.
+   */
+  const [employerOf, setEmployerOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState(false);
@@ -62,22 +80,6 @@ export function Employee() {
   const [opened, setOpened] = useState<CheckedPayslip | null>(null);
   const [slipError, setSlipError] = useState<string | null>(null);
 
-
-  // A payslip carried by a link opens on arrival, with no wallet involved.
-  // Reading it needs nothing from the chain scan, so there is nothing to wait
-  // for and no race to hold it through.
-  useEffect(() => {
-    const fromLink = payslipFromLocation();
-    if (!fromLink) return;
-    // Cleared so a reload does not re-open it, and so a salary stops sitting in
-    // the address bar the moment it has been read.
-    window.history.replaceState(null, "", window.location.pathname);
-    void check(JSON.stringify(fromLink));
-    // `check` reads `networkId` and the connected key, both of which are
-    // stable enough that re-running this on their account is wrong — a link is
-    // consumed once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   /**
    * Opens one payslip against the chain.
@@ -156,12 +158,20 @@ export function Employee() {
           );
 
         const found: Attestation[] = [];
+        let employs: string | null = null;
         for (const [name, deployment] of payrolls) {
           const state = await fetchContractState(networkId, deployment.contractAddress);
           if (!state) continue;
 
           const ledger = decodePayrollLedger(contract, state.data);
           if (!ledger) continue;
+
+          if (
+            ledger.employerAssigned &&
+            sameKey(bytesToHex(ledger.employer.bytes), account.coinPublicKey)
+          ) {
+            employs = employerLabel(name, deployment);
+          }
 
           for (const period of [...ledger.periods]) {
             if (!ledger.payeeFor.member(period)) continue;
@@ -195,6 +205,9 @@ export function Employee() {
                   ledger.commitmentsFor.lookup(period).member(key)
                   ? bytesToHex(ledger.commitmentsFor.lookup(period).lookup(key))
                   : "",
+                ended:
+                  ledger.terminationFor?.member(period) === true &&
+                  ledger.terminationFor.lookup(period).member(key),
                 employerKey: ledger.employer.bytes,
                 paramsHash: ledger.paramsHashFor.member(period)
                   ? ledger.paramsHashFor.lookup(period)
@@ -205,7 +218,10 @@ export function Employee() {
         }
 
         found.sort((a, b) => b.period - a.period);
-        if (!cancelled) setRows(found);
+        if (!cancelled) {
+          setRows(found);
+          setEmployerOf(employs);
+        }
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
@@ -304,17 +320,40 @@ export function Employee() {
           {/* Plain language first. Someone who cannot see their pay needs to
               know what to check, not how a commitment scheme works. */}
           <section className="card">
-            <h2>No payroll found</h2>
-            <p className="lead-sm" style={{ marginTop: 0 }}>
-              We couldn't find any payroll periods for this wallet. If your
-              employer has already added you, check that they used the correct
-              wallet keys.
-            </p>
-            <div className="actions">
-              <button onClick={() => setShowKeys((open) => !open)}>
-                {showKeys ? "Hide my payroll keys" : "View my payroll keys"}
-              </button>
-            </div>
+            <h2>
+              {employerOf
+                ? "This is an employer's wallet"
+                : "No payroll found"}
+            </h2>
+            {employerOf ? (
+              <>
+                <p className="lead-sm" style={{ marginTop: 0 }}>
+                  This wallet is the employer of{" "}
+                  <strong>{employerOf}</strong>, so no period names it as a
+                  payee — an employer files payroll, they are not on it. Nothing
+                  is wrong.
+                </p>
+                <div className="actions">
+                  <Link className="button" to="/employer">
+                    Go to Employer
+                  </Link>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="lead-sm" style={{ marginTop: 0 }}>
+                  No payroll period on {networkId} names this wallet as a payee.
+                  If your employer has already added you, the likeliest cause is
+                  that a different wallet is connected than the one you sent
+                  them — the keys below are the ones they need.
+                </p>
+                <div className="actions">
+                  <button onClick={() => setShowKeys((open) => !open)}>
+                    {showKeys ? "Hide my payroll keys" : "View my payroll keys"}
+                  </button>
+                </div>
+              </>
+            )}
           </section>
 
           {showKeys ? (
@@ -357,6 +396,49 @@ export function Employee() {
             </p>
           </section>
 
+          {/* The one moment an employee has something to do. Termination is
+              public per slot, so the page can say this rather than waiting for
+              someone to tell them — and it is also when the claim key they
+              chose earlier stops being hypothetical. */}
+          {rows.some((row) => row.ended) ? (
+            <section className="callout">
+              <h2>Your employment ended — you can claim</h2>
+              <p className="note" style={{ marginTop: 0 }}>
+                An employer has attested on chain that{" "}
+                {rows
+                  .filter((row) => row.ended)
+                  .map((row) => periodName(row.period))
+                  .join(", ")}{" "}
+                was a final period. Claiming proves you were employed long enough
+                and what you earned, and discloses neither.
+              </p>
+              <p className="note">
+                You will need three things: the <strong>claim bundle</strong>{" "}
+                from the fund's relay, your <strong>payslip for that period</strong>,
+                and the <strong>passphrase</strong> you used for your claim key
+                below. All three, and this same wallet connected.
+              </p>
+              {/* This page cannot tell whether a claim has already been made.
+                  The nullifier that records one is derived from the claimant's
+                  secret claim key, so computing it needs the passphrase — which
+                  is exactly what stops anyone else reading her claim history,
+                  and what blinds this page too. Saying "you can claim" without
+                  this reads as a promise the fund may refuse. */}
+              <p className="note">
+                Each period can be claimed once. This page cannot tell you
+                whether you already have — checking would mean deriving your
+                claim key, and nothing here holds your passphrase. That is the
+                same reason nobody else can look up your claim history either. If
+                you claim twice, the fund refuses the second one.
+              </p>
+              <div className="actions">
+                <Link className="button" to="/claim">
+                  Make a claim
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
           <section className="card">
             <h2>Payroll periods</h2>
             <table className="roster">
@@ -392,6 +474,15 @@ export function Employee() {
                       ) : (
                         <span className="muted">Filed</span>
                       )}
+                      {/* Alongside the payment status, not instead of it: a
+                          final period is usually also a paid one, and replacing
+                          the tick would lose the answer to the question this
+                          column exists for. */}
+                      {row.ended ? (
+                        <div className="note" style={{ margin: "2px 0 0" }}>
+                          final period
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -401,6 +492,16 @@ export function Employee() {
               Each row is an employer's on-chain statement that a period names
               your key — evidence of employment you hold yourself, that no
               employer can withdraw and no observer can read.
+            </p>
+            {/* The sharpest thing an employee can lose, and nothing else on the
+                page says it. The openings are sealed under the EMPLOYER's key,
+                so recovering a payslip means asking a company you may no longer
+                work for. */}
+            <p className="problems" style={{ marginTop: 12 }}>
+              Keep every payslip your employer sends you. They are the only copy
+              you hold — the openings on chain are sealed under your employer's
+              key, so only they can produce one again. Without the payslip for
+              your final period you cannot make a claim at all.
             </p>
           </section>
 
@@ -481,7 +582,6 @@ function PayslipCheck({
   error: string | null;
   onClear: () => void;
 }) {
-  const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function run(value: string) {
@@ -574,49 +674,21 @@ function PayslipCheck({
     <section className="callout">
       <h2>Check your payslip</h2>
       <p className="note" style={{ marginTop: 0 }}>
-        Your employer sends you a payslip file or link. Open it here and this
-        page will check it against what they published on chain — the amounts
-        are not stored there, so this is the only way to see them, and the check
-        is what makes them trustworthy.
+        Your employer sends you a payslip file. Open it here and this page will
+        check it against what they published on chain — the amounts are not
+        stored there, so this is the only way to see them, and the check is what
+        makes them trustworthy.
       </p>
 
-      <input
-        type="file"
+      {/* File only. The paste box is gone; the link route it also served is
+          not — a payslip link carries the slip in its fragment, so opening one
+          checks it on arrival without touching this control. */}
+      <FilePicker
+        label={busy ? "Checking…" : "Choose your payslip…"}
         accept="application/json,.json,.txt"
         disabled={busy}
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (!file) return;
-          void file.text().then((content) => run(content));
-        }}
+        onFile={async (file) => run(await file.text())}
       />
-
-      <p className="note" style={{ marginBottom: 4 }}>Or paste the payslip or its link:</p>
-      <textarea
-        rows={3}
-        value={text}
-        disabled={busy}
-        placeholder="https://…/employee#payslip=… or the contents of the file"
-        onChange={(event) => setText(event.target.value)}
-        onPaste={(event) => {
-          const pasted = event.clipboardData.getData("text");
-          if (pasted.trim()) {
-            event.preventDefault();
-            setText(pasted);
-            void run(pasted);
-          }
-        }}
-        style={{ width: "100%", fontFamily: "inherit" }}
-      />
-
-      <button
-        type="button"
-        className="primary"
-        disabled={busy || !text.trim()}
-        onClick={() => void run(text)}
-      >
-        {busy ? "Checking…" : "Check payslip"}
-      </button>
 
       {error ? <p className="status error">{error}</p> : null}
     </section>

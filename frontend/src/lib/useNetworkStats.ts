@@ -12,10 +12,12 @@ import { forNetwork, loadDeployments, type Deployment } from "./deployments";
  * worse than no number, because the claim being made is precisely that the
  * aggregates are verifiable while the individuals are not.
  *
- * Which is also why the figures a real social-protection system would show —
- * fund balance, contributions received, benefits paid, claims settled — are not
- * here. There is no fund contract and no claims contract yet, so there is
- * nothing to read and nothing honest to print.
+ * The social-protection figures are now readable, with one exception that is not
+ * an omission: **the fund's balance.** It is a shielded coin, so it is not
+ * published — the fund is deliberately not publicly solvent, and that cannot be
+ * fixed without also revealing what each claimant received, since successive
+ * balances would give away the differences between them. Benefits paid, claims
+ * settled and withholding totals are all real reads.
  */
 export interface NetworkStats {
   /** Payroll contracts on this network that have an employer assigned. */
@@ -53,6 +55,24 @@ export interface NetworkStats {
   /** pEUR in circulation, from the token contract's own ledger. */
   peurSupply: bigint | null;
   /**
+   * The unemployment fund, or null if none is deployed on this network.
+   *
+   * Counts and withholding totals only. The fund's BALANCE is deliberately
+   * absent, and not because it was hard to read: it is a shielded coin, so it
+   * is not published at all. A dashboard cannot show a fund's solvency here,
+   * and saying so is more honest than leaving a gap where a figure belongs.
+   */
+  fund: {
+    claimsPaid: number;
+    ruleSets: number;
+    claimTrees: number;
+    /** Withheld from benefits, held and remitted. Public by design. */
+    taxHeld: bigint;
+    taxRemitted: bigint;
+    socialHeld: bigint;
+    socialRemitted: bigint;
+  } | null;
+  /**
    * Payroll contracts whose on-chain layout does not match this build.
    *
    * Deployed before the current contract version. Their figures are missing
@@ -81,6 +101,7 @@ const EMPTY: NetworkStats = {
   payrollSettled: 0n,
   commitments: 0,
   peurSupply: null,
+  fund: null,
   unreadable: 0,
   deployed: [],
 };
@@ -101,6 +122,7 @@ export function useNetworkStats(networkId: string) {
         const here = forNetwork(deployments, networkId);
         const payrolls = here.filter(([, d]) => d.contractName === "payroll");
         const peur = here.find(([, d]) => d.contractName === "peur");
+        const fund = here.find(([, d]) => d.contractName === "fund");
 
         const next: NetworkStats = {
           ...EMPTY,
@@ -109,6 +131,7 @@ export function useNetworkStats(networkId: string) {
           // payroll contracts are the list a reviewer walks.
           deployed: [
             ...(peur ? [{ label: "pEUR issuer", name: peur[0], deployment: peur[1] }] : []),
+            ...(fund ? [{ label: "Unemployment fund", name: fund[0], deployment: fund[1] }] : []),
             ...payrolls.map(([name, deployment]) => ({
               label: "Employer payroll",
               name,
@@ -126,6 +149,29 @@ export function useNetworkStats(networkId: string) {
             } catch {
               // An instance from an older contract shape: leave it unread rather
               // than failing the whole page over one deployment.
+            }
+          }
+        }
+
+        if (fund) {
+          const contract = await loadContract("fund");
+          const state = await fetchContractState(networkId, fund[1].contractAddress);
+          if (state) {
+            try {
+              const ledger = contract.ledger(state.data) as any;
+              next.fund = {
+                claimsPaid: Number(ledger.claimsPaid),
+                ruleSets: Number(ledger.latestVersion),
+                claimTrees: [...ledger.rootFor].length,
+                taxHeld: ledger.taxPool ?? 0n,
+                taxRemitted: ledger.taxRemitted ?? 0n,
+                socialHeld: ledger.socialPool ?? 0n,
+                socialRemitted: ledger.socialRemitted ?? 0n,
+              };
+            } catch {
+              // A fund from an earlier contract shape. Left null rather than
+              // reported as an empty one — the difference matters here, because
+              // "no claims" and "cannot read" look identical as a zero.
             }
           }
         }

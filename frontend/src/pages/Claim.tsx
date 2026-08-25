@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { ClaimForm } from "../components/ClaimForm";
+import { BENEFIT_V1 } from "../generated/benefit-params";
 
 /**
  * Claiming an entitlement without disclosing what it rests on.
@@ -31,9 +32,13 @@ const REQUIREMENTS = [
     // cannot count them for itself; that is the same wall that shapes
     // everything else here, and it is a real limit rather than an unfinished
     // edge.
-    title: "12 months employment",
+    // The heading reads the PUBLISHED rule set rather than the scheme's twelve.
+    // The deployed pilot requires one month, and a page claiming twelve while
+    // the contract accepts one would be the single easiest thing here to catch
+    // out.
+    title: `${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} employment`,
     status: "partial" as const,
-    body: "The claim circuit checks it, against a count your employer signed into the termination attestation — not against the twelve filings themselves. A fund contract cannot read a payroll contract's ledger, so it cannot do the counting; what it can do is refuse a claim whose attestation says fewer months. The count stays auditable afterwards, because the filings are public.",
+    body: `The published rule set requires ${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} — a pilot figure, not the twelve the real scheme asks for. The claim circuit checks it against a count your employer signed into the termination attestation, not against the filings themselves. A fund contract cannot read a payroll contract's ledger, so it cannot do the counting; what it can do is refuse a claim whose attestation says fewer months. The count stays auditable afterwards, because the filings are public.`,
   },
   {
     // "Assessed", not "paid", and the distinction is not pedantry: it is the
@@ -164,13 +169,20 @@ export function Claim() {
           happened.
         </p>
         <p className="note">
-          Three of the four requirements now have an on-chain source. A period
-          commits to gross, tax, contribution and net together, with the circuit
-          rebuilding them from the gross and the published rule set, so an
-          opening proves what was withheld. `endEmployment` records the
-          employer's statement that employment ended, as a commitment. What is
-          left is deployment: a fund holding money, and a relay publishing the
-          claim tree that a proof is checked against.
+          All four now have an on-chain source. A period commits to gross, tax,
+          contribution and net together, with the circuit rebuilding them from
+          the gross and the published rule set, so an opening proves what was
+          withheld. <code>endEmployment</code> records the employer's statement
+          that employment ended, as a commitment. The fund is deployed and
+          funded, a rule set is published, and the relay publishes a claim tree
+          per period — so a proof has something to be checked against.
+        </p>
+        <p className="note">
+          The benefit is withheld under the same tax rules your final month was
+          filed under. The circuit checks that by hashing the schedule against
+          the one bound into your own salary commitment, so a benefit cannot be
+          taxed under rules nobody published — and it can no longer exceed the
+          take-home pay it replaces, which it could before withholding existed.
         </p>
         <p className="note">
           The relay exists because contracts here cannot read each other. Public

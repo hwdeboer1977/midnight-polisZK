@@ -236,7 +236,14 @@ export async function submitClaim(options: {
   });
 
   onProgress("Proving the claim — this takes a few minutes…");
-  const tx = await deployed.callTx.claim(
+  // The one failure that cannot be pre-checked here. `claim` refuses a window
+  // whose nullifier is already spent, and that nullifier is derived from the
+  // claimant's secret claim key — so the check needs the key, which means it
+  // can only happen inside the circuit. Everything else this function verifies
+  // up front; this one is translated on the way out instead.
+  let tx: any;
+  try {
+    tx = await deployed.callTx.claim(
     {
       leaf: fromHex(bundle.leafDigest),
       path: bundle.path.map((entry) => ({
@@ -273,7 +280,18 @@ export async function submitClaim(options: {
       value: BigInt(coin.value),
       mt_index: BigInt(coin.mtIndex),
     }
-  );
+    );
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    if (/already claimed/i.test(message)) {
+      throw new Error(
+        `You have already claimed for ${window}. Each period can be claimed once — ` +
+          "the fund keeps a set of spent nullifiers and refuses a repeat. Nothing " +
+          "in that set identifies you; it is the image of your claim key, not the key."
+      );
+    }
+    throw cause;
+  }
 
   return {
     txHash: String(tx?.public?.txHash ?? ""),

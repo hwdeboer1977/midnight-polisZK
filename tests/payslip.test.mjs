@@ -17,7 +17,6 @@ import * as payroll from "../contracts/managed/payroll/contract/index.js";
 import {
   buildPayslip,
   decodePayslip,
-  encodePayslip,
   fromHex,
   verifyPayslip,
 } from "../frontend/src/lib/payslip.ts";
@@ -80,12 +79,20 @@ console.log("\npayslip ↔ commitment\n");
 check("the genuine payslip opens the commitment",
   verifyPayslip(payroll.pureCircuits, slip, anchor), true);
 
-check("a round trip through the link encoding survives",
-  verifyPayslip(payroll.pureCircuits, decodePayslip(encodePayslip(slip)), anchor), true);
+check("a round trip through the file encoding survives",
+  verifyPayslip(payroll.pureCircuits, decodePayslip(JSON.stringify(slip)), anchor), true);
 
-check("a payslip pasted as a link is read",
-  decodePayslip(`https://example.test/employee#payslip=${encodePayslip(slip)}`).net,
-  slip.net);
+// Links used to be a supported way in and are not any more — "Copy link" and
+// the paste box were both removed, so a link must now fail rather than quietly
+// work. This is the check that would catch it coming back by accident.
+check("a payslip offered as a link is refused", (() => {
+  try {
+    decodePayslip("https://example.test/employee#payslip=eyJ2IjoxfQ");
+    return false;
+  } catch {
+    return true;
+  }
+})(), true);
 
 // The cases that matter. Each edits one field a dishonest employer would want
 // to edit, and each must fail — including the ones that keep the arithmetic
@@ -138,8 +145,8 @@ for (const [name, input] of [
   ["empty", ""],
   ["not a payslip", "hello"],
   ["truncated json", '{"v":1,'],
-  ["wrong version", encodePayslip({ ...slip, v: 99 })],
-  ["missing a field", encodePayslip({ ...slip, nonce: undefined })],
+  ["wrong version", JSON.stringify({ ...slip, v: 99 })],
+  ["missing a field", JSON.stringify({ ...slip, nonce: undefined })],
 ]) {
   let threw = false;
   try {

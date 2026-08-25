@@ -8,7 +8,7 @@ import {
 } from "@midnight-ntwrk/compact-runtime";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
-import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
+import { findDeployedContract, submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
 import * as fundContract from "../contracts/managed/fund/contract/index.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { getDeployment } from "./utils/deployments.js";
@@ -17,6 +17,7 @@ import { MidnightProviders } from "./providers/midnight-providers.js";
 import { connect, contractLeaves, loadCompiledContract, managedPath } from "./utils/contract.js";
 import { PEUR_DECIMALS, PEUR_SCALE, formatPeur } from "./utils/constructor-args.js";
 import { PUBLISHED } from "./utils/benefit-params.js";
+import { treasuryEncryptionKeys } from "./utils/treasury.js";
 import {
   confirmDeposit,
   evolveChangeNonce,
@@ -553,19 +554,37 @@ async function remit(
       `   to ${what === "tax" ? hex(ledger.taxTreasury.bytes) : hex(ledger.socialTreasury.bytes)}`
     )
   );
+  console.log(chalk.gray("   encrypted to the treasury's own key, or it could never find the coin"));
   console.log(chalk.gray("   frozen at deploy — this cannot be redirected"));
   console.log();
+
+  // The treasury's ENCRYPTION key, not just its coin key. A shielded coin can
+  // only be found by someone whose encryption key the transaction was built
+  // with, and the `callTx` shorthand cannot carry that mapping — the same
+  // reason `payPeriod` goes through `submitCallTx`. Without it the balancer
+  // refuses with "Unable to resolve encryption public key for recipient".
+  const encryption = treasuryEncryptionKeys(network.networkId);
+  const recipient = what === "tax" ? hex(ledger.taxTreasury.bytes) : hex(ledger.socialTreasury.bytes);
+  const encryptionKey = what === "tax" ? encryption.tax : encryption.social;
 
   const conn = await connect("fund", null);
   try {
     console.log(chalk.blue("Proving (a minute or two)…"));
     const circuit = what === "tax" ? "remitBenefitTax" : "remitBenefitSocial";
-    const tx: any = await conn.deployed.callTx[circuit]({
-      nonce: fromHexBytes(coinRecord.nonce),
-      color: fromHexBytes(coinRecord.color),
-      value: BigInt(coinRecord.value),
-      mt_index: BigInt(mtIndex),
-    });
+    const tx: any = await submitCallTx(conn.providers as any, {
+      compiledContract: conn.compiledContract,
+      contractAddress: conn.contractAddress,
+      circuitId: circuit,
+      args: [
+        {
+          nonce: fromHexBytes(coinRecord.nonce),
+          color: fromHexBytes(coinRecord.color),
+          value: BigInt(coinRecord.value),
+          mt_index: BigInt(mtIndex),
+        },
+      ],
+      additionalCoinEncPublicKeyMappings: new Map([[recipient, encryptionKey]]),
+    } as any);
     console.log(chalk.green(`   ✅ ${tx.public?.txHash ?? ""}`));
     console.log();
     console.log(

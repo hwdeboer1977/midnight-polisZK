@@ -34,13 +34,17 @@ export interface SetupState {
  */
 const STEPS: { title: string; blurb: string; to: string }[] = [
   {
-    title: "Register organization",
-    blurb: "Connect your wallet and register as an employer.",
+    // "Register organization" with a tick beside it, for any connected wallet,
+    // told an employee's wallet it had registered as an employer. The flag
+    // behind it only ever meant "a wallet is connected", so the label now says
+    // that and registration moved to step two, where the on-chain evidence is.
+    title: "Connect a wallet",
+    blurb: "Any Midnight wallet. This key becomes your organization's signing key.",
     to: "/employer/setup",
   },
   {
-    title: "Deploy payroll contract",
-    blurb: "Receive an employer-controlled payroll contract.",
+    title: "Register and receive a payroll contract",
+    blurb: "The platform deploys one and assigns your key as its employer.",
     to: "/employer/setup",
   },
   {

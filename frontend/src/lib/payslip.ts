@@ -10,8 +10,8 @@
  * because the connector signs non-deterministically, so the same message yields
  * a different key every time. `openings.ts` records both dead ends.
  *
- * So the payslip travels out of band — a file, or a link — and the chain is
- * used to VERIFY it rather than to store it. That is the better shape anyway:
+ * So the payslip travels out of band — as a file — and the chain is used to
+ * VERIFY it rather than to store it. That is the better shape anyway:
  * a server that could show an employee their salary is a server that knows
  * every salary, which is the property this whole system exists to avoid.
  *
@@ -33,15 +33,6 @@
 
 /** Bumped only for a breaking layout change, so an old file fails loudly. */
 export const PAYSLIP_VERSION = 1;
-
-/**
- * Where a payslip link carries its payload.
- *
- * The fragment, not the query string: a fragment is never sent to the server,
- * so a payslip mailed as a link does not land in an access log on its way to
- * being read.
- */
-export const PAYSLIP_FRAGMENT = "payslip";
 
 export interface Payslip {
   v: number;
@@ -103,31 +94,14 @@ export function buildPayslip(options: {
   };
 }
 
-/** base64url, so a payslip survives a URL fragment and an email client. */
-function toBase64Url(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function fromBase64Url(value: string): string {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
-  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-export function encodePayslip(slip: Payslip): string {
-  return toBase64Url(JSON.stringify(slip));
-}
-
 /**
- * Reads a payslip from whatever the employee actually pasted.
+ * Reads a payslip file.
  *
- * Deliberately tolerant of the four shapes that arrive in practice: the raw
- * JSON from an opened file, the encoded blob, a full link, and a link that was
- * pasted with its surrounding whitespace. Being strict here buys nothing —
+ * One shape: the JSON an employer downloaded and sent. It used to accept an
+ * encoded blob and a URL fragment as well, for a paste box and a "Copy link"
+ * button that have both been removed — so links no longer open, deliberately,
+ * and the error says so rather than failing as malformed JSON. Being strict
+ * here buys nothing —
  * every one of these is unambiguous, and the hash check downstream is what
  * decides whether the content is real.
  */
@@ -135,18 +109,18 @@ export function decodePayslip(input: string): Payslip {
   const text = input.trim();
   if (!text) throw new Error("Nothing to read");
 
-  const fragment = text.match(new RegExp(`[#&]${PAYSLIP_FRAGMENT}=([A-Za-z0-9\\-_]+)`));
-  const candidate = fragment
-    ? fromBase64Url(fragment[1]!)
-    : text.startsWith("{")
-      ? text
-      : fromBase64Url(text);
-
+  // JSON only. Payslips are handed over as files, and the encoded-blob and
+  // URL-fragment shapes this used to accept were for a "Copy link" button and a
+  // paste box that no longer exist — so a link is now read as what it is: not a
+  // payslip.
   let parsed: unknown;
   try {
-    parsed = JSON.parse(candidate);
+    parsed = JSON.parse(text);
   } catch {
-    throw new Error("That is not a payslip — the text could not be read as one.");
+    throw new Error(
+      "That is not a payslip file. Open the .json your employer sent you — a " +
+        "link or pasted text will not work."
+    );
   }
 
   const slip = parsed as Payslip;
@@ -164,21 +138,6 @@ export function decodePayslip(input: string): Payslip {
     }
   }
   return slip;
-}
-
-export function payslipLink(slip: Payslip, origin = window.location.origin): string {
-  return `${origin}/employee#${PAYSLIP_FRAGMENT}=${encodePayslip(slip)}`;
-}
-
-/** From the current URL, if it carries one. Consumed once, then cleared. */
-export function payslipFromLocation(): Payslip | null {
-  const hash = window.location.hash;
-  if (!hash.includes(`${PAYSLIP_FRAGMENT}=`)) return null;
-  try {
-    return decodePayslip(hash);
-  } catch {
-    return null;
-  }
 }
 
 export function payslipFilename(slip: Payslip): string {

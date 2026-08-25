@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { CopyRow } from "../components/CopyRow";
 import { SetupChecklist } from "../components/SetupChecklist";
 import { Tile } from "../components/Tile";
 import { WalletPicker } from "../components/WalletPicker";
@@ -157,6 +158,35 @@ export function EmployerOverview() {
             </div>
           </section>
         </>
+      ) : null}
+
+      {/* A connected wallet that controls no payroll contract is the most common
+          confusing state here — it is what an employee's wallet looks like on
+          this page, and the checklist alone reads as "you are partway through
+          setting up" rather than "this is not an employer". Naming the key is
+          the part that resolves it: the answer is almost always that a
+          different wallet is connected. */}
+      {account && !checking && !setup.contract ? (
+        <section className="card pending">
+          <h2>This wallet is not registered as an employer</h2>
+          <p className="note" style={{ marginTop: 0 }}>
+            No payroll contract on {networkId} names this key as its employer.
+            Every action here is signed, and the contract checks the signer — so
+            nothing on this tab will work until a contract is assigned to it.
+          </p>
+          <CopyRow label="Connected key" value={account.coinPublicKey} />
+          <p className="note">
+            If your organization is already registered, this is probably a
+            different wallet than the one you registered with — switch accounts
+            in your extension. If it is an employee's wallet, everything they
+            need is on <Link to="/employee">Employee</Link> instead.
+          </p>
+          <div className="actions">
+            <Link className="button" to="/employer/setup">
+              Register this key
+            </Link>
+          </div>
+        </section>
       ) : null}
 
       {/* The dashboard appears as soon as there is a period to report on, and

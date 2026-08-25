@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { CopyRow } from "./CopyRow";
+import { FilePicker } from "./FilePicker";
 import { parseBundle, submitClaim, type ClaimBundle, type ClaimResult } from "../lib/claim";
 import { decodePayslip, type Payslip } from "../lib/payslip";
 import { formatPeur } from "../lib/format";
@@ -32,22 +34,20 @@ export function ClaimForm() {
 
   const busy = step !== null;
 
-  async function readBundle(file: File | null) {
-    if (!file) return;
+  function readBundle(text: string) {
     setError(null);
     try {
-      setBundle(parseBundle(await file.text()));
+      setBundle(parseBundle(text));
     } catch (cause) {
       setBundle(null);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
-  async function readPayslip(file: File | null) {
-    if (!file) return;
+  function readPayslip(text: string) {
     setError(null);
     try {
-      setPayslip(decodePayslip(await file.text()));
+      setPayslip(decodePayslip(text));
     } catch (cause) {
       setPayslip(null);
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -152,46 +152,67 @@ export function ClaimForm() {
         that a claim was made.
       </p>
 
-      <div className="actions" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <label className="button secondary" style={{ cursor: "pointer" }}>
-          {bundle ? `Bundle ✓ ${bundle.period}` : "Claim bundle (.json)"}
-          <input
-            type="file"
-            accept="application/json,.json"
+      {/* Numbered, because the three inputs come from three different places and
+          that is the part people get stuck on — not the form. Each row says who
+          gives it to you. */}
+      <ol className="claim-inputs">
+        <li>
+          <div className="claim-input-head">
+            <strong>Claim bundle</strong>
+            <span className="muted">from the fund's relay</span>
+          </div>
+          <FilePicker
+            label="Choose the bundle…"
+            loaded={bundle ? `Loaded — period ${bundle.period}` : null}
             disabled={busy}
-            style={{ display: "none" }}
-            onChange={(event) => void readBundle(event.target.files?.[0] ?? null)}
+            onFile={async (file) => readBundle(await file.text())}
           />
-        </label>
-        <label className="button secondary" style={{ cursor: "pointer" }}>
-          {payslip ? `Payslip ✓ ${payslip.period}` : "Your payslip (.json)"}
-          <input
-            type="file"
-            accept="application/json,.json"
-            disabled={busy}
-            style={{ display: "none" }}
-            onChange={(event) => void readPayslip(event.target.files?.[0] ?? null)}
-          />
-        </label>
-        <input
-          type="password"
-          value={passphrase}
-          disabled={busy}
-          placeholder="Your claim passphrase"
-          autoComplete="off"
-          style={{ minWidth: 240 }}
-          onChange={(event) => setPassphrase(event.target.value)}
-        />
-      </div>
+          <p className="note">
+            Holds the path proving your termination is in that month's tree,
+            alongside everyone else's — which is what keeps you anonymous inside
+            it, and why you cannot build it yourself.
+          </p>
+        </li>
 
-      <p className="note">
-        The bundle comes from the fund's relay — it holds the path proving your
-        termination is in that month's tree, alongside everyone else's. The
-        payslip comes from your employer; it carries the figures that open the
-        month you are claiming on. The passphrase is the one you used on the{" "}
-        <strong>Employee</strong> page, and it must be derived with this same
-        wallet connected.
-      </p>
+        <li>
+          <div className="claim-input-head">
+            <strong>Your payslip</strong>
+            <span className="muted">from your employer</span>
+          </div>
+          <FilePicker
+            label="Choose your payslip…"
+            loaded={payslip ? `Loaded — period ${payslip.period}` : null}
+            disabled={busy}
+            onFile={async (file) => readPayslip(await file.text())}
+          />
+          <p className="note">
+            For the final period. It carries the figures that open the
+            commitment — the nonce inside it derives from your employer's
+            passphrase, so there is no other route to it.
+          </p>
+        </li>
+
+        <li>
+          <div className="claim-input-head">
+            <strong>Your claim passphrase</strong>
+            <span className="muted">only you have it</span>
+          </div>
+          <input
+            type="password"
+            value={passphrase}
+            disabled={busy}
+            placeholder="The passphrase you chose on Employee"
+            autoComplete="off"
+            style={{ minWidth: 280 }}
+            onChange={(event) => setPassphrase(event.target.value)}
+          />
+          <p className="note">
+            The one you used under <Link to="/employee">Your claim key</Link>,
+            derived with this same wallet connected. Nothing here holds it, and
+            nothing can check it until the claim is built.
+          </p>
+        </li>
+      </ol>
 
       {bundle && payslip ? (
         <p className="note" style={{ marginTop: 0 }}>

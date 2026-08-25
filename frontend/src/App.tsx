@@ -8,6 +8,7 @@ import { Payroll } from "./pages/Payroll";
 import { Employee } from "./pages/Employee";
 import { Claim } from "./pages/Claim";
 import { useEmployerStage } from "./lib/useEmployerStage";
+import { HeaderWallet } from "./components/HeaderWallet";
 import { useWallet } from "./wallet/WalletContext";
 
 // preview is the only live network. preprod is listed but unselectable, so the
@@ -26,7 +27,7 @@ function Header({
   showWordmark: boolean;
   showNetwork: boolean;
 }) {
-  const { networkId, setNetworkId, wallet, account, disconnect } = useWallet();
+  const { networkId, setNetworkId } = useWallet();
 
   return (
     <div className="top">
@@ -61,16 +62,7 @@ function Header({
             {NETWORKS[0].label}
           </span>
         )}
-        {account && wallet ? (
-          <div className="chip">
-            <span className="dot" />
-            {wallet.icon ? <img src={wallet.icon} alt="" /> : null}
-            <span>{wallet.name || wallet.rdns}</span>
-            <button className="ghost" onClick={disconnect}>
-              Disconnect
-            </button>
-          </div>
-        ) : null}
+        <HeaderWallet />
       </div>
     </div>
   );

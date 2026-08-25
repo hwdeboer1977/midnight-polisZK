@@ -171,11 +171,21 @@ export function Public() {
       </section>
 
       <h2 className="eyebrow">Social protection fund</h2>
-      {/* The social-protection half of the story has no contracts yet, and a
-          dashboard that invents its figures would break exactly the promise the
-          rest of the page is making. */}
-      <section className="card pending">
-        <h2>Collected — benefits not yet built</h2>
+      {/* Every figure here is a real read. The one a dashboard would normally
+          lead with — the fund's balance — is absent because it is not published
+          at all, and saying that is better than leaving a gap where a number
+          belongs. */}
+      <section className={stats.fund ? "card" : "card pending"}>
+        {/* The heading follows the figures. A fund that has paid nothing yet must
+            not be introduced as one that has — that is the same overclaim as
+            showing an assessed figure as collected, one card down. */}
+        <h2>
+          {!stats.fund
+            ? "No fund deployed on this network"
+            : stats.fund.claimsPaid > 0
+              ? "Benefits paid, and nothing about who received them"
+              : "Ready to pay benefits — none claimed yet"}
+        </h2>
         <div className="flow">
           <span>Contributions</span>
           <span className="arrow">→</span>
@@ -184,7 +194,69 @@ export function Public() {
           <span>Benefits</span>
         </div>
 
+        <div className="stats four">
+          <div className="stat">
+            <div className="stat-value">
+              {loading ? "…" : stats.fund ? stats.fund.claimsPaid : "—"}
+            </div>
+            <div className="stat-label">Claims settled</div>
+          </div>
+          <div className="stat">
+            <div className="stat-value">
+              {loading ? "…" : stats.fund ? stats.fund.claimTrees : "—"}
+            </div>
+            <div className="stat-label">Periods claimable</div>
+          </div>
+          <div className="stat">
+            <div className="stat-value">
+              {loading || !stats.fund
+                ? "—"
+                : `€${formatPeur(stats.fund.taxHeld + stats.fund.taxRemitted)}`}
+            </div>
+            <div className="stat-label">Tax withheld from benefits</div>
+          </div>
+          <div className="stat">
+            <div className="stat-value">
+              {loading || !stats.fund
+                ? "—"
+                : `€${formatPeur(stats.fund.socialHeld + stats.fund.socialRemitted)}`}
+            </div>
+            <div className="stat-label">Contributions withheld</div>
+          </div>
+        </div>
+
+        <p className="note">
+          A claim proves the claimant was employed long enough and what her final
+          salary was, and discloses neither. What settles on chain is a count and
+          one opaque nullifier — never who claimed, which employer she left, or
+          what she received. Each claimant is indistinguishable from everyone
+          terminated in the same month across every employer here.
+          {stats.fund && stats.fund.claimsPaid === 0
+            ? " The fund holds money and a rule set is published; the count above is zero because nobody has claimed against this contract yet."
+            : ""}
+        </p>
+        <p className="note">
+          <strong>The fund's balance is not shown because it is not published.</strong>{" "}
+          It is a shielded coin, so this fund is deliberately not publicly
+          solvent — and that cannot be fixed without also revealing what each
+          claimant received, because successive balances would give away the
+          differences between them. The withholding totals above are public for
+          the opposite reason: tax that is never remitted is not tax, and
+          remitting requires the contract to know what it owes.
+        </p>
+      </section>
+
+      {/* Separate card, because these two zeroes mean something different from
+          the figures above and running them together would read as one story. */}
+      <section className="card pending">
+        <h2>Payroll withholding — assessed, not collected</h2>
         <div className="stats pending-stats">
+          <div className="stat">
+            <div className="stat-value">
+              {loading ? "…" : `€${formatPeur(stats.taxFiled)}`}
+            </div>
+            <div className="stat-label">Tax assessed</div>
+          </div>
           <div className="stat">
             <div className="stat-value">
               {loading ? "…" : `€${formatPeur(stats.taxHeld + stats.taxRemitted)}`}
@@ -193,27 +265,25 @@ export function Public() {
           </div>
           <div className="stat">
             <div className="stat-value">
+              {loading ? "…" : `€${formatPeur(stats.socialFiled)}`}
+            </div>
+            <div className="stat-label">Contributions assessed</div>
+          </div>
+          <div className="stat">
+            <div className="stat-value">
               {loading ? "…" : `€${formatPeur(stats.socialHeld + stats.socialRemitted)}`}
             </div>
             <div className="stat-label">Contributions collected</div>
           </div>
-          <div className="stat">
-            <div className="stat-value">—</div>
-            <div className="stat-label">Benefits paid</div>
-          </div>
-          <div className="stat">
-            <div className="stat-value">—</div>
-            <div className="stat-label">Claims settled</div>
-          </div>
         </div>
-
         <p className="note">
-          The two collected figures are real: tax and contributions are withheld
-          into each payroll contract's own pools and remitted monthly to the
-          treasury, so what is held plus what has gone onward must equal what was
-          assessed. Anyone can check that per employer without seeing a salary.
-          Benefits and claims are blank because nothing pays them yet — that is
-          the claim circuit, and it does not exist.
+          Every payroll period computes tax and contributions in circuit and
+          publishes the totals, so the assessed figures are provable per employer
+          without seeing a salary. The collected figures are what has actually
+          moved into the contracts' pools — and they are genuinely zero:{" "}
+          <code>fundWithholding</code> is deployed and nothing calls it yet, so
+          employers keep the withheld money. Showing the assessed figure as
+          though it had been collected is the one thing this page will not do.
         </p>
       </section>
 

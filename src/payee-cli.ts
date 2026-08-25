@@ -6,7 +6,7 @@ import { validateMnemonic } from "@midnight-ntwrk/wallet-sdk";
 import chalk from "chalk";
 import { EnvironmentManager } from "./utils/environment.js";
 import { formatPeur } from "./utils/constructor-args.js";
-import { getDeployment } from "./utils/deployments.js";
+import { peurTokenId } from "./utils/peur.js";
 import { buildWallet, deriveKeys, waitForSync, type WalletSecret } from "./utils/wallet.js";
 import { deriveClaimKey } from "./utils/payroll-openings.js";
 
@@ -66,9 +66,9 @@ function keysFor(secret: WalletSecret, networkId: string) {
 
 async function showBalance(secret: WalletSecret): Promise<void> {
   const network = EnvironmentManager.getNetworkConfig();
-  const peur = getDeployment(network.networkId, "peur") as
-    | { tokenId?: string }
-    | undefined;
+  // Read off the deployed contract, not out of deployment.json — that file
+  // records addresses, and the token id lives on chain.
+  const tokenId = await peurTokenId(network.networkId, network.indexer);
 
   console.log(chalk.gray(`\nSyncing this employee's wallet on ${network.name}…`));
   console.log(
@@ -81,12 +81,12 @@ async function showBalance(secret: WalletSecret): Promise<void> {
     const balances = state.shielded.balances as Record<string, bigint>;
 
     console.log();
-    if (!peur?.tokenId) {
+    if (!tokenId) {
       console.log(
         chalk.yellow("No pEUR deployment found for this network — showing every token.")
       );
     } else {
-      const id = peur.tokenId.replace(/^0x/, "").toLowerCase();
+      const id = tokenId.replace(/^0x/, "").toLowerCase();
       const held = balances[id] ?? balances[`0x${id}`] ?? 0n;
 
       console.log(
@@ -127,8 +127,8 @@ async function showBalance(secret: WalletSecret): Promise<void> {
     // balance under a token id nobody was looking for.
     const others = Object.entries(balances).filter(
       ([id]) =>
-        !peur?.tokenId ||
-        id.replace(/^0x/, "").toLowerCase() !== peur.tokenId.replace(/^0x/, "").toLowerCase()
+        !tokenId ||
+        id.replace(/^0x/, "").toLowerCase() !== tokenId.replace(/^0x/, "").toLowerCase()
     );
     if (others.length > 0) {
       console.log();

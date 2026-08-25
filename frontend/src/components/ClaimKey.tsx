@@ -68,6 +68,13 @@ export function ClaimKey({
         rooted in a passphrase instead — precisely so that nobody who has ever
         paid you can recognise a claim as yours.
       </p>
+      {/* Said before deriving, not only after. The consequence of leaving it
+          until you need it is that you cannot do it at all. */}
+      <p className="problems" style={{ marginTop: 0 }}>
+        Do this while you are still employed. Your employer writes the hash into
+        the statement that ends your employment, and that statement can only be
+        made once — so a claim key chosen afterwards is one no claim can use.
+      </p>
 
       <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
         <input

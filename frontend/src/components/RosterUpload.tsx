@@ -11,6 +11,7 @@ import {
   type RunResult,
 } from "../lib/payPayroll";
 import { loadDeployments } from "../lib/deployments";
+import { FilePicker } from "./FilePicker";
 import { Payslips } from "./Payslips";
 import { useWallet } from "../wallet/WalletContext";
 
@@ -117,10 +118,7 @@ export function RosterUpload({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function onFile(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  async function onFile(file: File) {
     setBusy(true);
     setError(null);
     setRoster(null);
@@ -334,10 +332,13 @@ export function RosterUpload({
         you are filing; the period it is for is read from the sheet.
       </p>
 
-      <label className="upload">
-        <input type="file" accept=".xlsx" onChange={(e) => void onFile(e)} />
-        <span>{busy ? "Reading…" : "Choose this period's .xlsx"}</span>
-      </label>
+      <FilePicker
+        label={busy ? "Reading…" : "Choose this period's .xlsx"}
+        loaded={fileName}
+        accept=".xlsx"
+        disabled={busy}
+        onFile={onFile}
+      />
       <p className="note">
         Year and Month above the table, then columns: {ROSTER_COLUMNS.join(" · ")}.
         Generate a starting point with <code>npm run roster:template</code>. Parsed in

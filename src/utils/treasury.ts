@@ -1,4 +1,6 @@
+import { ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
 import { toPublicKey } from "./keys.js";
+import { deriveKeys } from "./wallet.js";
 
 /**
  * Where withheld tax and contributions are sent, read from the environment.
@@ -34,4 +36,49 @@ export function treasuryKeys(): TreasuryKeys {
   const social = process.env.SOCIAL_TREASURY_KEY?.trim();
   if (!tax || !social) throw new TreasuryKeysMissing();
   return { tax: toPublicKey(tax), social: toPublicKey(social) };
+}
+
+/**
+ * The treasuries' ENCRYPTION public keys, which sending to them requires.
+ *
+ * A coin public key says who owns a shielded coin; the encryption public key is
+ * what the coin is encrypted to, and without it the recipient cannot find the
+ * coin at all. `peur.compact` documents the same requirement for `mintTo`, and
+ * `payPeriod` carries the mapping for exactly this reason.
+ *
+ * The failure without it is not silent here — the balancer refuses with
+ * "Unable to resolve encryption public key for recipient" — which is a better
+ * outcome than the one that motivated the note on `mintTo`, where a missing
+ * mapping produced a coin nobody could ever detect.
+ *
+ * Derived from the treasury seeds rather than stored, because `.env` records
+ * the seeds already and a second copy of a public key is a second thing to keep
+ * in step. Deriving needs the seed, which is more than sending strictly
+ * requires — set `TAX_TREASURY_ENC_KEY` / `SOCIAL_TREASURY_ENC_KEY` instead on
+ * any machine that should not hold the treasuries' spending keys.
+ */
+export function treasuryEncryptionKeys(networkId: string): {
+  tax: string;
+  social: string;
+} {
+  const resolve = (label: "TAX" | "SOCIAL"): string => {
+    const explicit = process.env[`${label}_TREASURY_ENC_KEY`]?.trim();
+    if (explicit) return explicit.replace(/^0x/, "").toLowerCase();
+
+    const seed = process.env[`${label}_TREASURY_SEED`]?.trim();
+    if (!seed) {
+      throw new Error(
+        `${label}_TREASURY_ENC_KEY is not set and ${label}_TREASURY_SEED is not ` +
+          "available to derive it from. A shielded coin can only be found by " +
+          "someone whose encryption public key the transaction was built with, " +
+          "so a remittance cannot be sent without it."
+      );
+    }
+    const { shieldedSeed } = deriveKeys({ kind: "seed", value: seed }, networkId);
+    return String(ZswapSecretKeys.fromSeed(shieldedSeed).encryptionPublicKey)
+      .replace(/^0x/, "")
+      .toLowerCase();
+  };
+
+  return { tax: resolve("TAX"), social: resolve("SOCIAL") };
 }

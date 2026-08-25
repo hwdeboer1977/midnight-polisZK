@@ -1,11 +1,10 @@
-import { useState } from "react";
 import { formatPeur } from "../lib/format";
-import { payslipFilename, payslipLink, type Payslip } from "../lib/payslip";
+import { payslipFilename, type Payslip } from "../lib/payslip";
 
 /**
  * The payslips for a filed period, for the employer to hand out.
  *
- * One per employee, downloaded or copied individually rather than exported as a
+ * One per employee, downloaded individually rather than exported as a
  * single file. That is not tidiness — a payslip carries a salary and the nonce
  * that opens its commitment, so a combined export is one document disclosing
  * everyone's pay to whoever receives it. Making the safe thing the only
@@ -16,8 +15,6 @@ import { payslipFilename, payslipLink, type Payslip } from "../lib/payslip";
  * passphrase and the sealed openings on chain.
  */
 export function Payslips({ slips }: { slips: Payslip[] }) {
-  const [copied, setCopied] = useState<number | null>(null);
-
   if (slips.length === 0) return null;
 
   function download(slip: Payslip) {
@@ -28,12 +25,6 @@ export function Payslips({ slips }: { slips: Payslip[] }) {
     anchor.download = payslipFilename(slip);
     anchor.click();
     URL.revokeObjectURL(url);
-  }
-
-  async function copyLink(slip: Payslip, index: number) {
-    await navigator.clipboard.writeText(payslipLink(slip));
-    setCopied(index);
-    window.setTimeout(() => setCopied((was) => (was === index ? null : was)), 2000);
   }
 
   return (
@@ -54,20 +45,13 @@ export function Payslips({ slips }: { slips: Payslip[] }) {
           </tr>
         </thead>
         <tbody>
-          {slips.map((slip, index) => (
+          {slips.map((slip) => (
             <tr key={slip.slot}>
               <td>{slip.employee ?? `Employee ${slip.slot + 1}`}</td>
               <td>{formatPeur(BigInt(slip.net))} pEUR</td>
               <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                 <button type="button" className="ghost" onClick={() => download(slip)}>
                   Download
-                </button>{" "}
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={() => void copyLink(slip, index)}
-                >
-                  {copied === index ? "Copied" : "Copy link"}
                 </button>
               </td>
             </tr>
@@ -75,10 +59,9 @@ export function Payslips({ slips }: { slips: Payslip[] }) {
         </tbody>
       </table>
       <p className="note">
-        A link carries the payslip in its fragment, which browsers never send to
-        a server — so mailing one does not leave a salary in a web log on the
-        way. It is still the payslip itself: whoever holds the link can read
-        that line.
+        A payslip is the line itself, not a pointer to it — whoever holds the
+        file can read what that person was paid. Send each one to that person
+        only, by whatever channel you would send a paper payslip.
       </p>
     </section>
   );
