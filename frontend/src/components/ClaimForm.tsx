@@ -89,6 +89,30 @@ export function ClaimForm() {
         <p className="ok-line" style={{ marginTop: 0 }}>
           ✓ Claimed, and the window is now spent
         </p>
+        {/* Shown as a payslip would show it. A benefit is taxable income, and a
+            net figure with no breakdown is the thing people misread. */}
+        <div className="row">
+          <div className="k">Benefit</div>
+          <div className="v">€{formatPeur(done.grossBenefitMinor)}</div>
+        </div>
+        <div className="row">
+          <div className="k">Tax withheld</div>
+          <div className="v">−€{formatPeur(done.taxMinor)}</div>
+        </div>
+        <div className="row">
+          <div className="k">Contribution withheld</div>
+          <div className="v">−€{formatPeur(done.socialMinor)}</div>
+        </div>
+        <div className="row">
+          <div className="k">Paid to you</div>
+          <div className="v">€{formatPeur(done.benefitMinor)}</div>
+        </div>
+        <p className="note">
+          Withheld under the same tax rules your final month was filed under —
+          the circuit checks that, so the benefit cannot be taxed under a
+          schedule nobody published. The withheld part stays with the fund until
+          it is remitted to the treasuries.
+        </p>
         <CopyRow label="Transaction" value={done.txHash} />
         <p className="note">
           The coin is in your wallet and its value was never published. What the

@@ -83,32 +83,6 @@ struct ClaimLeaf {
   instance: Bytes<32>;
 }
 
-// Declared identically to payroll.compact's, and the reason is sharper here than
-// for the other copies: the claim proves `persistentHash<TaxParams>(taxParams)`
-// equals the `paramsHash` bound into her salary commitment. That hash was
-// produced by payroll's encoding of ITS struct, so a field reordered or retyped
-// here does not merely fail — it fails for every claimant, with an error that
-// points at the tax rules rather than at this declaration.
-//
-// What that assertion buys is worth being precise about. The fund cannot read
-// the taxparams registry — no contract here can read another — so it has no
-// independent source for a tax schedule. It does not need one: the schedule is
-// pinned by a hash payroll already published and already bound into the
-// commitment the claimant must open. The benefit is therefore taxed under
-// provably the same rules her final salary was, without the fund ever reading
-// the registry or trusting the claimant.
-struct TaxParams {
-  version: Uint<16>;
-  validFrom: Uint<32>;
-  threshold1: Uint<60>;
-  threshold2: Uint<60>;
-  rate1: Uint<16>;
-  rate2: Uint<16>;
-  rate3: Uint<16>;
-  maxContribBase: Uint<60>;
-  contribRate: Uint<16>;
-}
-
 // Declared identically to payroll.compact's, because the claim recomputes a
 // commitment that payroll's circuit produced. A reordered or retyped field here
 // stops every claim from opening, silently.
@@ -155,13 +129,6 @@ struct ClaimNullifier {
 
 export ledger platform: ZswapCoinPublicKey;
 
-// Where withholding on a benefit goes, frozen at deploy and never settable
-// again — the same arrangement payroll uses, for the same reason: if the
-// destination were an argument, whoever triggered a remittance could redirect
-// it. Because it cannot be redirected, remitting is left open to anyone.
-export ledger taxTreasury: ZswapCoinPublicKey;
-export ledger socialTreasury: ZswapCoinPublicKey;
-
 // version -> persistentHash(BenefitParams). Append-only, for the same reason
 // the tax registry is: a benefit computed under rules that can be rewritten
 // afterwards proves nothing about what anyone was entitled to.
@@ -186,26 +153,9 @@ export ledger rootAuthor: Map<Bytes<32>, ZswapCoinPublicKey>;
 // the set is a list of opaque values that nothing links to a person.
 export ledger spent: Set<Bytes<32>>;
 
-// Public totals. Coarse by design — how many claims, never who or how much each.
+// Public totals. Deliberately coarse — how many claims and how much has been
+// paid, never who or how much each.
 export ledger claimsPaid: Counter;
-
-// Withheld from benefits and held here until remitted, then the running total
-// sent onward. Both are public.
-//
-// ⚠️ This LEAKS what the rest of the fund hides. Withholding is a deterministic
-// function of the benefit, which is a deterministic function of the gross, so a
-// public `taxPool + taxRemitted` discloses the fund's aggregate outflow — and
-// with `claimsPaid` alongside it, the average benefit. That was accepted
-// deliberately: withheld tax that is never remitted is not tax, and remitting
-// requires the contract to know how much it owes, which means public state. The
-// alternative — retaining it silently — would have been a smaller benefit
-// described as a tax.
-//
-// What is NOT leaked: any individual benefit, or which claim contributed what.
-export ledger taxPool: Uint<64>;
-export ledger socialPool: Uint<64>;
-export ledger taxRemitted: Uint<64>;
-export ledger socialRemitted: Uint<64>;
 export ledger benefitToken: Bytes<32>;
 export ledger benefitTokenSet: Boolean;
 export ledger coinsReceived: Uint<32>;
@@ -214,18 +164,11 @@ export ledger coinsReceived: Uint<32>;
 // know the value of, and useless to anyone who does not.
 export ledger poolOrdinal: Uint<32>;
 
-constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
+constructor() {
   platform = disclose(ownPublicKey());
   latestVersion = 0;
   benefitTokenSet = false;
   coinsReceived = 0;
-
-  taxTreasury = disclose(taxTo);
-  socialTreasury = disclose(socialTo);
-  taxPool = 0;
-  socialPool = 0;
-  taxRemitted = 0;
-  socialRemitted = 0;
 }
 
 // Publishes a rule set. Platform-only and write-once per version.
@@ -317,15 +260,9 @@ export circuit claim(
   claimKey: Bytes<32>,
   window: Uint<32>,
   params: BenefitParams,
-  // The tax schedule the benefit is withheld under. Not trusted: pinned below
-  // against the `paramsHash` bound into her salary commitment, so it is
-  // provably the schedule her final month was taxed under.
-  taxParams: TaxParams,
-  // The floor divisions, pinned below. Compact has no division operator, so
-  // each quotient is supplied and the circuit admits exactly one.
+  // The floor division the benefit needs, pinned below. Compact has no division
+  // operator, so the quotient is supplied and the circuit admits exactly one.
   benefitQ: Uint<60>,
-  benefitTaxQ: Uint<60>,
-  benefitSocialQ: Uint<60>,
   coin: QualifiedShieldedCoinInfo
 ): [] {
   const version = disclose(params.version);
@@ -393,57 +330,6 @@ export circuit claim(
   assert(numerator < ((benefitQ as Uint<76>) + 1) * 10000, "benefit quotient too large");
   assert(benefitQ > 0, "the benefit rounds to nothing");
 
-  // ── Withholding on the benefit ──────────────────────────────────────────
-  //
-  // A benefit is taxable income, and treating it otherwise produced the
-  // artifact this exists to remove: an untaxed benefit computed from a taxed
-  // salary can exceed the take-home pay it replaces. The rate is applied to the
-  // benefit, not to the salary — the salary was already assessed in its own
-  // month, by payroll, and assessing it twice would be wrong in the other
-  // direction.
-  assert(
-    persistentHash<TaxParams>(taxParams) == payrollParamsHash,
-    "those are not the tax rules the final month was filed under"
-  );
-
-  // Identical to payroll's `bandsFor`, and identical on purpose. Calling it is
-  // not possible — no contract here can call another — so the arithmetic is
-  // duplicated and `tests/benefit-tax.test.mjs` checks the two against each
-  // other rather than leaving the copies to drift.
-  const t1 = taxParams.threshold1;
-  const t2 = taxParams.threshold2;
-  const b1 = benefitQ < t1 ? benefitQ : t1;
-  const b2 = benefitQ <= t1 ? 0 : ((benefitQ < t2 ? benefitQ : t2) - t1) as Uint<60>;
-  const b3 = benefitQ <= t2 ? 0 : (benefitQ - t2) as Uint<60>;
-
-  const taxN =
-    (b1 as Uint<80>) * (taxParams.rate1 as Uint<80>) +
-    (b2 as Uint<80>) * (taxParams.rate2 as Uint<80>) +
-    (b3 as Uint<80>) * (taxParams.rate3 as Uint<80>);
-  assert((benefitTaxQ as Uint<80>) * 10000 <= taxN, "benefit tax quotient too small");
-  assert(taxN < ((benefitTaxQ as Uint<80>) + 1) * 10000, "benefit tax quotient too large");
-
-  const contribBase = benefitQ < taxParams.maxContribBase
-    ? benefitQ
-    : taxParams.maxContribBase;
-  const socN = (contribBase as Uint<80>) * (taxParams.contribRate as Uint<80>);
-  assert(
-    (benefitSocialQ as Uint<80>) * 10000 <= socN,
-    "benefit contribution quotient too small"
-  );
-  assert(
-    socN < ((benefitSocialQ as Uint<80>) + 1) * 10000,
-    "benefit contribution quotient too large"
-  );
-
-  assert(
-    benefitTaxQ + benefitSocialQ < benefitQ,
-    "withholding leaves nothing of the benefit"
-  );
-  // What actually reaches her. The withheld part is never sent, so it stays in
-  // the pool coin's change and is already backing the pools below.
-  const benefitNet = (benefitQ - benefitTaxQ - benefitSocialQ) as Uint<60>;
-
   // Once per window. Fresh-then-inserted, so a replay inside one transaction
   // cannot slip through between the two.
   const nullifier = persistentHash<ClaimNullifier>(
@@ -469,17 +355,12 @@ export circuit claim(
   // exact coin would mean sizing it to the benefit, and the benefit derives
   // from a private salary, so whoever prepared the coin would have to be told
   // the figure this contract exists to keep secret.
-  // The NET is what leaves; the withheld part never moves, so the coin only has
-  // to cover what she is actually paid.
-  assert(
-    coin.value >= benefitNet as Uint<128>,
-    "the pool coin cannot cover the benefit"
-  );
+  assert(coin.value >= benefitQ as Uint<128>, "the pool coin cannot cover the benefit");
 
   const paid = sendShielded(
     disclose(coin),
     left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
-    disclose(benefitNet) as Uint<128>
+    disclose(benefitQ) as Uint<128>
   );
 
   // The change's ordinal, so the pool can be found again. The nonce is NOT
@@ -492,65 +373,7 @@ export circuit claim(
     coinsReceived = (coinsReceived + 1) as Uint<32>;
   }
 
-  taxPool = (taxPool + disclose(benefitTaxQ)) as Uint<64>;
-  socialPool = (socialPool + disclose(benefitSocialQ)) as Uint<64>;
   claimsPaid.increment(1);
-}
-
-// Sends the withheld tax on to the treasury it was destined for at deploy.
-//
-// Open to anyone, and safe to be: the destination is not an argument. Whoever
-// calls this can only move money the contract already owes to an address fixed
-// when it was deployed. What that buys is the same thing permissionless
-// `publishRoot` buys — a platform that stops running cannot strand the money.
-export circuit remitBenefitTax(coin: QualifiedShieldedCoinInfo): [] {
-  assert(taxPool > 0, "no withheld tax to remit");
-  assert(benefitTokenSet, "the fund holds nothing yet");
-  assert(benefitToken == disclose(coin.color), "wrong token for this fund");
-  assert(coin.value >= taxPool as Uint<128>, "that coin cannot cover the withheld tax");
-
-  const owed = taxPool;
-  const sent = sendShielded(
-    disclose(coin),
-    left<ZswapCoinPublicKey, ContractAddress>(taxTreasury),
-    disclose(owed) as Uint<128>
-  );
-
-  // Same bookkeeping as a claim: the remainder comes back as a new coin, and
-  // the pool has to keep pointing at whichever coin that is.
-  if (sent.change.is_some) {
-    poolOrdinal = coinsReceived;
-    coinsReceived = (coinsReceived + 1) as Uint<32>;
-  }
-
-  taxPool = 0;
-  taxRemitted = (taxRemitted + owed) as Uint<64>;
-}
-
-// The same for the contribution, to its own treasury.
-export circuit remitBenefitSocial(coin: QualifiedShieldedCoinInfo): [] {
-  assert(socialPool > 0, "no withheld contribution to remit");
-  assert(benefitTokenSet, "the fund holds nothing yet");
-  assert(benefitToken == disclose(coin.color), "wrong token for this fund");
-  assert(
-    coin.value >= socialPool as Uint<128>,
-    "that coin cannot cover the withheld contribution"
-  );
-
-  const owed = socialPool;
-  const sent = sendShielded(
-    disclose(coin),
-    left<ZswapCoinPublicKey, ContractAddress>(socialTreasury),
-    disclose(owed) as Uint<128>
-  );
-
-  if (sent.change.is_some) {
-    poolOrdinal = coinsReceived;
-    coinsReceived = (coinsReceived + 1) as Uint<32>;
-  }
-
-  socialPool = 0;
-  socialRemitted = (socialRemitted + owed) as Uint<64>;
 }
 
 // ── Tree construction, exposed ───────────────────────────────────────────────
@@ -586,18 +409,6 @@ export pure circuit treeNode(leftNode: Field, rightNode: Field): Field {
  */
 export pure circuit pathRoot(path: MerkleTreePath<16, Bytes<32>>): Field {
   return merkleTreePathRootNoLeafHash<16>(path).field;
-}
-
-/**
- * The hash a tax schedule must produce to be accepted.
- *
- * Exposed so a claimant can check her copy of the rules against the
- * `paramsHashFor` her employer filed BEFORE she proves, rather than discovering
- * the mismatch as a failed assertion after two minutes of proving. The same
- * reason `pathRoot` is exposed.
- */
-export pure circuit taxParamsHash(params: TaxParams): Bytes<32> {
-  return persistentHash<TaxParams>(params);
 }
 
 /**

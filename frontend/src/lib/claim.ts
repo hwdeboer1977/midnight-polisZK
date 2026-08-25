@@ -4,8 +4,9 @@ import { deriveClaimKey } from "./claimKey";
 import { decodePayrollLedger, loadContract } from "./contracts";
 import { bytesToHex, keyToHex } from "./keys";
 import { fromHex, type Payslip } from "./payslip";
-import { connectContract, type ProvingMode } from "./submitPayroll";
+import { connectContract, toCircuitTaxParams, type ProvingMode } from "./submitPayroll";
 import { benefitFor, paramsForVersion, toCircuitParams } from "../generated/benefit-params";
+import { DUTCH_V1, computeLine } from "../generated/tax-params";
 
 /**
  * Claiming a benefit, from the claimant's own browser.
@@ -53,7 +54,11 @@ export interface ClaimBundle {
 
 export interface ClaimResult {
   txHash: string;
-  /** Minor units. What the fund paid, and the figure the nullifier now covers. */
+  /** Minor units, before withholding. */
+  grossBenefitMinor: bigint;
+  taxMinor: bigint;
+  socialMinor: bigint;
+  /** Minor units. What actually reached her wallet. */
   benefitMinor: bigint;
   /** The window this claim consumed. A second claim in it is refused on chain. */
   window: number;
@@ -195,8 +200,25 @@ export async function submitClaim(options: {
 
   const params = paramsForVersion(bundle.paramsVersion!);
   const benefit = benefitFor(gross, params);
+
+  // The benefit is taxable income, withheld under the SAME schedule her final
+  // month was filed under — the circuit pins that by hashing what we pass here
+  // against the `paramsHash` bound into her salary commitment. Checked off
+  // circuit first so a schedule mismatch names itself.
+  const schedule = fundContract.pureCircuits.taxParamsHash(toCircuitTaxParams(DUTCH_V1));
+  if (bytesToHex(schedule) !== bytesToHex(paramsHash)) {
+    throw new Error(
+      "The tax rules in this build are not the ones that period was filed under. " +
+        "Someone has edited tax-params.ts, or this payroll was filed under another version."
+    );
+  }
+  const withheld = computeLine(benefit.quotient, DUTCH_V1);
+  if (withheld.netMinor <= 0n) {
+    throw new Error("Withholding leaves nothing of the benefit.");
+  }
+
   const coin = bundle.poolCoin!;
-  if (BigInt(coin.value) < benefit.quotient) {
+  if (BigInt(coin.value) < withheld.netMinor) {
     throw new Error(
       `The fund coin in this bundle holds less than the benefit due. The fund needs a ` +
         `larger deposit before this claim can be paid.`
@@ -241,7 +263,10 @@ export async function submitClaim(options: {
     claimKey,
     BigInt(window),
     toCircuitParams(params),
+    toCircuitTaxParams(DUTCH_V1),
     benefit.quotient,
+    withheld.taxMinor,
+    withheld.contribMinor,
     {
       nonce: fromHex(coin.nonce),
       color: fromHex(coin.color),
@@ -252,7 +277,10 @@ export async function submitClaim(options: {
 
   return {
     txHash: String(tx?.public?.txHash ?? ""),
-    benefitMinor: benefit.quotient,
+    grossBenefitMinor: benefit.quotient,
+    taxMinor: withheld.taxMinor,
+    socialMinor: withheld.contribMinor,
+    benefitMinor: withheld.netMinor,
     window,
   };
 }

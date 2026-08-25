@@ -70,7 +70,7 @@
     "instance": "blockstat-solutions-v7"
   },
   "preview/fund": {
-    "contractAddress": "8615dd7a691ab805874e089efdb10e8b0572cdc518387a662d8ea0baf6c356a6",
+    "contractAddress": "820815a16c4a94ca49d8d2b3f109d094f92b57dd0e487b198b48d1e5744ad1c1",
     "contractName": "fund",
     "networkId": "preview"
   }

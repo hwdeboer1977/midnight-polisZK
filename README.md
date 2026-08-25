@@ -51,7 +51,7 @@ INSTANCE=acme npm run payroll          # assign employer, set salaries
 npm run deploy:peur   # deploy pEUR and mint the initial supply
 npm run peur          # token status, mint more
 
-npm run deploy:fund   # the unemployment fund (one per network)
+npm run deploy:fund   # the unemployment fund (needs TAX_TREASURY_KEY + SOCIAL_TREASURY_KEY)
 npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1
 npm run fund -- deposit --amount 200   # the FIRST deposit fixes the benefit token forever
 npm run fund status
@@ -474,8 +474,16 @@ paid from, the versioned benefit rules, one Merkle root per period, and the set
 of spent nullifiers.
 
 ```
-preview/fund  8615dd7a691ab805874e089efdb10e8b0572cdc518387a662d8ea0baf6c356a6
+preview/fund  820815a16c4a94ca49d8d2b3f109d094f92b57dd0e487b198b48d1e5744ad1c1
 ```
+
+An earlier fund, `8615dd7a…`, ran without withholding and is **abandoned with
+€306 in it**. Adding withholding changed the ledger layout, and verifier keys are
+fixed at deploy — so the money can only be reached by rebuilding from
+`contracts/fund.compact.bak` and claiming against it. That is the cost of a
+contract change to a contract with **no withdrawal circuit**, and it is worth
+knowing before the next one: money enters a fund easily and leaves only through
+a claim.
 
 ### Why it is a separate contract, and what that costs
 
@@ -577,6 +585,63 @@ private, so the operator does not know what the change came to — they must be
 told, or work it out. That is not a gap in the tooling: it is the same property
 that stops an observer reading the pool balance, seen from the inside.
 
+### The benefit is taxed, under provably the same rules the salary was
+
+A benefit is taxable income. Paying it untaxed out of a salary that *was* taxed
+produced an artifact worth naming: **a benefit could exceed the take-home pay it
+replaced.** €220 gross → €154 benefit, against €134.75 net pay. Nothing was
+arithmetically wrong; the two sides were simply not comparable.
+
+So `claim` withholds tax and contribution from the benefit, using the same bands
+`setPayroll` applies to a salary. What makes that safe rather than a second
+opinion about tax:
+
+```
+assert(persistentHash<TaxParams>(taxParams) == payrollParamsHash)
+```
+
+The claimant already supplies `payrollParamsHash` to open her salary commitment,
+and payroll guarantees it is the hash of the schedule that period was filed
+under. So the fund gets a **verified** tax schedule without reading the
+`taxparams` registry — which it cannot do — and without trusting the claimant.
+The benefit is withheld under provably the same rules her final month was.
+
+The band arithmetic is **duplicated**, because no contract here can call
+another. Duplicated arithmetic drifts, and this drift would be invisible: a
+benefit taxed under a subtly different schedule still proves, still pays, and is
+simply wrong. `npm run test:benefit-tax` pins it — including against the hash
+payroll actually wrote on chain, so the two struct declarations cannot stop
+encoding identically without a test failing.
+
+```
+€220 gross salary
+  → €154.00 benefit         (min(gross, €4,000) × 70%)
+  → −€55.055 tax            (35.75% band 1)
+  → −€4.62 contribution     (3%)
+  → €94.325 paid            against €134.75 net pay
+```
+
+### Where the withheld money goes, and what that costs
+
+`taxPool` / `socialPool` accumulate, and `remitBenefitTax` / `remitBenefitSocial`
+send them to treasuries **frozen in the constructor** — the same two keys payroll
+uses, because money withheld from a salary and money withheld from the benefit
+that replaces it must land in the same place. Both remit circuits are
+**permissionless**: the destination cannot be redirected by whoever triggers one,
+so a platform that stops running cannot strand the money.
+
+⚠️ **This leaks what the rest of the fund hides.** Withholding is a deterministic
+function of the benefit, which is a deterministic function of the gross — so a
+public `taxPool + taxRemitted` discloses the fund's **aggregate outflow**, and
+with `claimsPaid` alongside it, the average benefit. That was accepted
+deliberately, and the alternatives were worse: withheld tax that is never
+remitted is not tax, and remitting requires the contract to know what it owes,
+which means public state. Retaining it silently would have been a smaller benefit
+described as a tax.
+
+What is still **not** leaked: any individual benefit, or which claim contributed
+what.
+
 ### Operator commands
 
 Flags come **after `--`**. Without it npm reads `--amount 10` as its own config
@@ -589,7 +654,13 @@ npm run fund -- pool --full            # full nonces
 npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1
 npm run fund -- deposit --amount 200   # put money in
 npm run fund -- reconcile --value 96   # recover a post-claim change coin
+npm run fund -- remit --what tax       # send withheld tax to its treasury
+npm run fund -- remit --what social    # and the contribution to its own
 ```
+
+A remit spends the pool coin, so the pool moves to its change afterwards and has
+to be reconciled exactly as it does after a claim. The command prints the
+`reconcile` line to run next.
 
 The **first** deposit fixes `benefitToken` for the contract's lifetime. The token
 is read off the deployed pEUR contract rather than out of `.env`, because a stale
@@ -1210,6 +1281,8 @@ something is unproven it says so.
 | One spent nullifier per claim | **yes** | opaque; the image of a secret, linked to nobody |
 | **Who claimed, and for how much** | no | the benefit is a shielded coin |
 | **The fund's balance** | no | a shielded coin, so the fund is *not* publicly solvent |
+| Tax and contribution withheld from benefits, in total | **yes** | `taxPool`/`taxRemitted` — deliberate, and it discloses aggregate outflow |
+| **Which claim withheld what** | no | only the running totals move |
 
 The public total is deliberate and useful: an auditor can check what a company
 paid in a month without learning what anyone earns.
@@ -1717,7 +1790,8 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 | `npm run frontend:config`| copy contract module, ZK assets and addresses into `frontend/` — also available from inside `frontend/` as `npm run config` |
 | `npm run validate`       | typecheck + compile                               |
 | `npm run deploy:fund`    | deploy the unemployment fund                      |
-| `npm run fund`           | fund status, params, deposit, pool, reconcile — **flags need `--`** |
+| `npm run fund`           | fund status, params, deposit, pool, reconcile, remit — **flags need `--`** |
+| `npm run test:benefit-tax`| the fund's band arithmetic against payroll's, and the schedule hash against the chain |
 | `npm run terminate`      | end an employee's employment from the CLI         |
 | `npm run relay`          | build a period's claim tree, optionally publish the root |
 | `npm run test:payslip`   | payslip encode/decode and commitment round-trip   |
@@ -1896,12 +1970,15 @@ What that run establishes:
   the on-chain commitment at leaf 42896 exactly — so the €96 remainder is
   spendable rather than stranded.
 
-⚠️ **€154 exceeds that employee's €134.75 net pay.** Being dismissed pays better
-than working, which is an artifact of two modelling gaps rather than a wrong
-rate: the benefit has **no withholding** (real WW benefit is taxable income), and
-the tax model has **no allowance**, applying 35.75% + 3% from the first cent — so
-a €220 salary is taxed like a mid-range one. Fixing either is a `tax-params.ts`
-change or a v2 rule set, not a contract change.
+⚠️ **That run predates withholding.** €154 exceeded the employee's €134.75 net
+pay — being dismissed paid better than working. The fund above (`8615dd7a…`) has
+since been replaced by one that withholds tax and contribution from the benefit,
+so the same claim now pays **€94.325**. The figures and hashes here are kept as
+they were rather than restated, because they are what that contract actually did.
+
+One gap remains and it is not the benefit's: the tax model has **no allowance**,
+applying 35.75% + 3% from the first cent, so a €220 salary is taxed like a
+mid-range one. That is a `tax-params.ts` question, not a contract one.
 
 ### Roster size is two
 
@@ -1945,11 +2022,12 @@ payment was batched would make that 2 regardless of roster size.
 | Unemployment fund deployed and funded | **working** — €460 in, rule set v1 published |
 | Ending employment | **working** — from the employer's browser and from the CLI |
 | Claim tree relay | **working** — root published for 202601 |
-| Claims and benefit payment | **working** — €154.00 claimed end to end from the claimant's browser; see **A benefit claimed** |
+| Claims and benefit payment | **working** — €154.00 claimed end to end from the claimant's browser on the pre-withholding fund; see **A benefit claimed** |
 | Claimant's claim key in the browser | **working** — passphrase + PBKDF2, salted with her coin public key |
 | Recovering a post-claim change coin | **working** — `fund reconcile`, verified against the on-chain commitment |
 | Anchoring the claim key at hire rather than termination | **not built** — needs a contract change; today she must hand the hash over before being dismissed |
-| Benefit withholding | **not modelled** — the benefit is paid untaxed, so it can exceed net pay |
+| Benefit withholding | **working** — tax and contribution withheld under the schedule the final month was filed under, pinned by hash |
+| Remitting withheld benefit tax | **built, uncalled** — `remitBenefitTax` / `remitBenefitSocial` are deployed; nothing has been withheld yet on the new fund |
 | Stepped benefit rate | **not modelled** — `BenefitParams` carries one flat rate, not a schedule |
 
 ### Known sharp edges
@@ -2017,9 +2095,11 @@ In order:
    attestation, so an employee must hand the hash to her employer *before* being
    dismissed. Carrying it in the roster and writing it in `setPayroll` is the
    faithful shape, and it needs a contract change and a redeploy.
-4. **Model the benefit properly.** Withholding on the benefit itself, and a rate
-   that steps down after the opening months — both are `BenefitParams` and
-   client work, not contract walls. Until then a benefit can exceed net pay.
+4. **Model the benefit properly.** ~~Withholding~~ is done — the benefit is taxed
+   under the same schedule the final salary was, so it can no longer exceed net
+   pay. Still missing: a rate that **steps down** after the opening months, which
+   needs a schedule in `BenefitParams` rather than one flat rate, and deriving
+   the benefit from a **reference year** rather than the final month alone.
 5. **Employees holding their own keys** is **done for wallet-based employees**:
    both employees in the 2026-08-25 run held their own 1AM wallets, supplied
    their own coin and encryption public keys, and one derived her own claim key

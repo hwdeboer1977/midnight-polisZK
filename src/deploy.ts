@@ -24,6 +24,7 @@ import { currentInstance, deploymentKey, saveDeployment } from "./utils/deployme
 import { MidnightProviders } from "./providers/midnight-providers.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js";
+import { treasuryKeys } from "./utils/treasury.js";
 
 async function main() {
   console.log();
@@ -146,9 +147,26 @@ async function main() {
     console.log(chalk.blue("🚀 Deploying contract (30-60 seconds)..."));
     console.log();
 
+    // The fund withholds tax and contribution from every benefit, and both
+    // destinations are frozen in its constructor exactly as payroll's are — so
+    // triggering a remittance can never redirect one. Read from the same two
+    // environment variables, because money withheld from a salary and money
+    // withheld from the benefit that replaces it must land in the same place.
+    const constructorArgs =
+      contractName === "fund"
+        ? (() => {
+            const t = treasuryKeys();
+            console.log(chalk.gray(`   tax treasury    ${process.env.TAX_TREASURY_KEY}`));
+            console.log(chalk.gray(`   social treasury ${process.env.SOCIAL_TREASURY_KEY}`));
+            console.log(chalk.gray("   Both are frozen at deploy and can never be changed."));
+            return [t.tax, t.social];
+          })()
+        : [];
+
     const deployed = await deployContract(providers as any, {
       compiledContract: compiledContract as any,
-    });
+      args: constructorArgs,
+    } as any);
 
     const contractAddress = deployed.deployTxData.public.contractAddress;
 

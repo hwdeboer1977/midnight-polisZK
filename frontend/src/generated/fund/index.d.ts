@@ -43,12 +43,36 @@ export type ImpureCircuits<PS> = {
                     rate: bigint,
                     minMonths: bigint
                   },
+        taxParams_0: { version: bigint,
+                       validFrom: bigint,
+                       threshold1: bigint,
+                       threshold2: bigint,
+                       rate1: bigint,
+                       rate2: bigint,
+                       rate3: bigint,
+                       maxContribBase: bigint,
+                       contribRate: bigint
+                     },
         benefitQ_0: bigint,
+        benefitTaxQ_0: bigint,
+        benefitSocialQ_0: bigint,
         coin_0: { nonce: Uint8Array,
                   color: Uint8Array,
                   value: bigint,
                   mt_index: bigint
                 }): __compactRuntime.CircuitResults<PS, []>;
+  remitBenefitTax(context: __compactRuntime.CircuitContext<PS>,
+                  coin_0: { nonce: Uint8Array,
+                            color: Uint8Array,
+                            value: bigint,
+                            mt_index: bigint
+                          }): __compactRuntime.CircuitResults<PS, []>;
+  remitBenefitSocial(context: __compactRuntime.CircuitContext<PS>,
+                     coin_0: { nonce: Uint8Array,
+                               color: Uint8Array,
+                               value: bigint,
+                               mt_index: bigint
+                             }): __compactRuntime.CircuitResults<PS, []>;
 }
 
 export type ProvableCircuits<PS> = {
@@ -91,12 +115,36 @@ export type ProvableCircuits<PS> = {
                     rate: bigint,
                     minMonths: bigint
                   },
+        taxParams_0: { version: bigint,
+                       validFrom: bigint,
+                       threshold1: bigint,
+                       threshold2: bigint,
+                       rate1: bigint,
+                       rate2: bigint,
+                       rate3: bigint,
+                       maxContribBase: bigint,
+                       contribRate: bigint
+                     },
         benefitQ_0: bigint,
+        benefitTaxQ_0: bigint,
+        benefitSocialQ_0: bigint,
         coin_0: { nonce: Uint8Array,
                   color: Uint8Array,
                   value: bigint,
                   mt_index: bigint
                 }): __compactRuntime.CircuitResults<PS, []>;
+  remitBenefitTax(context: __compactRuntime.CircuitContext<PS>,
+                  coin_0: { nonce: Uint8Array,
+                            color: Uint8Array,
+                            value: bigint,
+                            mt_index: bigint
+                          }): __compactRuntime.CircuitResults<PS, []>;
+  remitBenefitSocial(context: __compactRuntime.CircuitContext<PS>,
+                     coin_0: { nonce: Uint8Array,
+                               color: Uint8Array,
+                               value: bigint,
+                               mt_index: bigint
+                             }): __compactRuntime.CircuitResults<PS, []>;
 }
 
 export type PureCircuits = {
@@ -112,6 +160,16 @@ export type PureCircuits = {
   pathRoot(path_0: { leaf: Uint8Array,
                      path: { sibling: { field: bigint }, goes_left: boolean }[]
                    }): bigint;
+  taxParamsHash(params_0: { version: bigint,
+                            validFrom: bigint,
+                            threshold1: bigint,
+                            threshold2: bigint,
+                            rate1: bigint,
+                            rate2: bigint,
+                            rate3: bigint,
+                            maxContribBase: bigint,
+                            contribRate: bigint
+                          }): Uint8Array;
   claimKeyHash(claimKey_0: Uint8Array): Uint8Array;
 }
 
@@ -155,12 +213,36 @@ export type Circuits<PS> = {
                     rate: bigint,
                     minMonths: bigint
                   },
+        taxParams_0: { version: bigint,
+                       validFrom: bigint,
+                       threshold1: bigint,
+                       threshold2: bigint,
+                       rate1: bigint,
+                       rate2: bigint,
+                       rate3: bigint,
+                       maxContribBase: bigint,
+                       contribRate: bigint
+                     },
         benefitQ_0: bigint,
+        benefitTaxQ_0: bigint,
+        benefitSocialQ_0: bigint,
         coin_0: { nonce: Uint8Array,
                   color: Uint8Array,
                   value: bigint,
                   mt_index: bigint
                 }): __compactRuntime.CircuitResults<PS, []>;
+  remitBenefitTax(context: __compactRuntime.CircuitContext<PS>,
+                  coin_0: { nonce: Uint8Array,
+                            color: Uint8Array,
+                            value: bigint,
+                            mt_index: bigint
+                          }): __compactRuntime.CircuitResults<PS, []>;
+  remitBenefitSocial(context: __compactRuntime.CircuitContext<PS>,
+                     coin_0: { nonce: Uint8Array,
+                               color: Uint8Array,
+                               value: bigint,
+                               mt_index: bigint
+                             }): __compactRuntime.CircuitResults<PS, []>;
   leafDigest(context: __compactRuntime.CircuitContext<PS>,
              leaf_0: { commitment: Uint8Array,
                        payeeBinding: Uint8Array,
@@ -177,12 +259,25 @@ export type Circuits<PS> = {
            path_0: { leaf: Uint8Array,
                      path: { sibling: { field: bigint }, goes_left: boolean }[]
                    }): __compactRuntime.CircuitResults<PS, bigint>;
+  taxParamsHash(context: __compactRuntime.CircuitContext<PS>,
+                params_0: { version: bigint,
+                            validFrom: bigint,
+                            threshold1: bigint,
+                            threshold2: bigint,
+                            rate1: bigint,
+                            rate2: bigint,
+                            rate3: bigint,
+                            maxContribBase: bigint,
+                            contribRate: bigint
+                          }): __compactRuntime.CircuitResults<PS, Uint8Array>;
   claimKeyHash(context: __compactRuntime.CircuitContext<PS>,
                claimKey_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
 }
 
 export type Ledger = {
   readonly platform: { bytes: Uint8Array };
+  readonly taxTreasury: { bytes: Uint8Array };
+  readonly socialTreasury: { bytes: Uint8Array };
   paramsFor: {
     isEmpty(): boolean;
     size(): bigint;
@@ -212,6 +307,10 @@ export type Ledger = {
     [Symbol.iterator](): Iterator<Uint8Array>
   };
   readonly claimsPaid: bigint;
+  readonly taxPool: bigint;
+  readonly socialPool: bigint;
+  readonly taxRemitted: bigint;
+  readonly socialRemitted: bigint;
   readonly benefitToken: Uint8Array;
   readonly benefitTokenSet: boolean;
   readonly coinsReceived: bigint;
@@ -228,7 +327,9 @@ export declare class Contract<PS = any, W extends Witnesses<PS> = Witnesses<PS>>
   impureCircuits: ImpureCircuits<PS>;
   provableCircuits: ProvableCircuits<PS>;
   constructor(witnesses: W);
-  initialState(context: __compactRuntime.ConstructorContext<PS>): __compactRuntime.ConstructorResult<PS>;
+  initialState(context: __compactRuntime.ConstructorContext<PS>,
+               taxTo_0: { bytes: Uint8Array },
+               socialTo_0: { bytes: Uint8Array }): __compactRuntime.ConstructorResult<PS>;
 }
 
 export declare function ledger(state: __compactRuntime.StateValue | __compactRuntime.ChargedState): Ledger;

@@ -78,12 +78,12 @@
       "goesLeft": true
     }
   ],
-  "fund": "8615dd7a691ab805874e089efdb10e8b0572cdc518387a662d8ea0baf6c356a6",
+  "fund": "820815a16c4a94ca49d8d2b3f109d094f92b57dd0e487b198b48d1e5744ad1c1",
   "paramsVersion": 1,
   "poolCoin": {
-    "nonce": "01b5eb437b80f231dff153d80a1612b208b2980a41a78a34e471d5d06e60904d",
+    "nonce": "c17857fb1cbe769d22ddbd778b476f5afad90793309b0b35258a3c04d71b103f",
     "color": "822ff41d171c4ee9b42342d5881716bcc3a1ae74c4f08299f948c0b6929443f3",
-    "value": "250000000",
-    "mtIndex": 42886
+    "value": "300000000",
+    "mtIndex": 42898
   }
 }

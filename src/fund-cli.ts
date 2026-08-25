@@ -225,6 +225,16 @@ async function main(): Promise<void> {
         (periods.length ? periods.sort().join(", ") : chalk.gray("none published"))
     );
     console.log(
+      chalk.cyan("tax withheld        : ") +
+        `€${formatPeur(ledger.taxPool)} held` +
+        chalk.gray(`, €${formatPeur(ledger.taxRemitted)} remitted`)
+    );
+    console.log(
+      chalk.cyan("contribution        : ") +
+        `€${formatPeur(ledger.socialPool)} held` +
+        chalk.gray(`, €${formatPeur(ledger.socialRemitted)} remitted`)
+    );
+    console.log(
       chalk.cyan("coins received      : ") +
         String(ledger.coinsReceived) +
         chalk.gray(
@@ -253,6 +263,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "remit") {
+    const what = requireFlag(args, "what", 'which pool to remit: "tax" or "social"');
+    if (what !== "tax" && what !== "social") {
+      throw new Error(`--what must be "tax" or "social", not "${what}"`);
+    }
+    await remit(network, record.contractAddress, what);
+    return;
+  }
+
   if (command === "pool") {
     await showPool(network, record.contractAddress, has(args, "full"));
     return;
@@ -269,7 +288,7 @@ async function main(): Promise<void> {
 
   if (command !== "params") {
     throw new Error(
-      `Unknown command "${command}". Use: status | params | deposit | pool | reconcile`
+      `Unknown command "${command}". Use: status | params | deposit | pool | reconcile | remit`
     );
   }
 
@@ -470,6 +489,92 @@ async function deposit(
       );
     }
     throw error;
+  } finally {
+    await conn.wallet.facade.stop();
+  }
+}
+
+/**
+ * Sends withheld tax or contribution on to the treasury it was destined for.
+ *
+ * Permissionless in the contract, because the destination is frozen at deploy
+ * and cannot be redirected by whoever triggers it — so a platform that stops
+ * running cannot strand the money. This runs it with the platform's wallet
+ * simply because that is the wallet the CLI has.
+ *
+ * It spends the pool coin, so the pool moves afterwards and the change has to be
+ * reconciled exactly as it does after a claim.
+ */
+async function remit(
+  network: ReturnType<typeof EnvironmentManager.getNetworkConfig>,
+  contractAddress: string,
+  what: "tax" | "social"
+): Promise<void> {
+  const ledger = await readLedger(network.indexer, contractAddress);
+  if (!ledger) throw new Error("No state on chain");
+
+  const owed: bigint = what === "tax" ? ledger.taxPool : ledger.socialPool;
+  if (owed <= 0n) {
+    console.log(chalk.gray(`Nothing withheld to remit for ${what}.`));
+    console.log();
+    return;
+  }
+
+  const poolOrdinal = Number(ledger.poolOrdinal);
+  const coinRecord = listDeposits(network.networkId, contractAddress).find(
+    (d) => d.ordinal === poolOrdinal && d.status === "confirmed"
+  );
+  if (!coinRecord) {
+    throw new Error(
+      `The pool is coin #${poolOrdinal}, which is not recorded in ${poolFile()}. ` +
+        "Run `npm run fund -- reconcile --value <EUR>` first — without its nonce " +
+        "the coin cannot be described to the circuit."
+    );
+  }
+  if (BigInt(coinRecord.value) < owed) {
+    throw new Error(
+      `The pool coin holds €${formatPeur(BigInt(coinRecord.value))}, less than the ` +
+        `€${formatPeur(owed)} withheld. Remit after a deposit, or reconcile first.`
+    );
+  }
+
+  const provider = indexerPublicDataProvider(network.indexer, network.indexerWS);
+  const leaves = await contractLeaves(provider as any, contractAddress);
+  const mtIndex = leaves[poolOrdinal];
+  if (mtIndex === undefined) {
+    throw new Error(`Coin #${poolOrdinal} has no visible leaf — the indexer may be behind.`);
+  }
+
+  console.log(
+    chalk.yellow.bold(`Remitting €${formatPeur(owed)} of withheld ${what}`)
+  );
+  console.log(
+    chalk.gray(
+      `   to ${what === "tax" ? hex(ledger.taxTreasury.bytes) : hex(ledger.socialTreasury.bytes)}`
+    )
+  );
+  console.log(chalk.gray("   frozen at deploy — this cannot be redirected"));
+  console.log();
+
+  const conn = await connect("fund", null);
+  try {
+    console.log(chalk.blue("Proving (a minute or two)…"));
+    const circuit = what === "tax" ? "remitBenefitTax" : "remitBenefitSocial";
+    const tx: any = await conn.deployed.callTx[circuit]({
+      nonce: fromHexBytes(coinRecord.nonce),
+      color: fromHexBytes(coinRecord.color),
+      value: BigInt(coinRecord.value),
+      mt_index: BigInt(mtIndex),
+    });
+    console.log(chalk.green(`   ✅ ${tx.public?.txHash ?? ""}`));
+    console.log();
+    console.log(
+      chalk.yellow(
+        "   The pool coin was spent, so the pool has moved to its change. Recover it:\n" +
+          `   npm run fund -- reconcile --value ${formatPeur(BigInt(coinRecord.value) - owed)}`
+      )
+    );
+    console.log();
   } finally {
     await conn.wallet.facade.stop();
   }

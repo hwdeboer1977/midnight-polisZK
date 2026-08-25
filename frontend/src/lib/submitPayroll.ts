@@ -565,7 +565,7 @@ export async function submitPayroll(options: {
     nonces,
     sealedOpenings,
     payees,
-    toCircuitParams(DUTCH_V1)
+    toCircuitTaxParams(DUTCH_V1)
   );
 
   // Only now is the passphrase binding: a commitment on chain depends on it.
@@ -603,7 +603,10 @@ export async function submitPayroll(options: {
  * other stops every filing from matching a published version, which is why the
  * mapping is written out rather than spread.
  */
-function toCircuitParams(p: typeof DUTCH_V1) {
+/** Exported: the claim withholds under the same schedule, so it needs the same
+ * conversion. A second copy would be a second thing to keep in step with the
+ * struct's field order, which is exactly what breaks a hash silently. */
+export function toCircuitTaxParams(p: typeof DUTCH_V1) {
   return {
     version: BigInt(p.version),
     validFrom: BigInt(p.validFrom),
