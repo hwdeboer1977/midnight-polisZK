@@ -292,6 +292,11 @@ table.roster tfoot td {
   padding-top: 10px; font-size: 13px;
 }
 table.roster .total { font-weight: 680; font-size: 15px; }
+/* A column the employer did not supply — computed from what they did. */
+table.roster th.derived { font-style: italic; }
+table.roster th.derived::after {
+  content: " ƒ"; font-style: normal; color: var(--accent); font-weight: 700;
+}
 table.roster .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px; color: var(--muted);

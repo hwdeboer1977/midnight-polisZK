@@ -1,0 +1,22 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+// Probe half 1: a vault that accepts a shielded coin.
+//
+// Deliberately minimal. The question is not what a tax vault should do, it is
+// whether a coin can arrive here from another CONTRACT rather than from a
+// wallet — everything else is noise until that is settled.
+
+export ledger received: Counter;
+export ledger balanceOf: Map<Bytes<32>, Uint<128>>;
+
+// Called by whoever is pushing the coin in. A contract-created output is only
+// valid if the receiving contract explicitly receives it, so this has to run in
+// the same transaction as the send.
+export circuit accept(coin: ShieldedCoinInfo, tag: Bytes<32>): [] {
+  receiveShielded(disclose(coin));
+  received.increment(1);
+
+  const prior = balanceOf.member(disclose(tag)) ? balanceOf.lookup(disclose(tag)) : 0;
+  balanceOf.insert(disclose(tag), (prior + disclose(coin.value)) as Uint<128>);
+}

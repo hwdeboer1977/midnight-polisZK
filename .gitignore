@@ -84,6 +84,13 @@ frontend/dist/
 # Who has drawn a demo pEUR allowance — local bookkeeping, not source.
 claims.json
 
+# The fund's coin nonces. The contract keeps only an ordinal for the coins it
+# holds — publishing a nonce next to a public coin commitment would let anyone
+# brute-force the pool balance — so this file is the ONLY copy. Losing it
+# strands the money; committing it puts it somewhere it should not be.
+# Globbed, so a `fund-pool.json.bak` is caught too.
+fund-pool*
+
 # Compiled ZK assets for the browser prover (~47 MB).
 #
 # Large, and committed anyway: the browser fetches them at proving time and a CI

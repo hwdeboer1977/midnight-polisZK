@@ -1,0 +1,36 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+// Probe 4: can a contract READ another contract's public ledger?
+//
+// Separate question from calling, and cheaper. If a vault can read
+// payroll.totalTaxFor[period] itself, it enforces the exact deposit amount
+// without trusting the employer — the enforcement gap mostly closes even
+// though routing is impossible.
+contract Payroll {
+  ledger totalTaxFor: Map<Uint<32>, Uint<64>>;
+}
+
+export ledger deposited: Map<Uint<32>, Uint<64>>;
+
+constructor(source: Payroll) {
+  deposited.insert(0, 0);
+}
+
+export circuit depositFor(period: Uint<32>, coin: ShieldedCoinInfo, source: Payroll): [] {
+  const owed = source.totalTaxFor.lookup(disclose(period));
+  assert(coin.value == owed as Uint<128>, "deposit must equal the tax assessed for that period");
+  receiveShielded(disclose(coin));
+  deposited.insert(disclose(period), disclose(owed));
+}
+
+// ── RESULT ────────────────────────────────────────────────────────────────
+//
+// No. The external contract block accepts circuit declarations only:
+//
+//   parse error: found keyword "ledger" looking for an external contract
+//   circuit or "}"
+//
+// And reaching state through a declared circuit is barred by the same wall as
+// probe_xcall: cross-contract calls are not supported. So a vault cannot read
+// payroll.totalTaxFor and cannot self-enforce the amount it is owed.

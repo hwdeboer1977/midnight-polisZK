@@ -37,15 +37,23 @@ import {
  */
 
 /** Bytes of ciphertext stored per employee per period. Must match payroll.compact. */
-export const SEALED_BYTES = 68;
+export const SEALED_BYTES = 100;
 
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const SALARY_BYTES = 8;
 const NONCE_BYTES = 32;
 
-/** 8-byte salary + 32-byte nonce. */
-const PLAINTEXT_BYTES = SALARY_BYTES + NONCE_BYTES;
+/**
+ * Four 8-byte amounts, the weeks worked padded to 8, and the 32-byte nonce.
+ *
+ * Weeks is one byte of information stored in eight. Padding keeps every field
+ * on an 8-byte boundary, which makes the layout readable at a glance and costs
+ * seven bytes in a blob that is already 100.
+ */
+const AMOUNTS = 4;
+const WEEKS_BYTES = 8;
+const PLAINTEXT_BYTES = SALARY_BYTES * AMOUNTS + WEEKS_BYTES + NONCE_BYTES;
 
 /**
  * Domain separators. Every derived value is tagged with what it is for, so the
@@ -56,6 +64,8 @@ const DOMAIN = {
   nonce: "polisZK/nonce/v1",
   seal: "polisZK/seal/v1",
   employee: "polisZK/employee/v1",
+  termination: "polisZK/termination/v1",
+  claim: "polisZK/claim/v1",
 } as const;
 
 /**
@@ -120,6 +130,35 @@ export function deriveNonce(employerKey: Buffer, period: number, index: number):
   return new Uint8Array(sha256(DOMAIN.nonce, employerKey, `${period}:${index}`));
 }
 
+/**
+ * The blinding nonce for one employee's termination attestation.
+ *
+ * Derived rather than random, for the reason every nonce here is: the employer
+ * has to be able to rebuild the opening later. A termination is attested once
+ * and consumed months afterwards, by a relay that was not running at the time,
+ * so a random nonce would have to survive in a file nobody thought to keep.
+ */
+export function deriveTerminationNonce(
+  employerKey: Buffer,
+  period: number,
+  index: number
+): Uint8Array {
+  return new Uint8Array(sha256(DOMAIN.termination, employerKey, `${period}:${index}`));
+}
+
+/**
+ * A claimant's claim key, from their own shielded seed.
+ *
+ * Never from the coin public key. That key is an address handed out to be paid,
+ * so anything derived from it is computable by everyone who has ever paid this
+ * person — and the nullifier built on this key would then reveal their benefit
+ * history to exactly those people. Domain-separated so it is unrelated to any
+ * other key the same seed produces.
+ */
+export function deriveClaimKey(shieldedSeed: Uint8Array): Uint8Array {
+  return new Uint8Array(sha256(DOMAIN.claim, Buffer.from(shieldedSeed)));
+}
+
 function sealingKey(employerKey: Buffer): Buffer {
   return sha256(DOMAIN.seal, employerKey);
 }
@@ -135,21 +174,34 @@ function sealingKey(employerKey: Buffer): Buffer {
  * the ciphertext, it leaks the XOR of the two salaries and destroys the
  * authentication guarantee. Twelve bytes is a cheap price.
  */
+export interface PayrollLine {
+  grossMinor: bigint;
+  taxMinor: bigint;
+  socialMinor: bigint;
+  netMinor: bigint;
+  weeks: number;
+}
+
 export function sealOpening(
   employerKey: Buffer,
-  salaryMinor: bigint,
+  line: PayrollLine,
   nonce: Uint8Array
 ): Uint8Array {
   if (nonce.length !== NONCE_BYTES) {
     throw new Error(`nonce must be ${NONCE_BYTES} bytes, got ${nonce.length}`);
   }
-  if (salaryMinor < 0n || salaryMinor >= 1n << BigInt(SALARY_BYTES * 8)) {
-    throw new Error(`salary ${salaryMinor} does not fit in ${SALARY_BYTES} bytes`);
+
+  const amounts = [line.grossMinor, line.taxMinor, line.socialMinor, line.netMinor];
+  for (const amount of amounts) {
+    if (amount < 0n || amount >= 1n << BigInt(SALARY_BYTES * 8)) {
+      throw new Error(`amount ${amount} does not fit in ${SALARY_BYTES} bytes`);
+    }
   }
 
   const plaintext = Buffer.alloc(PLAINTEXT_BYTES);
-  plaintext.writeBigUInt64BE(salaryMinor, 0);
-  plaintext.set(nonce, SALARY_BYTES);
+  amounts.forEach((amount, i) => plaintext.writeBigUInt64BE(amount, i * SALARY_BYTES));
+  plaintext.writeBigUInt64BE(BigInt(line.weeks), SALARY_BYTES * AMOUNTS);
+  plaintext.set(nonce, SALARY_BYTES * AMOUNTS + WEEKS_BYTES);
 
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv("aes-256-gcm", sealingKey(employerKey), iv);
@@ -172,7 +224,7 @@ export function sealOpening(
 export function openSealed(
   employerKey: Buffer,
   sealed: Uint8Array
-): { salaryMinor: bigint; nonce: Uint8Array } {
+): PayrollLine & { nonce: Uint8Array } {
   if (sealed.length !== SEALED_BYTES) {
     throw new Error(`sealed opening is ${sealed.length} bytes, expected ${SEALED_BYTES}`);
   }
@@ -187,8 +239,12 @@ export function openSealed(
   const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 
   return {
-    salaryMinor: plaintext.readBigUInt64BE(0),
-    nonce: new Uint8Array(plaintext.subarray(SALARY_BYTES)),
+    grossMinor: plaintext.readBigUInt64BE(0),
+    taxMinor: plaintext.readBigUInt64BE(SALARY_BYTES),
+    socialMinor: plaintext.readBigUInt64BE(SALARY_BYTES * 2),
+    netMinor: plaintext.readBigUInt64BE(SALARY_BYTES * 3),
+    weeks: Number(plaintext.readBigUInt64BE(SALARY_BYTES * AMOUNTS)),
+    nonce: new Uint8Array(plaintext.subarray(SALARY_BYTES * AMOUNTS + WEEKS_BYTES)),
   };
 }
 

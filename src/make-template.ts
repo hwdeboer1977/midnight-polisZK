@@ -1,5 +1,5 @@
 import path from "path";
-import { writeRosterTemplate } from "./utils/roster.js";
+import { ROSTER_COLUMNS, writeRosterTemplate } from "./utils/roster.js";
 
 /**
  * Writes a filled example roster. Real names and addresses would never belong
@@ -30,9 +30,14 @@ const period = { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
 await writeRosterTemplate(target, SAMPLE, period);
 console.log(`Wrote ${target}`);
 console.log(`Period:  Year ${period.year} | Month ${period.month}  (rows 1-2)`);
+// Derived from ROSTER_COLUMNS rather than written out again. A hardcoded copy
+// is how this line came to advertise a layout the parser had already stopped
+// accepting.
+console.log(`Columns: ${ROSTER_COLUMNS.join(" | ")}  (row ${4})`);
 console.log(
-  "Columns: Full name | Address | Monthly gross salary | Coin public key | " +
-    "Encryption public key  (row 4)"
+  "Weeks worked may be left blank for a full month. Tax, social contribution " +
+    "and net pay are NOT columns: they are computed from gross by the published " +
+    "rule set, inside the circuit."
 );
 console.log(
   "The two key columns are left blank on purpose: they are real wallet keys, one " +

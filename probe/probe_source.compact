@@ -1,0 +1,70 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+// Probe half 2: can a contract push a shielded coin to ANOTHER CONTRACT?
+//
+// This is the question that decides the shape of fundPeriod. If payroll can
+// send straight into a tax vault, withholding is one transaction that splits a
+// gross coin three ways. If it cannot, the employer has to fund all three
+// destinations from their own wallet in one transaction, and the circuit is a
+// different thing entirely.
+//
+// Three variants, so a compile failure says WHICH part is unsupported rather
+// than "somewhere in here".
+
+export ledger sentToUser: Counter;
+export ledger sentToContract: Counter;
+export ledger vault: ContractAddress;
+export ledger vaultSet: Boolean;
+
+constructor() {
+  sentToUser.increment(0);
+  vaultSet = false;
+}
+
+export circuit setVault(target: ContractAddress): [] {
+  assert(!vaultSet, "vault already set");
+  vault = disclose(target);
+  vaultSet = true;
+}
+
+// Baseline: the send payroll already does today. If this compiles and the next
+// one does not, the difference is precisely the contract recipient.
+export circuit sendToUser(
+  coin: QualifiedShieldedCoinInfo,
+  to: ZswapCoinPublicKey,
+  amount: Uint<128>
+): [] {
+  sendShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(disclose(to)),
+    disclose(amount)
+  );
+  sentToUser.increment(1);
+}
+
+// The question. `right` selects the ContractAddress arm of the same Either.
+export circuit sendToContract(
+  coin: QualifiedShieldedCoinInfo,
+  to: ContractAddress,
+  amount: Uint<128>
+): [] {
+  sendShielded(
+    disclose(coin),
+    right<ZswapCoinPublicKey, ContractAddress>(disclose(to)),
+    disclose(amount)
+  );
+  sentToContract.increment(1);
+}
+
+// Same again, but to an address held in ledger state rather than passed in —
+// which is how a real payroll would name its tax vault.
+export circuit sendToStoredVault(coin: QualifiedShieldedCoinInfo, amount: Uint<128>): [] {
+  assert(vaultSet, "no vault set");
+  sendShielded(
+    disclose(coin),
+    right<ZswapCoinPublicKey, ContractAddress>(vault),
+    disclose(amount)
+  );
+  sentToContract.increment(1);
+}

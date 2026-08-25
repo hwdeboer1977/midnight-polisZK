@@ -39,5 +39,39 @@
     "contractName": "payroll",
     "networkId": "preview",
     "instance": "blockstat-solution-3"
+  },
+  "preview/payroll:blockstat-solutions-bv": {
+    "contractAddress": "0b46a715adb738cdc749ccc7583ff28019dd788cbb4d210a99a2bfe14b9e6e75",
+    "contractName": "payroll",
+    "networkId": "preview",
+    "instance": "blockstat-solutions-bv"
+  },
+  "preview/taxparams": {
+    "contractAddress": "7feb657fb4a0541e3308d8fb14eca4538e6343d16f0a7540b620ed7547492910",
+    "contractName": "taxparams",
+    "networkId": "preview"
+  },
+  "preview/payroll:blockstat-solutions-v5": {
+    "contractAddress": "7fd5cddcef5c8945ce0b563dd6ceff0a71fdaeff9ac59339aec7b3656db89a7f",
+    "contractName": "payroll",
+    "networkId": "preview",
+    "instance": "blockstat-solutions-v5"
+  },
+  "preview/payroll:blockstat-solutions-v6": {
+    "contractAddress": "6220bb394fbb3c6c3a08fe85329de1f6bf78d6138781917975f0742c790b7a0a",
+    "contractName": "payroll",
+    "networkId": "preview",
+    "instance": "blockstat-solutions-v6"
+  },
+  "preview/payroll:blockstat-solutions-v7": {
+    "contractAddress": "c0e605456da7fa1a6ebdd402541febd8210e2a5e2b74799120325ce8bce74555",
+    "contractName": "payroll",
+    "networkId": "preview",
+    "instance": "blockstat-solutions-v7"
+  },
+  "preview/fund": {
+    "contractAddress": "8615dd7a691ab805874e089efdb10e8b0572cdc518387a662d8ea0baf6c356a6",
+    "contractName": "fund",
+    "networkId": "preview"
   }
 }

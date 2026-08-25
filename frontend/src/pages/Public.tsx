@@ -36,6 +36,18 @@ export function Public() {
 
       {error ? <p className="status error">Could not read the chain: {error}</p> : null}
 
+      {/* Zeroes that are really "we could not read it" are the worst kind of
+          wrong number on a page whose claim is that its figures are checkable. */}
+      {!loading && stats.unreadable > 0 ? (
+        <p className="status warn-line">
+          ⚠ {stats.unreadable} payroll contract
+          {stats.unreadable === 1 ? " was" : "s were"} deployed from an older
+          version of the contract and cannot be read by this build.{" "}
+          {stats.unreadable === 1 ? "Its figures are" : "Their figures are"} not
+          included in any total below.
+        </p>
+      ) : null}
+
       <h2 className="eyebrow">Network</h2>
       <div className="stats">
         <Stat
@@ -79,19 +91,12 @@ export function Public() {
         in — see <a href="#settlement">settlement asset</a> below.
       </p>
 
-      {/* The identity the system exists to make publicly checkable — with three
-          of its four terms absent, because the contract does not carry them.
-          Filling them in from a tax rate would be arithmetic performed by this
-          page, not a fact proved by a circuit, on the one page whose claim is
-          that its figures can be verified.
-
-          WHEN THE CONTRACT CARRIES ALL FOUR: delete both notes below and the
-          `pending` class, and fill the three dashed terms. The prose exists to
-          be transparent about a prototype; once the figures are real the strip
-          explains itself, and paragraphs of caveat around a working identity
-          would only make it look uncertain. */}
-      <section className="card pending">
-        <h2>Payroll breakdown — not yet in the contract</h2>
+      {/* The identity the system exists to make publicly checkable. Each term is
+          its own published total, read from the contract — this page does no
+          arithmetic, so a reader can check the four against each other and
+          catch us if they disagree. */}
+      <section className="card">
+        <h2>Payroll breakdown</h2>
         <div className="identity">
           <div className="term real">
             <span className="term-value">
@@ -100,36 +105,38 @@ export function Public() {
             <span className="term-label">Gross payroll filed</span>
           </div>
           <span className="op">=</span>
-          <div className="term">
-            <span className="term-value">—</span>
+          <div className="term real">
+            <span className="term-value">
+              {loading ? "…" : `€${formatPeur(stats.taxFiled)}`}
+            </span>
             <span className="term-label">Tax withheld</span>
           </div>
           <span className="op">+</span>
-          <div className="term">
-            <span className="term-value">—</span>
-            <span className="term-label">Social contributions assessed</span>
+          <div className="term real">
+            <span className="term-value">
+              {loading ? "…" : `€${formatPeur(stats.socialFiled)}`}
+            </span>
+            <span className="term-label">Social contributions</span>
           </div>
           <span className="op">+</span>
-          <div className="term">
-            <span className="term-value">—</span>
-            <span className="term-label">Net payroll due</span>
+          <div className="term real">
+            <span className="term-value">
+              {loading ? "…" : `€${formatPeur(stats.netFiled)}`}
+            </span>
+            <span className="term-label">Net payroll</span>
           </div>
         </div>
         <p className="note">
-          This is the property worth having: anyone can check that gross equals
-          tax plus contributions plus net, across every employer, without seeing
-          a single worker's figures. It is not claimed yet. The contract commits
-          to <em>one</em> amount per employee — the roster's gross salary — and
-          pays it out whole, so nothing is withheld and the three right-hand
-          terms have no on-chain source. Adding them means four separately
-          committed vectors instead of one, and a circuit that proves the sum:
-          a contract change and a redeploy.
+          Anyone can check that gross equals tax plus contributions plus net,
+          across every employer, without seeing a single worker's figures. The
+          circuit enforces the identity <em>per employee</em>, not only on these
+          totals — balancing an overstatement for one worker against an
+          understatement for another would satisfy the sums and lie about both.
         </p>
         <p className="note">
-          The labels are deliberate. <em>Assessed</em> and <em>due</em> are what
-          a payroll filing can prove; <em>received</em> and <em>paid</em> would
-          need contracts that actually take custody of the money, and those do
-          not exist either.
+          The amounts are not filed by employers. They are computed inside the
+          circuit from the gross salary and a published rule set, so an employer
+          can neither choose a rate nor pick a cheaper version of the rules.
         </p>
       </section>
 
@@ -168,7 +175,7 @@ export function Public() {
           dashboard that invents its figures would break exactly the promise the
           rest of the page is making. */}
       <section className="card pending">
-        <h2>Not yet deployed</h2>
+        <h2>Collected — benefits not yet built</h2>
         <div className="flow">
           <span>Contributions</span>
           <span className="arrow">→</span>
@@ -177,29 +184,36 @@ export function Public() {
           <span>Benefits</span>
         </div>
 
-        {/* The four metrics named but not filled. The shape of the answer is
-            real information; a made-up number in its place would not be, and
-            this page's whole claim is that its figures can be checked. */}
         <div className="stats pending-stats">
-          {[
-            "Contributions received",
-            "Benefits paid",
-            "Fund balance",
-            "Claims settled",
-          ].map((label) => (
-            <div className="stat" key={label}>
-              <div className="stat-value">—</div>
-              <div className="stat-label">{label}</div>
+          <div className="stat">
+            <div className="stat-value">
+              {loading ? "…" : `€${formatPeur(stats.taxHeld + stats.taxRemitted)}`}
             </div>
-          ))}
+            <div className="stat-label">Tax collected</div>
+          </div>
+          <div className="stat">
+            <div className="stat-value">
+              {loading ? "…" : `€${formatPeur(stats.socialHeld + stats.socialRemitted)}`}
+            </div>
+            <div className="stat-label">Contributions collected</div>
+          </div>
+          <div className="stat">
+            <div className="stat-value">—</div>
+            <div className="stat-label">Benefits paid</div>
+          </div>
+          <div className="stat">
+            <div className="stat-value">—</div>
+            <div className="stat-label">Claims settled</div>
+          </div>
         </div>
 
         <p className="note">
-          Pooled totals, with no individual recoverable — that is what makes a
-          fund's solvency checkable by anyone without exposing a single claimant.
-          They are blank because the fund and claim contracts are not built, so
-          there is nothing on chain to sum. Every figure above this line can be
-          checked against the contracts below; these four would be decoration.
+          The two collected figures are real: tax and contributions are withheld
+          into each payroll contract's own pools and remitted monthly to the
+          treasury, so what is held plus what has gone onward must equal what was
+          assessed. Anyone can check that per employer without seeing a salary.
+          Benefits and claims are blank because nothing pays them yet — that is
+          the claim circuit, and it does not exist.
         </p>
       </section>
 

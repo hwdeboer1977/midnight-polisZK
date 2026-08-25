@@ -1,0 +1,425 @@
+pragma language_version >= 0.16;
+
+import CompactStandardLibrary;
+
+// The unemployment fund.
+//
+// A claimant proves two things and discloses neither: that she was employed for
+// long enough, and what her final salary was. The benefit derives from that
+// salary. Nobody is recorded as unemployed anywhere — there is no claimant
+// list, no status field, and nothing an observer can enumerate to find one.
+//
+// Why this is a separate contract, and what that costs. A payroll contract
+// cannot call this one and this one cannot read a payroll ledger: both were
+// probed and both are walls (see probe/probe_xcall.compact, probe_xread.compact).
+// So the fund cannot look up the commitment it needs to check a claim against.
+// It has to be told, by a relay, and that relay is trusted to be faithful. What
+// is ENFORCED here is that the claimant knows an opening matching something the
+// fund was told; that the thing it was told is a true copy of payroll state is
+// publicly verifiable by anyone with an indexer, and not enforced. Stating that
+// the other way round would be a lie about what a proof proves.
+
+// The anonymity set is what makes a claim safe to make, so it is worth being
+// explicit about its shape. Anchors are published as ONE Merkle root per
+// period, over every accredited employer on the platform — not per employer,
+// and not per employee. A claim discloses the period its attestation names and
+// nothing else, so a claimant is indistinguishable from everyone terminated in
+// the same month anywhere on the platform. A root per employer would undo that
+// by making the disclosed root name the employer.
+//
+// `NoLeafHash` rather than `merkleTreePathRoot`, and the difference is not
+// cosmetic: the latter hashes the leaf again under a "mdn:lh" domain separator
+// before folding, so a tree built over plain leaf digests verifies against
+// nothing. The leaf here is already `persistentHash<ClaimLeaf>`, so the extra
+// hash would buy no separation and cost a constraint. Caught by
+// tests/claim-tree.test.mjs, which is the only reason it was caught at all.
+//
+// This is also why membership is proved with a path rather than a map lookup.
+// A `Map` lookup takes a public key, and every candidate key here is
+// enumerable from public payroll state — instance, period and slot are all
+// published — so a lookup would announce exactly which slot of which employer
+// the claim was for. The path is a witness; only the root and the period are
+// public.
+struct BenefitParams {
+  version: Uint<16>;
+  validFrom: Uint<32>;
+  // The cap on the monthly gross the benefit is computed from. Real WW caps a
+  // daily wage; this caps its monthly equivalent, and the figure is a policy
+  // input that must be sourced rather than chosen here.
+  maxMonthlyGross: Uint<60>;
+  // Basis points of the capped gross. Real WW steps this down after the opening
+  // months, which this version does not model — see the honesty note on `claim`.
+  rate: Uint<16>;
+  // Months of employment required. Twelve, under the rules this models.
+  minMonths: Uint<16>;
+}
+
+// What a claimant proves membership of.
+//
+// One leaf per terminated employee, built by the relay from public payroll
+// state plus the employer's termination attestation. Every field is a witness
+// at claim time: the leaf hash is what enters the tree, so none of this is
+// disclosed by proving membership.
+struct ClaimLeaf {
+  // That period's salary commitment, copied from `commitmentsFor[p][slot]`.
+  // Copied rather than re-attested on purpose: an employer who wants to inflate
+  // a final salary has to do it in the month itself, where it moves the
+  // employer's own published `totalPayrollFor` and is assessed for tax and
+  // contribution. The attack stays possible and stops being free.
+  commitment: Bytes<32>;
+  // `payeeFor[p][slot]`, which is what ties the leaf to a wallet without naming
+  // one. Only the holder of that key can reproduce it.
+  payeeBinding: Bytes<32>;
+  // hash(claimKey), anchored when she was hired. Without it a claimant could
+  // invent a fresh claimKey per claim and mint an endless series of distinct
+  // nullifiers, each looking unspent.
+  claimKeyHash: Bytes<32>;
+  // The employer's attestation, and the reason the claimant cannot shop for her
+  // best month: the final period is named by the employer, and the commitment
+  // in this leaf is that period's.
+  finalPeriod: Uint<32>;
+  monthsWorked: Uint<16>;
+  // The payroll instance, so a leaf cannot be replayed against another one.
+  instance: Bytes<32>;
+}
+
+// Declared identically to payroll.compact's, because the claim recomputes a
+// commitment that payroll's circuit produced. A reordered or retyped field here
+// stops every claim from opening, silently.
+struct PayrollCommitment {
+  gross: Uint<60>;
+  tax: Uint<60>;
+  social: Uint<60>;
+  net: Uint<60>;
+  weeks: Uint<8>;
+  period: Uint<32>;
+  employer: ZswapCoinPublicKey;
+  paramsHash: Bytes<32>;
+  nonce: Bytes<32>;
+}
+
+// Likewise.
+struct PayeeBinding {
+  payee: ZswapCoinPublicKey;
+  period: Uint<32>;
+  instance: Bytes<32>;
+}
+
+// The nullifier's preimage.
+//
+// Keyed on a SECRET. The obvious construction — hash(domain, ownPublicKey,
+// window) — is computable by anyone who has ever been given her coin public
+// key, which is an address she hands out to be paid. They would enumerate
+// windows, test membership, and read her benefit history off a public Set. It
+// is the single most sensitive fact in the system and it would be recoverable
+// by every employer she ever had.
+// Identifies one author's publication of one root, so two authors publishing
+// for the same period cannot collide and neither can lock the other out.
+struct RootAuthorSlot {
+  author: ZswapCoinPublicKey;
+  period: Uint<32>;
+  root: Field;
+}
+
+struct ClaimNullifier {
+  claimKey: Bytes<32>;
+  window: Uint<32>;
+  fund: Bytes<32>;
+}
+
+export ledger platform: ZswapCoinPublicKey;
+
+// version -> persistentHash(BenefitParams). Append-only, for the same reason
+// the tax registry is: a benefit computed under rules that can be rewritten
+// afterwards proves nothing about what anyone was entitled to.
+export ledger paramsFor: Map<Uint<16>, Bytes<32>>;
+export ledger latestVersion: Uint<16>;
+
+// period -> the root of that period's claim tree.
+//
+// A `Field` rather than `Bytes<32>` because that is what `merkleTreePathRoot`
+// returns, and converting at every comparison would be a chance to convert
+// inconsistently.
+export ledger rootFor: Map<Uint<32>, Field>;
+// Who published it. Publication is permissionless — a single privileged relay
+// could block a claim by simply declining to publish, which is indistinguishable
+// from an outage — and forgery is unprevented either way, so opening the write
+// costs nothing that was being protected. What it buys is that a refusal to
+// publish is no longer fatal. Recorded per period per author so nobody can
+// occupy a period's slot with garbage and lock others out.
+export ledger rootAuthor: Map<Bytes<32>, ZswapCoinPublicKey>;
+
+// Spent nullifiers. Public, and safe to be: each is the image of a secret, so
+// the set is a list of opaque values that nothing links to a person.
+export ledger spent: Set<Bytes<32>>;
+
+// Public totals. Deliberately coarse — how many claims and how much has been
+// paid, never who or how much each.
+export ledger claimsPaid: Counter;
+export ledger benefitToken: Bytes<32>;
+export ledger benefitTokenSet: Boolean;
+export ledger coinsReceived: Uint<32>;
+// Which leaf holds the pool's current coin. An ordinal, not a nonce and not a
+// value: enough for the fund's operator to reconstruct the coin they already
+// know the value of, and useless to anyone who does not.
+export ledger poolOrdinal: Uint<32>;
+
+constructor() {
+  platform = disclose(ownPublicKey());
+  latestVersion = 0;
+  benefitTokenSet = false;
+  coinsReceived = 0;
+}
+
+// Publishes a rule set. Platform-only and write-once per version.
+export circuit publishParams(params: BenefitParams): [] {
+  assert(ownPublicKey() == platform, "only the platform may publish rules");
+  const v = disclose(params.version);
+  assert(v > 0, "version must be positive");
+  assert(!paramsFor.member(v), "that version is already published");
+  assert(disclose(params.rate) <= 10000, "rate cannot exceed 100%");
+  assert(disclose(params.minMonths) > 0, "eligibility needs a minimum");
+
+  paramsFor.insert(v, persistentHash<BenefitParams>(disclose(params)));
+  if (v > latestVersion) {
+    latestVersion = v;
+  }
+}
+
+// Publishes one period's claim tree. Open to anyone; see `rootAuthor`.
+export circuit publishRoot(period: Uint<32>, root: Field): [] {
+  const p = disclose(period);
+  assert(p >= 200001, "period must be YYYYMM");
+  assert(p <= 299912, "period must be YYYYMM");
+
+  const author = disclose(ownPublicKey());
+  const slot = persistentHash<RootAuthorSlot>(
+    RootAuthorSlot { author: author, period: p, root: disclose(root) }
+  );
+  assert(!rootAuthor.member(slot), "you have already published that root");
+  rootAuthor.insert(slot, author);
+
+  // The platform's root is the one claims check against today. Widening this
+  // to accept another author is a policy change, not a contract change: the
+  // roots are all here and attributable.
+  if (author == platform) {
+    rootFor.insert(p, disclose(root));
+  }
+}
+
+// Takes in money to pay benefits with.
+//
+// Contributions cannot arrive here automatically: a payroll contract cannot
+// call this one, so a remittance is a transfer to a key, and funding the fund
+// is a deliberate transaction by whoever holds it.
+export circuit fundBenefits(coin: ShieldedCoinInfo): [] {
+  if (!benefitTokenSet) {
+    benefitToken = disclose(coin.color);
+    benefitTokenSet = true;
+  }
+  assert(benefitToken == disclose(coin.color), "wrong token for this fund");
+
+  receiveShielded(disclose(coin));
+  poolOrdinal = coinsReceived;
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
+}
+
+// Claims a month's benefit.
+//
+// ⚠️ SIMPLIFICATION, stated rather than buried. Real WW computes a dagloon from
+// SV-loon across a reference year, precisely because one month can be distorted
+// by a bonus, overtime, or a partial month worked. Deriving from the final
+// month alone is more manipulable than that, and the mitigations not built here
+// are: capping the final gross against the accumulated average, or taking the
+// median of the last three. What IS built is the cap below, and the structural
+// deterrent noted on `ClaimLeaf.commitment` — inflating a final salary is
+// public in the employer's own totals and is assessed for tax and contribution,
+// so the attack is priced rather than free.
+//
+// The rate is also flat here, where the real scheme steps it down after the
+// opening months. That belongs in `BenefitParams` as a schedule and is not
+// modelled.
+//
+// What is disclosed by calling this: the period, the params version, the
+// nullifier, and that a claim happened. Not the employer, not the slot, not the
+// salary, not the benefit paid.
+export circuit claim(
+  path: MerkleTreePath<16, Bytes<32>>,
+  leaf: ClaimLeaf,
+  // The final month's opening. `gross` is the only figure the benefit uses; the
+  // rest are here because the commitment binds all of them and cannot be opened
+  // without them.
+  gross: Uint<60>,
+  tax: Uint<60>,
+  social: Uint<60>,
+  net: Uint<60>,
+  weeks: Uint<8>,
+  employer: ZswapCoinPublicKey,
+  payrollParamsHash: Bytes<32>,
+  nonce: Bytes<32>,
+  claimKey: Bytes<32>,
+  window: Uint<32>,
+  params: BenefitParams,
+  // The floor division the benefit needs, pinned below. Compact has no division
+  // operator, so the quotient is supplied and the circuit admits exactly one.
+  benefitQ: Uint<60>,
+  coin: QualifiedShieldedCoinInfo
+): [] {
+  const version = disclose(params.version);
+  assert(paramsFor.member(version), "no such rule set");
+  assert(
+    paramsFor.lookup(version) == persistentHash<BenefitParams>(disclose(params)),
+    "those are not the published rules for that version"
+  );
+
+  const p = disclose(leaf.finalPeriod);
+  assert(disclose(params.validFrom) <= p, "that rule set does not apply yet");
+  assert(rootFor.member(p), "no claim tree published for that period");
+
+  // Membership, as a witness. The leaf is never disclosed, so proving it is in
+  // the tree says only "somebody terminated that month is claiming".
+  assert(
+    path.leaf == persistentHash<ClaimLeaf>(disclose(leaf)),
+    "that leaf does not match what was supplied"
+  );
+  assert(
+    merkleTreePathRootNoLeafHash<16>(path).field == rootFor.lookup(p),
+    "that leaf is not in the published claim tree for that period"
+  );
+
+  // Eligibility. Attested by the employer inside the leaf rather than counted
+  // here: the fund cannot read a payroll ledger to count for itself, and a
+  // public per-person counter would be a tenure record keyed to one worker.
+  // Auditable after the fact — the period count really is public.
+  assert(leaf.monthsWorked >= params.minMonths, "not enough months of employment");
+
+  // Hers. Only the holder of the coin key that payroll filed can produce this,
+  // which is what stops the employer who wrote the attestation from spending it.
+  assert(
+    leaf.payeeBinding ==
+      persistentHash<PayeeBinding>(
+        PayeeBinding { payee: ownPublicKey(), period: p, instance: leaf.instance }
+      ),
+    "that leaf was not filed for this wallet"
+  );
+
+  // And the claim key is the one anchored for her at hire.
+  assert(
+    leaf.claimKeyHash == persistentHash<Bytes<32>>(claimKey),
+    "that claim key is not the one anchored for this claimant"
+  );
+
+  // The final salary, opened against the commitment payroll published for that
+  // month. This is the figure the benefit derives from.
+  assert(
+    leaf.commitment ==
+      persistentHash<PayrollCommitment>(
+        PayrollCommitment {
+          gross: gross, tax: tax, social: social, net: net,
+          weeks: weeks, period: p, employer: employer,
+          paramsHash: payrollParamsHash, nonce: nonce
+        }
+      ),
+    "the figures do not open that month's commitment"
+  );
+
+  // B = min(gross, cap) x rate. The cap first, then the rate.
+  const capped = gross < params.maxMonthlyGross ? gross : params.maxMonthlyGross;
+  const numerator = (capped as Uint<76>) * (params.rate as Uint<76>);
+  assert((benefitQ as Uint<76>) * 10000 <= numerator, "benefit quotient too small");
+  assert(numerator < ((benefitQ as Uint<76>) + 1) * 10000, "benefit quotient too large");
+  assert(benefitQ > 0, "the benefit rounds to nothing");
+
+  // Once per window. Fresh-then-inserted, so a replay inside one transaction
+  // cannot slip through between the two.
+  const nullifier = persistentHash<ClaimNullifier>(
+    ClaimNullifier {
+      claimKey: claimKey,
+      window: disclose(window),
+      fund: kernel.self().bytes
+    }
+  );
+  assert(!spent.member(disclose(nullifier)), "already claimed for that window");
+  spent.insert(disclose(nullifier));
+
+  assert(benefitTokenSet, "the fund holds nothing yet");
+  assert(benefitToken == disclose(coin.color), "wrong token for this fund");
+  // At least, not exactly — and the difference is what makes a private benefit
+  // payable at all.
+  //
+  // Payroll requires an exact coin and documents the remainder as stranded.
+  // That is true there and false here, because the two are spending under
+  // different rules: `sendShielded` itself splits. It derives the change coin's
+  // nonce from the input's, creates it as an output back to this contract, and
+  // claims the receive — so the remainder is owned, not lost. Requiring an
+  // exact coin would mean sizing it to the benefit, and the benefit derives
+  // from a private salary, so whoever prepared the coin would have to be told
+  // the figure this contract exists to keep secret.
+  assert(coin.value >= benefitQ as Uint<128>, "the pool coin cannot cover the benefit");
+
+  const paid = sendShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    disclose(benefitQ) as Uint<128>
+  );
+
+  // The change's ordinal, so the pool can be found again. The nonce is NOT
+  // recorded: it is derivable from the spent coin's, and publishing it
+  // alongside the public coin commitment would let anyone try candidate values
+  // until one matched — recovering the pool balance, and with it every
+  // benefit, from the differences between claims.
+  if (paid.change.is_some) {
+    poolOrdinal = coinsReceived;
+    coinsReceived = (coinsReceived + 1) as Uint<32>;
+  }
+
+  claimsPaid.increment(1);
+}
+
+// ── Tree construction, exposed ───────────────────────────────────────────────
+//
+// The relay builds the period's tree off chain, and it must hash exactly as
+// `merkleTreePathRoot` does or every path it produces verifies against nothing.
+// Rather than reimplement `degradeToTransient` and `transientHash` in
+// TypeScript and hope they agree, the relay calls these — the same code the
+// claim circuit runs. This is the pattern payroll uses for `commitmentFor` and
+// `payeeHash`, for the same reason.
+
+/** The leaf hash that goes into the tree. */
+export pure circuit leafDigest(leaf: ClaimLeaf): Bytes<32> {
+  return persistentHash<ClaimLeaf>(leaf);
+}
+
+/** A leaf hash as the tree sees it. */
+export pure circuit treeLeaf(digest: Bytes<32>): Field {
+  return degradeToTransient(digest);
+}
+
+/** One interior node. */
+export pure circuit treeNode(leftNode: Field, rightNode: Field): Field {
+  return transientHash<Vector<2, Field>>([leftNode, rightNode]);
+}
+
+/**
+ * The root a path proves membership of, exposed so the relay can check its own
+ * work. A tree builder that hashes differently from the circuit produces paths
+ * that verify against nothing, and the failure surfaces at a claimant's claim —
+ * the worst possible place to discover it. Being able to assert
+ * `pathRoot(path) == root` in a test moves that discovery to the build.
+ */
+export pure circuit pathRoot(path: MerkleTreePath<16, Bytes<32>>): Field {
+  return merkleTreePathRootNoLeafHash<16>(path).field;
+}
+
+/**
+ * The claim-key hash anchored at hire, exposed so a claimant and an employer
+ * compute the identical value.
+ *
+ * `claim` asserts `leaf.claimKeyHash == persistentHash<Bytes<32>>(claimKey)`.
+ * Without this, the hash would have to be reimplemented off-circuit, and a
+ * mismatch would surface as a claimant unable to claim — with nothing to
+ * indicate whether the key, the anchor, or the hashing was wrong.
+ */
+export pure circuit claimKeyHash(claimKey: Bytes<32>): Bytes<32> {
+  return persistentHash<Bytes<32>>(claimKey);
+}

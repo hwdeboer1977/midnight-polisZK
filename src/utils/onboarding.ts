@@ -5,8 +5,11 @@ import { MidnightProviders } from "../providers/midnight-providers.js";
 import { EnvironmentManager } from "./environment.js";
 import { loadCompiledContract } from "./contract.js";
 import { deploymentKey, getDeployment, saveDeployment } from "./deployments.js";
+import { treasuryKeys } from "./treasury.js";
+import { DUTCH_V1 } from "./tax-params.js";
 import { hex, toPublicKey } from "./keys.js";
 import { recordRegistration } from "./registry.js";
+import { DEFAULT_WINDOW_MONTHS, ruleSetHash, ruleWindow } from "./rule-window.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./wallet.js";
 
 export interface OnboardResult {
@@ -86,10 +89,16 @@ export async function onboardEmployer(
       privateStateStoreName: `${key.replace(/[/:]/g, "-")}-state`,
     });
 
+    // The constructor freezes both treasury destinations, so self-service
+    // registration needs them too — without these the deploy fails at runtime
+    // with an arity error rather than anything that names the cause.
+    const treasuries = treasuryKeys();
+
     log("Deploying the payroll contract…");
     const deployed = await deployContract(providers as any, {
       compiledContract: compiledContract as any,
-    });
+      args: [treasuries.tax, treasuries.social],
+    } as any);
     const contractAddress = deployed.deployTxData.public.contractAddress;
     log(`Deployed at ${contractAddress}`);
 
@@ -101,6 +110,21 @@ export async function onboardEmployer(
       contractName: "payroll",
       instance: slug,
     });
+
+    // Before handing it over, open the window of months this contract can file.
+    //
+    // Platform-only, so it has to happen while the platform still has a reason
+    // to act on this instance. Assigning first would work — `setParamsFor` is
+    // gated on the platform, not the employer — but doing it after means an
+    // employer can be handed a contract that rejects every period they try,
+    // with an error about rule sets they have never heard of.
+    const hash = await ruleSetHash(network.networkId);
+    const window = ruleWindow(new Date(), DEFAULT_WINDOW_MONTHS);
+    log(`Recording the rule set for ${window.length} periods…`);
+    for (const period of window) {
+      await deployed.callTx.setParamsFor(BigInt(period), hash);
+      log(`   ${period} → rule set v${DUTCH_V1.version}`);
+    }
 
     log("Assigning the employer…");
     const assignTx = await deployed.callTx.assignEmployer(employer);

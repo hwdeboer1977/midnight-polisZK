@@ -47,8 +47,11 @@ export function EmployerOverview() {
 
   const countFor = (period: bigint) =>
     state?.employeeCountFor.member(period) ? Number(state.employeeCountFor.lookup(period)) : 0;
-  const grossFor = (period: bigint) =>
-    state?.totalPayrollFor.member(period) ? state.totalPayrollFor.lookup(period) : 0n;
+  const columnFor = (
+    map: { member(k: bigint): boolean; lookup(k: bigint): bigint } | undefined,
+    period: bigint
+  ) => (map?.member(period) ? map.lookup(period) : 0n);
+  const grossFor = (period: bigint) => columnFor(state?.totalPayrollFor, period);
   const paidCount = (period: bigint) => {
     if (!state?.paidFor.member(period)) return 0;
     const flags = state.paidFor.lookup(period);
@@ -140,18 +143,16 @@ export function EmployerOverview() {
               <div className="k">Employees</div>
               <div className="v">{group(BigInt(countFor(latest)))}</div>
             </div>
-            {/* The third line used to be three rows of dashes for figures the
-                contract does not carry. This says what the system does instead
-                of what it does not — and it is the reason the other two rows are
-                the only ones that could ever be public. */}
-            <div className="row">
-              <div className="k">Privacy</div>
-              <div className="v">Individual salaries hidden</div>
-            </div>
 
             <div className="actions" style={{ marginTop: 16 }}>
               <Link className="button" to="/employer/payroll">
                 Run new payroll
+              </Link>
+              {/* Its own route, because a termination is not a step of running
+                  payroll and nobody looking for it would think to press
+                  "Run new payroll" to find it. */}
+              <Link className="button secondary" to="/employer/payroll#end-employment">
+                End employment
               </Link>
             </div>
           </section>

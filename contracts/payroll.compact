@@ -23,9 +23,71 @@ import CompactStandardLibrary;
 // they were paid, without the amount being public. The nonce is what stops the
 // commitment from being brute-forced: without it, hashing every plausible
 // salary would recover the amount.
-struct SalaryCommitment {
-  amount: Uint<60>;
+// The rule set a period is computed under.
+//
+// Declared here as well as in `taxparams` because contracts cannot read each
+// other — probed, not assumed. The two definitions MUST stay identical: the
+// registry publishes `persistentHash<TaxParams>(params)` and this contract
+// checks against it, so a reordered or retyped field would silently stop every
+// filing from matching a published version.
+struct TaxParams {
+  version: Uint<16>;
+  validFrom: Uint<32>;
+  threshold1: Uint<60>;
+  threshold2: Uint<60>;
+  rate1: Uint<16>;
+  rate2: Uint<16>;
+  rate3: Uint<16>;
+  maxContribBase: Uint<60>;
+  contribRate: Uint<16>;
+}
+
+// One commitment per employee, covering the whole line rather than a single
+// figure. Committing to gross alone would leave the split unprovable: an
+// employer could publish any tax total it liked and no commitment would
+// contradict it. Hashing all four together means the public column totals and
+// the per-employee openings cannot disagree.
+struct PayrollCommitment {
+  gross: Uint<60>;
+  tax: Uint<60>;
+  social: Uint<60>;
+  net: Uint<60>;
+  // Weeks worked in the period. Recorded so a claim circuit can reason about
+  // partial months; deliberately NOT an input to the tax calculation, because
+  // no proration rule has been specified and inventing one here would put a
+  // number into everyone's payslip that nobody chose.
+  weeks: Uint<8>;
+  // Bound inside the hash so an attestation cannot be replayed into another
+  // month or another employer's instance, and so a claim can prove WHICH rules
+  // produced it.
+  period: Uint<32>;
+  employer: ZswapCoinPublicKey;
+  paramsHash: Bytes<32>;
   nonce: Bytes<32>;
+}
+
+// What `payeeFor` commits to: a recipient, bound to one slot of one contract.
+//
+// The period and the address are what stop the same person hashing to the same
+// value twice. Both are public, so an employee can still recompute their own
+// bindings and find their periods — which is the whole point of publishing a
+// hash rather than nothing.
+// What a termination attestation binds. Declared here and in fund.compact, and
+// the two must stay identical: payroll publishes the hash, the fund's claim
+// checks a leaf built from the opening, and a reordered field would stop every
+// claim from verifying with nothing to indicate why.
+struct Termination {
+  finalPeriod: Uint<32>;
+  monthsWorked: Uint<16>;
+  claimKeyHash: Bytes<32>;
+  nonce: Bytes<32>;
+}
+
+struct PayeeBinding {
+  payee: ZswapCoinPublicKey;
+  period: Uint<32>;
+  // `contract` is a reserved word in Compact, hence the name.
+  instance: Bytes<32>;
 }
 
 // Whoever deployed this instance. Its only power is naming the employer, and
@@ -42,6 +104,17 @@ struct SalaryCommitment {
 // per employee, so a roster of ten costs eleven proofs to fund and pay.
 
 export ledger platform: ZswapCoinPublicKey;
+
+// Where withheld money goes, fixed when the contract is deployed and never
+// settable again.
+//
+// Fixed rather than assignable on purpose. Remitting is the one action that
+// moves money the employer has already parted with and the employee never
+// owned, so whoever can trigger it must not also be able to choose where it
+// lands. With the destinations frozen at deploy, a remit circuit is safe to
+// expose to either party: the worst either can do is pay the treasury early.
+export ledger taxTreasury: ZswapCoinPublicKey;
+export ledger socialTreasury: ZswapCoinPublicKey;
 
 // The employer this instance belongs to. Meaningless until `employerAssigned`.
 export ledger employer: ZswapCoinPublicKey;
@@ -63,7 +136,27 @@ export ledger latestPeriod: Uint<32>;
 
 // period -> aggregates for that period.
 export ledger employeeCountFor: Map<Uint<32>, Uint<8>>;
+
+// The four column totals for a period. Gross is what employment cost; the other
+// three are where it went.
+//
+// Public together on purpose: the identity gross = tax + social + net is
+// checked in-circuit per employee, so anyone can verify at the aggregate level
+// that the withholding adds up — across every employer — without a single
+// individual figure being readable.
 export ledger totalPayrollFor: Map<Uint<32>, Uint<64>>;
+export ledger totalTaxFor: Map<Uint<32>, Uint<64>>;
+export ledger totalSocialFor: Map<Uint<32>, Uint<64>>;
+export ledger totalNetFor: Map<Uint<32>, Uint<64>>;
+
+// period -> the hash of the rule set that period must be computed under.
+//
+// Written by the platform before the employer files, because this contract
+// cannot read the registry to look it up — cross-contract reads do not exist.
+// That is a trusted step, and a visible one: anyone can check the recorded hash
+// against the published version. The alternative was letting the employer name
+// their own rule set, which hands them the cheapest one.
+export ledger paramsHashFor: Map<Uint<32>, Bytes<32>>;
 
 // period -> employee index -> commitment to (salary, nonce). Public, but
 // reveals nothing about the amount.
@@ -76,20 +169,42 @@ export ledger commitmentsFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
 // the ability to demonstrate what anyone was ever paid — silently, and with no
 // way to reconstruct it.
 //
-// 68 bytes is AES-256-GCM: a 12-byte IV, 40 bytes of ciphertext over the salary
-// and nonce, and a 16-byte tag. The contract treats it as opaque and cannot
+// 100 bytes is AES-256-GCM: a 12-byte IV, 72 bytes of ciphertext, and a 16-byte
+// tag. The plaintext is the four amounts (8 bytes each), the weeks worked
+// (8 bytes, padded from Uint<8> to keep the layout aligned) and the 32-byte
+// nonce.
+//
+// Weeks has to be in here. Everything else the commitment binds is recoverable
+// from chain — the period, the employer and the rule-set hash are all public —
+// but weeks is private and appears nowhere else, so without it the employer
+// cannot reopen their own commitment. The contract treats it as opaque and cannot
 // check that it decrypts to the matching commitment. That is deliberate rather
 // than overlooked: verifying it would mean doing the decryption in-circuit, and
 // the only party who can be harmed by a bad blob is the employer who wrote it —
 // they alone hold the key, and they alone need the backup.
-export ledger sealedFor: Map<Uint<32>, Map<Uint<8>, Bytes<68>>>;
+export ledger sealedFor: Map<Uint<32>, Map<Uint<8>, Bytes<100>>>;
 
-// period -> employee index -> hash of the recipient's coin public key.
+// period -> employee index -> a hash binding the recipient to this slot.
 //
 // A hash, not the key. A public map of the keys on this employer's payroll
 // would publish the employment relationships that everything else here exists
 // to hide, and the contract only ever needs to *check* a recipient, never to
 // name one — so the preimage can stay in the employer's spreadsheet.
+//
+// Hashing the key ALONE was not enough. A coin public key is handed out freely
+// — an employee gives it to their employer, and to anyone else who might pay
+// them — and H(key) is the same value in every period of every instance. One
+// hash therefore matched a person everywhere at once: their whole employment
+// history, across employers, readable by anyone who had ever been given their
+// key. Worse, no key was needed to see the shape of it, because equal hashes
+// across contracts announce "same person" on their own.
+//
+// Binding the hash to the period and to this contract's address makes every
+// slot a distinct value, so the correlation disappears. What it does not do is
+// hide a targeted lookup: someone who knows a specific key can still compute
+// the binding for a period they name and test it. The search space is small and
+// this is not zero-knowledge — it removes bulk linkage, not the ability to
+// check a guess.
 export ledger payeeFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
 
 // period -> employee index -> whether that slot has been funded.
@@ -105,6 +220,25 @@ export ledger fundedFor: Map<Uint<32>, Map<Uint<8>, Boolean>>;
 // would send a second coin for the same commitment. It reveals which slots are
 // settled but never for how much.
 export ledger paidFor: Map<Uint<32>, Map<Uint<8>, Boolean>>;
+
+// period -> employee index -> the employer's statement that employment ended.
+//
+// A commitment, not the facts. What it binds is the final period, how many
+// months were worked, and a hash of the claimant's claim key — and every one of
+// those is kept out of public state deliberately. `monthsWorked` published per
+// slot would be a tenure record for a worker; a claim-key hash published per
+// slot would be a stable per-person handle, and a worker using one key at two
+// employers would appear as the same value in both, rebuilding exactly the
+// cross-employer linkage `payeeFor` gives up convenience to prevent.
+//
+// The opening goes to the fund's relay off chain, the same way a payslip goes
+// to the employee. What being on chain buys is that the employer cannot revise
+// the statement afterwards, and that a claim resting on it is auditable against
+// a value they signed at the time.
+//
+// The employer states a fact they cannot spend: claiming against this needs the
+// payee's own key, which `payeeFor` binds and this contract never holds.
+export ledger terminationFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
 
 // period -> how many times that period has been filed.
 //
@@ -145,12 +279,59 @@ export ledger coinOrdinalFor: Map<Uint<32>, Map<Uint<8>, Uint<32>>>;
 export ledger payToken: Bytes<32>;
 export ledger payTokenSet: Boolean;
 
-constructor() {
+// Withheld money held by this contract, in minor units.
+//
+// The tax is collected here and kept here rather than forwarded per employee.
+// One remittance a month costs one transaction instead of N, and the money is
+// under the contract's own accounting the whole time — there is no window in
+// which it sits at an address nobody has committed to.
+//
+// Public, deliberately. What a period withheld is already public in
+// `totalTaxFor`; what is still held and what has left are the two figures that
+// make the first one checkable. Nothing individual is derivable from any of
+// them.
+export ledger taxPool: Uint<64>;
+export ledger socialPool: Uint<64>;
+export ledger taxRemitted: Uint<64>;
+export ledger socialRemitted: Uint<64>;
+
+// period -> whether this period's withholding has been funded into the pools.
+export ledger withheldFor: Map<Uint<32>, Boolean>;
+
+// Which of this contract's coins holds a period's tax and social contribution.
+// Same reason as `coinOrdinalFor`: remitting has to find the coin, not guess.
+export ledger taxCoinFor: Map<Uint<32>, Uint<32>>;
+export ledger socialCoinFor: Map<Uint<32>, Uint<32>>;
+
+constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
   platform = disclose(ownPublicKey());
   employerAssigned = false;
   latestPeriod = 0;
   payTokenSet = false;
   coinsReceived = 0;
+
+  taxTreasury = disclose(taxTo);
+  socialTreasury = disclose(socialTo);
+  taxPool = 0;
+  socialPool = 0;
+  taxRemitted = 0;
+  socialRemitted = 0;
+}
+
+// Records which published rule set a period must be filed under.
+//
+// Platform-only, and write-once per period: changing it after a filing would
+// retroactively alter what the employer already committed to, which is the
+// exact failure the append-only registry exists to prevent.
+export circuit setParamsFor(period: Uint<32>, hash: Bytes<32>): [] {
+  assert(ownPublicKey() == platform, "only the platform may set the rule set");
+
+  const p = disclose(period);
+  assert(p >= 200001, "period must be YYYYMM, e.g. 202603");
+  assert(p <= 299912, "period must be YYYYMM, e.g. 202603");
+  assert(!paramsHashFor.member(p), "that period already has a rule set");
+
+  paramsHashFor.insert(p, disclose(hash));
 }
 
 // Hands the instance to its employer. Callable once, by the deployer only.
@@ -179,10 +360,17 @@ export circuit transferEmployer(newEmployer: ZswapCoinPublicKey): [] {
 // payroll, and the compiler rejects the assignment otherwise.
 export circuit setPayroll(
   period: Uint<32>,
-  salaries: Vector<2, Uint<60>>,
+  gross: Vector<2, Uint<60>>,
+  weeks: Vector<2, Uint<8>>,
+  // The floor-division quotients. Compact has no `/`, so the caller supplies
+  // each result and the circuit pins it: q * 10000 <= n < (q + 1) * 10000
+  // admits exactly one q. Supplying them is not a licence to choose them.
+  taxQ: Vector<2, Uint<60>>,
+  socialQ: Vector<2, Uint<60>>,
   nonces: Vector<2, Bytes<32>>,
-  sealedOpenings: Vector<2, Bytes<68>>,
-  payees: Vector<2, Bytes<32>>
+  sealedOpenings: Vector<2, Bytes<100>>,
+  payees: Vector<2, Bytes<32>>,
+  params: TaxParams
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
   assert(ownPublicKey() == employer, "only the employer may set payroll");
@@ -195,18 +383,105 @@ export circuit setPayroll(
   assert(p >= 200001, "period must be YYYYMM, e.g. 202603");
   assert(p <= 299912, "period must be YYYYMM, e.g. 202603");
 
-  // Compact has no mutable locals, so the sum is written out. It is computed
-  // inside the circuit: only the result crosses into public state.
-  const total = salaries[0] + salaries[1];
+  // The rule set. Recorded by the platform for this period, so the employer
+  // cannot pick a cheaper published version.
+  assert(paramsHashFor.member(p), "no rule set recorded for that period");
+  assert(
+    paramsHashFor.lookup(p) == persistentHash<TaxParams>(params),
+    "these are not the rules recorded for that period"
+  );
+  assert(disclose(params.validFrom) <= p, "that rule set does not apply yet");
+
+  const t1 = params.threshold1;
+  const t2 = params.threshold2;
+  const maxBase = params.maxContribBase;
+
+  // ── employee 0 ──────────────────────────────────────────────────────────
+  const g0 = gross[0];
+  const a1 = g0 < t1 ? g0 : t1;
+  const a2 = g0 <= t1 ? 0 : ((g0 < t2 ? g0 : t2) - t1) as Uint<60>;
+  const a3 = g0 <= t2 ? 0 : (g0 - t2) as Uint<60>;
+  const taxN0 =
+    (a1 as Uint<80>) * (params.rate1 as Uint<80>) +
+    (a2 as Uint<80>) * (params.rate2 as Uint<80>) +
+    (a3 as Uint<80>) * (params.rate3 as Uint<80>);
+  assert((taxQ[0] as Uint<80>) * 10000 <= taxN0, "tax quotient too small");
+  assert(taxN0 < ((taxQ[0] as Uint<80>) + 1) * 10000, "tax quotient too large");
+
+  const base0 = g0 < maxBase ? g0 : maxBase;
+  const socN0 = (base0 as Uint<80>) * (params.contribRate as Uint<80>);
+  assert((socialQ[0] as Uint<80>) * 10000 <= socN0, "contribution quotient too small");
+  assert(socN0 < ((socialQ[0] as Uint<80>) + 1) * 10000, "contribution quotient too large");
+
+  assert(taxQ[0] + socialQ[0] <= g0, "tax and contribution exceed gross");
+  const net0 = (g0 - taxQ[0] - socialQ[0]) as Uint<60>;
+
+  // ── employee 1 ──────────────────────────────────────────────────────────
+  const g1 = gross[1];
+  const c1 = g1 < t1 ? g1 : t1;
+  const c2 = g1 <= t1 ? 0 : ((g1 < t2 ? g1 : t2) - t1) as Uint<60>;
+  const c3 = g1 <= t2 ? 0 : (g1 - t2) as Uint<60>;
+  const taxN1 =
+    (c1 as Uint<80>) * (params.rate1 as Uint<80>) +
+    (c2 as Uint<80>) * (params.rate2 as Uint<80>) +
+    (c3 as Uint<80>) * (params.rate3 as Uint<80>);
+  assert((taxQ[1] as Uint<80>) * 10000 <= taxN1, "tax quotient too small");
+  assert(taxN1 < ((taxQ[1] as Uint<80>) + 1) * 10000, "tax quotient too large");
+
+  const base1 = g1 < maxBase ? g1 : maxBase;
+  const socN1 = (base1 as Uint<80>) * (params.contribRate as Uint<80>);
+  assert((socialQ[1] as Uint<80>) * 10000 <= socN1, "contribution quotient too small");
+  assert(socN1 < ((socialQ[1] as Uint<80>) + 1) * 10000, "contribution quotient too large");
+
+  assert(taxQ[1] + socialQ[1] <= g1, "tax and contribution exceed gross");
+  const net1 = (g1 - taxQ[1] - socialQ[1]) as Uint<60>;
+
+  // Each public total is the SUM OF THE PER-EMPLOYEE FIGURES, never a rate
+  // reapplied to the gross total. Floor division does not distribute, and the
+  // brackets are progressive, so taxing the sum gives a materially different —
+  // and wrong — number. The commitments hold the per-employee amounts, so
+  // these totals are what the pools must match.
+  const grossTotal = g0 + g1;
+  const taxTotal = taxQ[0] + taxQ[1];
+  const socialTotal = socialQ[0] + socialQ[1];
+  const netTotal = net0 + net1;
+  // Back into vectors so the loop below stays a loop.
+  const net = [net0, net1];
 
   // A period may be re-submitted — a correction to a month already filed is a
   // real thing that happens. It overwrites that period alone and leaves every
   // other month standing, which is the whole point of keying by period.
+  //
+  // But not while money is sitting against it. Re-filing resets `fundedFor` to
+  // false, and a coin already received stays in the contract with no way back
+  // out: nothing can mark that slot funded again except funding it a second
+  // time, which receives ANOTHER coin and overwrites `coinOrdinalFor`. The
+  // first one is then unreachable by any circuit here — not merely
+  // unaccounted, unspendable. `fileRoundFor` makes each round's coins distinct;
+  // it does not rescue the coins of the round before.
+  //
+  // So every slot must be paid or never funded before the month can be
+  // rewritten. A slot that is funded and unpaid has a coin waiting for it, and
+  // `payEmployee` settles slots one at a time, so there is always a way through.
+  if (fundedFor.member(p)) {
+    for (const i of 0..2) {
+      const idx = i as Uint<8>;
+      if (fundedFor.lookup(p).member(idx)) {
+        if (fundedFor.lookup(p).lookup(idx)) {
+          assert(
+            paidFor.lookup(p).member(idx) && paidFor.lookup(p).lookup(idx),
+            "this period has funded slots that are not paid — settle them before re-filing"
+          );
+        }
+      }
+    }
+  }
+
   if (!commitmentsFor.member(p)) {
     commitmentsFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
   }
   if (!sealedFor.member(p)) {
-    sealedFor.insert(p, default<Map<Uint<8>, Bytes<68>>>);
+    sealedFor.insert(p, default<Map<Uint<8>, Bytes<100>>>);
   }
   if (!payeeFor.member(p)) {
     payeeFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
@@ -231,8 +506,18 @@ export circuit setPayroll(
   for (const i of 0..2) {
     commitmentsFor.lookup(p).insert(
       i as Uint<8>,
-      disclose(persistentHash<SalaryCommitment>(
-        SalaryCommitment { amount: salaries[i], nonce: nonces[i] }
+      disclose(persistentHash<PayrollCommitment>(
+        PayrollCommitment {
+          gross: gross[i],
+          tax: taxQ[i],
+          social: socialQ[i],
+          net: net[i],
+          weeks: weeks[i],
+          period: p,
+          employer: employer,
+          paramsHash: paramsHashFor.lookup(p),
+          nonce: nonces[i]
+        }
       ))
     );
     // Written in the same circuit as the commitment it opens, so a period can
@@ -246,7 +531,10 @@ export circuit setPayroll(
   }
 
   periods.insert(p);
-  totalPayrollFor.insert(p, disclose(total));
+  totalPayrollFor.insert(p, disclose(grossTotal));
+  totalTaxFor.insert(p, disclose(taxTotal));
+  totalSocialFor.insert(p, disclose(socialTotal));
+  totalNetFor.insert(p, disclose(netTotal));
   employeeCountFor.insert(p, 2);
 
   // Only ever moves forward, so a correction filed for an old month does not
@@ -270,7 +558,11 @@ export circuit setPayroll(
 export circuit fundEmployee(
   period: Uint<32>,
   index: Uint<8>,
-  salary: Uint<60>,
+  gross: Uint<60>,
+  tax: Uint<60>,
+  social: Uint<60>,
+  net: Uint<60>,
+  weeks: Uint<8>,
   nonce: Bytes<32>,
   coin: ShieldedCoinInfo
 ): [] {
@@ -286,10 +578,14 @@ export circuit fundEmployee(
 
   assert(
     commitmentsFor.lookup(p).lookup(i) ==
-      persistentHash<SalaryCommitment>(
-        SalaryCommitment { amount: salary, nonce: nonce }
+      persistentHash<PayrollCommitment>(
+PayrollCommitment {
+          gross: gross, tax: tax, social: social, net: net,
+          weeks: weeks, period: p, employer: employer,
+          paramsHash: paramsHashFor.lookup(p), nonce: nonce
+        }
       ),
-    "salary and nonce do not open the commitment for that employee"
+    "the figures and nonce do not open the commitment for that employee"
   );
 
   if (!payTokenSet) {
@@ -297,7 +593,10 @@ export circuit fundEmployee(
     payTokenSet = true;
   }
   assert(payToken == disclose(coin.color), "wrong token for this payroll");
-  assert(coin.value == salary as Uint<128>, "coin does not hold the committed salary");
+  // Net, not gross: this coin is the employee's. Tax and the contribution are
+  // funded once for the whole period by `fundWithholding`, because they are
+  // owed to two destinations rather than to N people.
+  assert(coin.value == net as Uint<128>, "coin does not hold the committed net pay");
 
   receiveShielded(disclose(coin));
   fundedFor.lookup(p).insert(i, true);
@@ -324,7 +623,11 @@ export circuit fundEmployee(
 export circuit payEmployee(
   period: Uint<32>,
   index: Uint<8>,
-  salary: Uint<60>,
+  gross: Uint<60>,
+  tax: Uint<60>,
+  social: Uint<60>,
+  net: Uint<60>,
+  weeks: Uint<8>,
   nonce: Bytes<32>,
   coin: QualifiedShieldedCoinInfo,
   payee: ZswapCoinPublicKey
@@ -344,16 +647,23 @@ export circuit payEmployee(
   // paying a different figure than the one they published a commitment to.
   assert(
     commitmentsFor.lookup(p).lookup(i) ==
-      persistentHash<SalaryCommitment>(
-        SalaryCommitment { amount: salary, nonce: nonce }
+      persistentHash<PayrollCommitment>(
+PayrollCommitment {
+          gross: gross, tax: tax, social: social, net: net,
+          weeks: weeks, period: p, employer: employer,
+          paramsHash: paramsHashFor.lookup(p), nonce: nonce
+        }
       ),
-    "salary and nonce do not open the commitment for that employee"
+    "the figures and nonce do not open the commitment for that employee"
   );
 
   // And it must go to the person that slot was filed for, so marking a slot
   // paid cannot be done by sending the money somewhere else.
   assert(
-    payeeFor.lookup(p).lookup(i) == persistentHash<ZswapCoinPublicKey>(payee),
+    payeeFor.lookup(p).lookup(i) ==
+      persistentHash<PayeeBinding>(
+        PayeeBinding { payee: payee, period: p, instance: kernel.self().bytes }
+      ),
     "recipient is not the payee filed for that employee"
   );
 
@@ -368,15 +678,154 @@ export circuit payEmployee(
   // The coin must carry exactly the committed salary — not at least it, not a
   // convenient round number. Sending less than the coin holds would leave the
   // remainder stranded in the contract with nothing recording that it exists.
-  assert(coin.value == salary as Uint<128>, "coin does not hold the committed salary");
+  assert(coin.value == net as Uint<128>, "coin does not hold the committed net pay");
 
   sendShielded(
     disclose(coin),
     left<ZswapCoinPublicKey, ContractAddress>(disclose(payee)),
-    disclose(salary) as Uint<128>
+    disclose(net) as Uint<128>
   );
 
   paidFor.lookup(p).insert(i, true);
+}
+
+// Records that an employee's employment ended, as of a filed period.
+//
+// Write-once per slot: a termination that could be reissued would let an
+// employer restate the final month after seeing what it entitled someone to,
+// and the whole point of attesting on chain is that the statement is fixed
+// before anyone acts on it. Correcting one means re-filing the period, which
+// already has its own guards.
+export circuit endEmployment(
+  period: Uint<32>,
+  index: Uint<8>,
+  attestation: Bytes<32>
+): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(ownPublicKey() == employer, "only the employer may end employment");
+
+  const p = disclose(period);
+  const i = disclose(index);
+
+  assert(commitmentsFor.member(p), "no payroll filed for that period");
+  assert(commitmentsFor.lookup(p).member(i), "no such employee in that period");
+
+  if (!terminationFor.member(p)) {
+    terminationFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
+  }
+  assert(
+    !terminationFor.lookup(p).member(i),
+    "employment has already been ended for that employee"
+  );
+  terminationFor.lookup(p).insert(i, disclose(attestation));
+}
+
+// Moves a period's withheld tax and contribution into the contract's pools.
+//
+// One call for the period rather than one per employee: tax is owed to a
+// treasury, not to N people, and the amounts are already the SUM of the
+// committed per-employee figures — `totalTaxFor` and `totalSocialFor` were
+// accumulated that way in `setPayroll`, never recomputed from the gross total.
+// Checking against those totals is therefore checking against the commitments.
+//
+// The money stays here afterwards. Forwarding it per period would cost a
+// transaction each time and put it at an address before anyone has committed to
+// what it is; held in the pool it is under this contract's own accounting until
+// `remitTax` sends it on.
+export circuit fundWithholding(
+  period: Uint<32>,
+  taxCoin: ShieldedCoinInfo,
+  socialCoin: ShieldedCoinInfo
+): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(ownPublicKey() == employer, "only the employer may fund withholding");
+
+  const p = disclose(period);
+  assert(commitmentsFor.member(p), "no payroll filed for that period");
+  assert(!withheldFor.member(p) || !withheldFor.lookup(p), "already funded");
+
+  assert(payTokenSet, "fund an employee first — the pay token is not fixed yet");
+  assert(payToken == disclose(taxCoin.color), "wrong token for the tax coin");
+  assert(payToken == disclose(socialCoin.color), "wrong token for the contribution coin");
+
+  assert(
+    taxCoin.value == totalTaxFor.lookup(p) as Uint<128>,
+    "tax coin does not hold the tax assessed for that period"
+  );
+  assert(
+    socialCoin.value == totalSocialFor.lookup(p) as Uint<128>,
+    "contribution coin does not hold the contribution assessed for that period"
+  );
+
+  receiveShielded(disclose(taxCoin));
+  taxCoinFor.insert(p, coinsReceived);
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
+
+  receiveShielded(disclose(socialCoin));
+  socialCoinFor.insert(p, coinsReceived);
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
+
+  taxPool = (taxPool + totalTaxFor.lookup(p)) as Uint<64>;
+  socialPool = (socialPool + totalSocialFor.lookup(p)) as Uint<64>;
+  withheldFor.insert(p, true);
+}
+
+// Sends one period's withheld tax to the treasury, monthly.
+//
+// The destination is not an argument. It was fixed when this contract was
+// deployed, so triggering a remittance cannot redirect one — which is what
+// makes it safe to let either the employer or the platform call this.
+export circuit remitTax(period: Uint<32>, coin: QualifiedShieldedCoinInfo): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(
+    ownPublicKey() == employer || ownPublicKey() == platform,
+    "only the employer or the platform may remit"
+  );
+
+  const p = disclose(period);
+  assert(withheldFor.member(p) && withheldFor.lookup(p), "that period is not funded");
+  assert(taxCoinFor.member(p), "no tax coin recorded for that period");
+
+  const owed = totalTaxFor.lookup(p);
+  assert(payToken == disclose(coin.color), "wrong token for this payroll");
+  assert(coin.value == owed as Uint<128>, "coin does not hold that period's tax");
+
+  sendShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(taxTreasury),
+    disclose(owed) as Uint<128>
+  );
+
+  taxPool = (taxPool - owed) as Uint<64>;
+  taxRemitted = (taxRemitted + owed) as Uint<64>;
+  taxCoinFor.remove(p);
+}
+
+// The same for the social contribution, to its own treasury.
+export circuit remitSocial(period: Uint<32>, coin: QualifiedShieldedCoinInfo): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(
+    ownPublicKey() == employer || ownPublicKey() == platform,
+    "only the employer or the platform may remit"
+  );
+
+  const p = disclose(period);
+  assert(withheldFor.member(p) && withheldFor.lookup(p), "that period is not funded");
+  assert(socialCoinFor.member(p), "no contribution coin recorded for that period");
+
+  const owed = totalSocialFor.lookup(p);
+  assert(payToken == disclose(coin.color), "wrong token for this payroll");
+  assert(coin.value == owed as Uint<128>, "coin does not hold that period's contribution");
+
+  sendShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(socialTreasury),
+    disclose(owed) as Uint<128>
+  );
+
+  socialPool = (socialPool - owed) as Uint<64>;
+  socialRemitted = (socialRemitted + owed) as Uint<64>;
+  socialCoinFor.remove(p);
 }
 
 // Pays the whole period in one transaction.
@@ -396,7 +845,11 @@ export circuit payEmployee(
 // than a month that failed cleanly and can be retried.
 export circuit payPeriod(
   period: Uint<32>,
-  salaries: Vector<2, Uint<60>>,
+  gross: Vector<2, Uint<60>>,
+  tax: Vector<2, Uint<60>>,
+  social: Vector<2, Uint<60>>,
+  net: Vector<2, Uint<60>>,
+  weeks: Vector<2, Uint<8>>,
   nonces: Vector<2, Bytes<32>>,
   coins: Vector<2, QualifiedShieldedCoinInfo>,
   payees: Vector<2, ZswapCoinPublicKey>
@@ -415,44 +868,118 @@ export circuit payPeriod(
 
     assert(
       commitmentsFor.lookup(p).lookup(idx) ==
-        persistentHash<SalaryCommitment>(
-          SalaryCommitment { amount: salaries[i], nonce: nonces[i] }
+        persistentHash<PayrollCommitment>(
+          PayrollCommitment {
+            gross: gross[i], tax: tax[i], social: social[i], net: net[i],
+            weeks: weeks[i], period: p, employer: employer,
+            paramsHash: paramsHashFor.lookup(p), nonce: nonces[i]
+          }
         ),
-      "salary and nonce do not open the commitment for that employee"
+      "the figures and nonce do not open the commitment for that employee"
     );
     assert(
-      payeeFor.lookup(p).lookup(idx) == persistentHash<ZswapCoinPublicKey>(payees[i]),
+      payeeFor.lookup(p).lookup(idx) ==
+        persistentHash<PayeeBinding>(
+          PayeeBinding { payee: payees[i], period: p, instance: kernel.self().bytes }
+        ),
       "recipient is not the payee filed for that employee"
     );
     assert(payToken == disclose(coins[i].color), "wrong token for this payroll");
     assert(
-      coins[i].value == salaries[i] as Uint<128>,
-      "coin does not hold the committed salary"
+      coins[i].value == net[i] as Uint<128>,
+      "coin does not hold the committed net pay"
     );
 
     sendShielded(
       disclose(coins[i]),
       left<ZswapCoinPublicKey, ContractAddress>(disclose(payees[i])),
-      disclose(salaries[i]) as Uint<128>
+      disclose(net[i]) as Uint<128>
     );
     paidFor.lookup(p).insert(idx, true);
   }
+}
+
+// The three bracket bands for one gross salary, exposed so the client's copy of
+// this arithmetic can be tested against the real one.
+//
+// There are necessarily two implementations: Compact has no division, so
+// `setPayroll` cannot derive the tax itself — the caller computes it and the
+// circuit pins the quotient. That makes the TypeScript version load-bearing
+// rather than decorative, and two implementations of one calculation that must
+// agree exactly is the kind of thing that passes every demo and fails on the
+// one salary sitting exactly on a threshold.
+//
+// The division half is safe by construction: the circuit checks
+// q * 10000 <= n < (q + 1) * 10000, which admits one q, and BigInt `/` is floor
+// division, so both land on it whenever the numerator agrees. The exposure is
+// here, in the boundary branches — hence a circuit whose output a test can
+// compare against, rather than a reading of the source everyone hopes is right.
+export pure circuit bandsFor(
+  gross: Uint<60>,
+  threshold1: Uint<60>,
+  threshold2: Uint<60>
+): Vector<3, Uint<60>> {
+  const b1 = gross < threshold1 ? gross : threshold1;
+  const b2 = gross <= threshold1
+    ? 0
+    : ((gross < threshold2 ? gross : threshold2) - threshold1) as Uint<60>;
+  const b3 = gross <= threshold2 ? 0 : (gross - threshold2) as Uint<60>;
+  return [b1, b2, b3];
+}
+
+// Pure, so the employer's client builds an attestation with the contract's own
+// hash rather than a TypeScript reimplementation that could drift from Compact's
+// struct encoding — the same reason `commitmentFor` exists.
+export pure circuit terminationCommitment(
+  finalPeriod: Uint<32>,
+  monthsWorked: Uint<16>,
+  claimKeyHash: Bytes<32>,
+  nonce: Bytes<32>
+): Bytes<32> {
+  return persistentHash<Termination>(
+    Termination {
+      finalPeriod: finalPeriod,
+      monthsWorked: monthsWorked,
+      claimKeyHash: claimKeyHash,
+      nonce: nonce
+    }
+  );
 }
 
 // Pure, for the same reason `commitmentFor` is: the employer needs to compute
 // the payee hash locally when filing, and it must be the identical hash this
 // contract checks against — not a re-implementation in TypeScript that could
 // drift from the struct encoding Compact uses.
-export pure circuit payeeHash(payee: ZswapCoinPublicKey): Bytes<32> {
-  return persistentHash<ZswapCoinPublicKey>(payee);
+export pure circuit payeeHash(
+  payee: ZswapCoinPublicKey,
+  period: Uint<32>,
+  instance: Bytes<32>
+): Bytes<32> {
+  return persistentHash<PayeeBinding>(
+    PayeeBinding { payee: payee, period: period, instance: instance }
+  );
 }
 
 // Pure: touches no ledger state, so the compiler exposes it in `pureCircuits`
 // and it can be evaluated locally with no transaction. That gives the employer
 // a way to recompute a commitment from (salary, nonce) and check it against
 // what is on chain — using exactly the hash the circuit used.
-export pure circuit commitmentFor(amount: Uint<60>, nonce: Bytes<32>): Bytes<32> {
-  return persistentHash<SalaryCommitment>(
-    SalaryCommitment { amount: amount, nonce: nonce }
+export pure circuit commitmentFor(
+  gross: Uint<60>,
+  tax: Uint<60>,
+  social: Uint<60>,
+  net: Uint<60>,
+  weeks: Uint<8>,
+  period: Uint<32>,
+  employer: ZswapCoinPublicKey,
+  paramsHash: Bytes<32>,
+  nonce: Bytes<32>
+): Bytes<32> {
+  return persistentHash<PayrollCommitment>(
+    PayrollCommitment {
+      gross: gross, tax: tax, social: social, net: net,
+      weeks: weeks, period: period, employer: employer,
+      paramsHash: paramsHash, nonce: nonce
+    }
   );
 }

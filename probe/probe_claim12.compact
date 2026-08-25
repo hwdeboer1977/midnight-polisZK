@@ -1,0 +1,161 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+// Probe 7: will a twelve-month claim prove in tolerable time?
+//
+// The claim has to check, in one circuit, that twelve separate months each
+// belong to the claimant and each open an anchored commitment. That is 24
+// persistentHash calls over structs, plus a nullifier — against `setPayroll`,
+// which does 2 commitments plus 2 payee bindings and already takes minutes.
+// If the cost is roughly linear this is ~6x that, which is the number that
+// decides whether a claim is one transaction or twelve.
+//
+// Everything here mirrors the real shapes: same structs as payroll.compact, so
+// the hash cost is the hash cost the real circuit would pay.
+
+struct PayrollCommitment {
+  gross: Uint<60>;
+  tax: Uint<60>;
+  social: Uint<60>;
+  net: Uint<60>;
+  weeks: Uint<8>;
+  period: Uint<32>;
+  employer: ZswapCoinPublicKey;
+  paramsHash: Bytes<32>;
+  nonce: Bytes<32>;
+}
+
+struct PayeeBinding {
+  payee: ZswapCoinPublicKey;
+  period: Uint<32>;
+  instance: Bytes<32>;
+}
+
+// The nullifier's preimage. Keyed on a SECRET, never on the coin public key:
+// that key is an address the claimant hands out to be paid, so anyone holding
+// it could enumerate windows and read her benefit history off the Set.
+struct ClaimNullifier {
+  claimKey: Bytes<32>;
+  window: Uint<32>;
+  instance: Bytes<32>;
+}
+
+// Anchors, copied in from a payroll instance the fund cannot read. Keyed by
+// period only here — the real thing keys by author and employer too.
+export ledger commitmentAnchor: Map<Uint<32>, Bytes<32>>;
+export ledger payeeAnchor: Map<Uint<32>, Bytes<32>>;
+// hash(claimKey), anchored at hire. Without it a claimant could invent a fresh
+// claimKey per claim and mint an unlimited series of distinct nullifiers.
+export ledger claimAnchor: Map<Uint<32>, Bytes<32>>;
+export ledger spent: Set<Bytes<32>>;
+export ledger claims: Counter;
+
+export circuit claim12(
+  slot: Uint<32>,
+  periods: Vector<12, Uint<32>>,
+  gross: Vector<12, Uint<60>>,
+  tax: Vector<12, Uint<60>>,
+  social: Vector<12, Uint<60>>,
+  net: Vector<12, Uint<60>>,
+  weeks: Vector<12, Uint<8>>,
+  nonces: Vector<12, Bytes<32>>,
+  paramsHashes: Vector<12, Bytes<32>>,
+  employer: ZswapCoinPublicKey,
+  instance: Bytes<32>,
+  claimKey: Bytes<32>,
+  window: Uint<32>
+): [] {
+  // The claim key is the claimant's, proved by preimage against what was
+  // anchored when she was hired.
+  assert(
+    claimAnchor.lookup(disclose(slot)) == persistentHash<Bytes<32>>(claimKey),
+    "that claim key is not the one anchored for this claimant"
+  );
+
+  for (const i of 0..12) {
+    const p = disclose(periods[i]);
+
+    // She was employed that month: the anchored payee binding is the hash of
+    // HER key, which only she can produce, and which the employer cannot.
+    assert(
+      payeeAnchor.lookup(p) ==
+        persistentHash<PayeeBinding>(
+          PayeeBinding { payee: ownPublicKey(), period: p, instance: instance }
+        ),
+      "a period does not name this claimant"
+    );
+
+    // And the figures she supplies open that month's anchored commitment, so
+    // the contribution she is claiming on is the one that was withheld.
+    assert(
+      commitmentAnchor.lookup(p) ==
+        persistentHash<PayrollCommitment>(
+          PayrollCommitment {
+            gross: gross[i], tax: tax[i], social: social[i], net: net[i],
+            weeks: weeks[i], period: p, employer: employer,
+            paramsHash: paramsHashes[i], nonce: nonces[i]
+          }
+        ),
+      "the figures do not open that month's commitment"
+    );
+  }
+
+  // Written out rather than accumulated: Compact circuits have no mutable
+  // binding, which is the same reason setPayroll unrolls its two-employee sum.
+  const contributed =
+    (social[0] + social[1] + social[2] + social[3] + social[4] + social[5] +
+     social[6] + social[7] + social[8] + social[9] + social[10] + social[11]) as Uint<64>;
+  assert(contributed > 0, "no contributions across those twelve months");
+
+  const nullifier = persistentHash<ClaimNullifier>(
+    ClaimNullifier { claimKey: claimKey, window: disclose(window), instance: instance }
+  );
+  assert(!spent.member(disclose(nullifier)), "already claimed for that window");
+  spent.insert(disclose(nullifier));
+  claims.increment(1);
+}
+
+// ── RESULT ────────────────────────────────────────────────────────────────
+//
+// It compiles — 90 seconds — but the circuit is far too big to put in front of
+// a claimant. Prover keys, which are the honest proxy for constraint count and
+// therefore proving time:
+//
+//   fundEmployee      5.2 MB
+//   setPayroll       10.0 MB   (2 employees; minutes to prove)
+//   payPeriod        19.6 MB   (~90s of proving, measured)
+//   claim1            10.0 MB  ← one month, probe_claim1.compact
+//   claim12          76.5 MB   ← 7.7x claim1, 3.9x payPeriod
+//
+// Two independent problems, and the second is the one that kills it.
+//
+// Proving: ~4x payPeriod puts a claim in the several-minute range, on a
+// claimant's machine or in their wallet's prover.
+//
+// Download: `FetchZkConfigProvider` fetches the prover key into the browser
+// before proving can start. 76 MB is not a page load — on a phone it is a
+// non-starter, and a claimant is exactly the person likeliest to be on one.
+//
+// Scaling is linear rather than sublinear (7.7x work for 12x the months, with
+// the fixed nullifier and claim-key checks accounting for the difference), so
+// there is no batching win to chase here. Twelve one-month claims cost 120 MB
+// of key material in total against 77 MB for one — worse in aggregate, but paid
+// 10 MB at a time, which is the difference between feasible and not.
+//
+// So: claim per month, at `setPayroll`'s cost, which this app already pays
+// monthly. Note this is NOT a step toward folding — see probe_recursion.
+//
+// Two corrections to what this probe assumed when it was written:
+//
+//   - the unrolled sum below is unnecessary. `fold(add, 0, xs)` compiles, with
+//     a named circuit as the reducer, so a vector can be summed without
+//     writing out twelve terms. (`fold` is a language construct, which is why
+//     it is a reserved word.) setPayroll unrolls its two-employee sum for no
+//     reason either.
+//
+//   - `merkleTreePathRoot<N, T>(path)` is in the standard library and compiles,
+//     which changes the ANCHOR design rather than this circuit. The fund need
+//     not hold one anchor per (employer, period, slot): it can hold a single
+//     root per period, with the claimant supplying a path. Fund state and the
+//     relay's write burden drop from O(employees x periods) to O(periods), and
+//     the anchor stops growing with the number of employers on the platform.

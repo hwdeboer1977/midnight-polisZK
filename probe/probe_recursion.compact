@@ -1,0 +1,58 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+// Probe 8: can a circuit VERIFY a proof, so claims can be folded?
+//
+// This is the question behind the amortised-claim design. If one month's proof
+// can be verified inside the next month's circuit, a claimant carries a small
+// running commitment and never proves twelve months at once — and the
+// accumulator lives in her hands rather than as fund state keyed to her, which
+// is what keeps a claim history from being public.
+//
+// Without it, "prove one month at a time" is not a step toward folding. It is
+// just twelve independent claims.
+
+export ledger folded: Counter;
+
+// A proof and the statement it attests, as they would have to arrive: from the
+// claimant, as arguments. There is no proof TYPE in the language, so this is
+// the closest expressible shape — bytes plus the public inputs.
+export circuit foldClaim(
+  previousProof: Bytes<32>,
+  previousStatement: Bytes<32>,
+  verifierKey: Bytes<32>
+): [] {
+  // The operation this probe exists to look for. If a verification primitive
+  // exists under any name, it is in the standard library alongside
+  // persistentHash / transientHash / ecAdd / coinCommit.
+  assert(
+    verifyProof(previousProof, previousStatement, verifierKey),
+    "the carried proof does not verify"
+  );
+  folded.increment(1);
+}
+
+// ── RESULT ────────────────────────────────────────────────────────────────
+//
+// No. There is no proof-verification primitive under any name tried:
+//
+//   verifyProof  verify  checkProof  proofVerify  verifyProofPreimage
+//   snarkVerify  groth16Verify  verifyCircuit  recursiveVerify
+//   verifyTranscript
+//
+// each compiled to `unbound identifier`. The standard library's crypto surface
+// is hashing and curve arithmetic — persistentHash, transientHash, coinCommit,
+// leafHash, ecAdd — with nothing that consumes a proof.
+//
+// (Also learned: `fold` is a reserved word.)
+//
+// Consequence for the claim design. A carried accumulator cannot work: the
+// whole point is that step N verifies step N-1's proof, and nothing can. So a
+// running total held by the claimant is unverifiable, and a running total held
+// by the fund is public state keyed to one person — which is the leak the
+// nullifier design exists to avoid.
+//
+// That leaves independent per-month claims, each with its own nullifier over
+// (claimKey, period, window). Constant-size circuit, no carried state, no
+// rollback surface, and nothing public keyed to a claimant. It is not a
+// compromise on the way to folding; folding is not reachable from here.

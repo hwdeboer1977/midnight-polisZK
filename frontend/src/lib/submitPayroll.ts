@@ -10,13 +10,17 @@ import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { createProofProvider, ZKConfigProvider } from "@midnight-ntwrk/midnight-js-types";
 import { pipe } from "effect";
 import { fetchContractState, INDEXERS, INDEXER_WS, PROOF_SERVERS } from "./chain";
+import { loadContract } from "./contracts";
+import { buildPayslip, type Payslip } from "./payslip";
 import {
   deriveEmployerKey,
   deriveNonce,
   keyFingerprint,
   openSealed,
   sealOpening,
+  type PayrollLine,
 } from "./openings";
+import { DUTCH_V1, computeLine } from "../generated/tax-params";
 
 /**
  * Submitting payroll from the browser.
@@ -95,6 +99,17 @@ export interface SubmitResult {
   blockHeight: number | null;
   period: number;
   totalMinor: bigint;
+  /**
+   * One per employee, in roster order — each the opening of that employee's
+   * commitment, for the employer to hand over.
+   *
+   * Returned rather than written anywhere, because a payslip is private: it
+   * carries the salary and the nonce in clear, and the only party who should
+   * hold one is the employee it belongs to. Sending it through the chain is not
+   * an option — see `payslip.ts` for the two encryption routes the connector
+   * rules out.
+   */
+  payslips: Payslip[];
 }
 
 /**
@@ -315,7 +330,12 @@ export async function connectContract(options: {
   if (!proofServer) throw new Error(`No proof server configured for "${networkId}"`);
 
   onProgress("Loading the compiled contract…");
-  const contractModule = await import("../generated/payroll/index.js");
+  // By name, not hardcoded. This took `contractName` from the start and used it
+  // only for the ZK asset URL and the compiled-contract label, so calling it for
+  // any contract but payroll built payroll's circuit set against another
+  // contract's assets — surfacing as a fetch for a verifier key that belongs to
+  // a circuit the target contract does not have.
+  const contractModule = (await loadContract(contractName)) as any;
   const compiledContract = pipe(
     CompiledContract.make(contractName, (contractModule as any).Contract),
     CompiledContract.withVacantWitnesses
@@ -418,7 +438,15 @@ export async function submitPayroll(options: {
   provingMode?: ProvingMode;
   passphrase: string;
   period: number;
+  /**
+   * Gross per employee, in roster order — the only money figure the employer
+   * supplies. Tax, contribution and net are derived from the published rule
+   * set, here for display and inside the circuit for real, and the circuit
+   * refuses any pairing that its own arithmetic does not produce.
+   */
   salaries: bigint[];
+  /** Weeks worked per employee. Committed to; not applied to the salary. */
+  weeks: number[];
   /**
    * Each employee's coin public key, hex, in roster order. These used to be
    * derived from the employer's own passphrase, which meant the employer held
@@ -427,6 +455,8 @@ export async function submitPayroll(options: {
    * somewhere only the employee can spend from.
    */
   payees: string[];
+  /** Employee names, in roster order. Display only — printed on the payslip. */
+  names?: string[];
   onProgress?: SubmitProgress;
 }): Promise<SubmitResult> {
   const {
@@ -438,7 +468,9 @@ export async function submitPayroll(options: {
     passphrase,
     period,
     salaries,
+    weeks,
     payees: payeeKeys,
+    names,
   } = options;
 
   if (payeeKeys.length !== salaries.length) {
@@ -466,10 +498,25 @@ export async function submitPayroll(options: {
   onProgress("Deriving nonces and sealing openings…");
   const nonces: Uint8Array[] = [];
   const sealedOpenings: Uint8Array[] = [];
+  // The same arithmetic the circuit performs. Computed per employee and never
+  // by reapplying a rate to a total: floor division does not distribute, and
+  // the brackets are progressive, so taxing the sum is a different and wrong
+  // number.
+  const lines: PayrollLine[] = salaries.map((grossMinor, index) => {
+    const computed = computeLine(grossMinor, DUTCH_V1);
+    return {
+      grossMinor,
+      taxMinor: computed.taxMinor,
+      socialMinor: computed.contribMinor,
+      netMinor: computed.netMinor,
+      weeks: weeks[index] ?? 4,
+    };
+  });
+
   for (let index = 0; index < salaries.length; index += 1) {
     const nonce = await deriveNonce(employerKey, period, index);
     nonces.push(nonce);
-    sealedOpenings.push(await sealOpening(employerKey, salaries[index]!, nonce));
+    sealedOpenings.push(await sealOpening(employerKey, lines[index]!, nonce));
   }
 
   // One provider stack, built in one place. This used to be a second copy of
@@ -487,29 +534,85 @@ export async function submitPayroll(options: {
   // Who each slot is payable to, as the hash the circuit will check against.
   // Computed with the contract's own pure circuit rather than reimplementing
   // the struct encoding here, for the same reason commitments are.
+  // Bound to the period and to this contract, not just to the key.
+  //
+  // A coin public key is handed out freely, so a hash of the key alone was the
+  // same value in every period of every instance — one lookup matched a person
+  // across their whole employment history, and equal hashes announced "same
+  // person" to anyone reading the chain without needing a key at all.
+  const instanceBytes = fromHex(contractAddress.replace(/^0x/, ""));
   const payees: Uint8Array[] = payeeKeys.map((key) =>
-    (contractModule as any).pureCircuits.payeeHash({ bytes: fromHex(key) })
+    (contractModule as any).pureCircuits.payeeHash(
+      { bytes: fromHex(key) },
+      BigInt(period),
+      instanceBytes
+    )
   );
 
   onProgress("Proving the circuit — this takes a few minutes…");
   // BigInt, not the plain number: `period` is a Uint<32> in the circuit and the
   // generated binding types it as bigint. A JS number is rejected at the
   // runtime type check rather than coerced.
+  // The quotients are the results of the two floor divisions, which the circuit
+  // pins with q * 10000 <= n < (q + 1) * 10000. Supplying them is not choosing
+  // them: exactly one value satisfies each pair of assertions.
   const tx = await deployed.callTx.setPayroll(
     BigInt(period),
     salaries,
+    lines.map((line) => BigInt(line.weeks)),
+    lines.map((line) => line.taxMinor),
+    lines.map((line) => line.socialMinor),
     nonces,
     sealedOpenings,
-    payees
+    payees,
+    toCircuitParams(DUTCH_V1)
   );
 
   // Only now is the passphrase binding: a commitment on chain depends on it.
   await rememberKey(contractAddress, employerKey);
 
+  // Built only now, after the call succeeded. A payslip for a filing that never
+  // landed would open nothing — there would be no commitment on chain to check
+  // it against — and handing one out would be worse than handing out none.
+  const payslips = lines.map((line, index) =>
+    buildPayslip({
+      contractAddress,
+      period,
+      slot: index,
+      employee: names?.[index],
+      line,
+      nonce: nonces[index]!,
+    })
+  );
+
   return {
     txHash: tx.public?.txHash ?? "",
     blockHeight: tx.public?.blockHeight ?? null,
     period,
-    totalMinor: salaries.reduce((sum, salary) => sum + salary, 0n),
+    totalMinor: lines.reduce((sum, line) => sum + line.grossMinor, 0n),
+    payslips,
+  };
+}
+
+/**
+ * The rule set in the shape the generated binding expects.
+ *
+ * `TaxParams` is declared identically in `payroll.compact` and
+ * `taxparams.compact` so both hash it the same way; this converts the shared
+ * TypeScript constant into that struct. A field renamed on one side and not the
+ * other stops every filing from matching a published version, which is why the
+ * mapping is written out rather than spread.
+ */
+function toCircuitParams(p: typeof DUTCH_V1) {
+  return {
+    version: BigInt(p.version),
+    validFrom: BigInt(p.validFrom),
+    threshold1: p.threshold1,
+    threshold2: p.threshold2,
+    rate1: BigInt(p.rate1),
+    rate2: BigInt(p.rate2),
+    rate3: BigInt(p.rate3),
+    maxContribBase: p.maxContribBase,
+    contribRate: BigInt(p.contribRate),
   };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchContractState } from "./chain";
-import { loadContract, type PayrollLedger, type PeurLedger } from "./contracts";
+import { decodePayrollLedger, loadContract, type PeurLedger } from "./contracts";
 import { forNetwork, loadDeployments, type Deployment } from "./deployments";
 
 /**
@@ -30,6 +30,15 @@ export interface NetworkStats {
   periodsSettled: number;
   /** Sum of `totalPayrollFor` over every period, in pEUR minor units. */
   payrollFiled: bigint;
+  /** The other three terms of the identity, each read as its own published total. */
+  taxFiled: bigint;
+  socialFiled: bigint;
+  netFiled: bigint;
+  /** Withheld money still held across every employer, and what has gone onward. */
+  taxHeld: bigint;
+  socialHeld: bigint;
+  taxRemitted: bigint;
+  socialRemitted: bigint;
   /**
    * Gross over periods where every slot is marked paid.
    *
@@ -43,6 +52,14 @@ export interface NetworkStats {
   commitments: number;
   /** pEUR in circulation, from the token contract's own ledger. */
   peurSupply: bigint | null;
+  /**
+   * Payroll contracts whose on-chain layout does not match this build.
+   *
+   * Deployed before the current contract version. Their figures are missing
+   * from every total above, which is worth saying out loud: a quietly smaller
+   * number is worse than a visible gap.
+   */
+  unreadable: number;
   /** Contracts to link to, in the order a reviewer should read them. */
   deployed: { label: string; name: string; deployment: Deployment }[];
 }
@@ -54,9 +71,17 @@ const EMPTY: NetworkStats = {
   periodsFiled: 0,
   periodsSettled: 0,
   payrollFiled: 0n,
+  taxFiled: 0n,
+  socialFiled: 0n,
+  netFiled: 0n,
+  taxHeld: 0n,
+  socialHeld: 0n,
+  taxRemitted: 0n,
+  socialRemitted: 0n,
   payrollSettled: 0n,
   commitments: 0,
   peurSupply: null,
+  unreadable: 0,
   deployed: [],
 };
 
@@ -111,14 +136,21 @@ export function useNetworkStats(networkId: string) {
             const state = await fetchContractState(networkId, deployment.contractAddress);
             if (!state) continue;
 
-            let ledger: PayrollLedger;
-            try {
-              ledger = contract.ledger(state.data) as PayrollLedger;
-            } catch {
+            // Null means the deployment predates this build, not that the read
+            // failed — counted so the page can say so instead of showing zeroes.
+            const ledger = decodePayrollLedger(contract, state.data);
+            if (!ledger) {
+              next.unreadable += 1;
               continue;
             }
 
             if (ledger.employerAssigned) next.employers += 1;
+
+            // Pool figures are per contract, not per period.
+            next.taxHeld += ledger.taxPool ?? 0n;
+            next.socialHeld += ledger.socialPool ?? 0n;
+            next.taxRemitted += ledger.taxRemitted ?? 0n;
+            next.socialRemitted += ledger.socialRemitted ?? 0n;
 
             const periods = [...ledger.periods];
             next.periodsFiled += periods.length;
@@ -126,6 +158,17 @@ export function useNetworkStats(networkId: string) {
             for (const period of periods) {
               if (ledger.totalPayrollFor.member(period)) {
                 next.payrollFiled += ledger.totalPayrollFor.lookup(period);
+              }
+              // Read, never derived: the whole point is that the four can be
+              // checked against each other by anyone.
+              if (ledger.totalTaxFor?.member(period)) {
+                next.taxFiled += ledger.totalTaxFor.lookup(period);
+              }
+              if (ledger.totalSocialFor?.member(period)) {
+                next.socialFiled += ledger.totalSocialFor.lookup(period);
+              }
+              if (ledger.totalNetFor?.member(period)) {
+                next.netFiled += ledger.totalNetFor.lookup(period);
               }
 
               // Settled means every slot paid, not "some money moved". A

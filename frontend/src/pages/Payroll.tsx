@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { EndEmployment } from "../components/EndEmployment";
+import { PayslipRecovery } from "../components/PayslipRecovery";
 import { RosterUpload } from "../components/RosterUpload";
 import { StageGate } from "../components/StageGate";
 import { loadDeployments, type Deployments } from "../lib/deployments";
@@ -43,8 +45,11 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
 
   const countFor = (period: bigint) =>
     state?.employeeCountFor.member(period) ? Number(state.employeeCountFor.lookup(period)) : 0;
-  const grossFor = (period: bigint) =>
-    state?.totalPayrollFor.member(period) ? state.totalPayrollFor.lookup(period) : 0n;
+  const columnFor = (
+    map: { member(k: bigint): boolean; lookup(k: bigint): bigint } | undefined,
+    period: bigint
+  ) => (map?.member(period) ? map.lookup(period) : 0n);
+  const grossFor = (period: bigint) => columnFor(state?.totalPayrollFor, period);
 
   /** How many slots of a period are marked done in one of the flag maps. */
   const countFlags = (map: PayrollLedger["fundedFor"] | undefined, period: bigint) => {
@@ -71,6 +76,9 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
                 <th>Period</th>
                 <th className="num">Workers</th>
                 <th className="num">Gross</th>
+                <th className="num">Tax</th>
+                <th className="num">Social</th>
+                <th className="num">Net</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -84,6 +92,15 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
                     <td>{periodName(period)}</td>
                     <td className="num">{workers}</td>
                     <td className="num">€{formatPeur(grossFor(period))}</td>
+                    <td className="num muted">
+                      €{formatPeur(columnFor(state?.totalTaxFor, period))}
+                    </td>
+                    <td className="num muted">
+                      €{formatPeur(columnFor(state?.totalSocialFor, period))}
+                    </td>
+                    <td className="num">
+                      €{formatPeur(columnFor(state?.totalNetFor, period))}
+                    </td>
                     <td>
                       {workers > 0 && paid === workers ? (
                         <span className="ok-line">Settled</span>
@@ -103,10 +120,10 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
               dashes. A column that never has a value is not information; it is
               a reminder of something missing, repeated once per row. */}
           <p className="note">
-            The current contract commits one gross salary per employee. Tax,
-            social contributions and net salary are outside this prototype —
-            everything in the table above is read from the contract's own public
-            ledger.
+            Every figure is read from the contract's own public ledger. The
+            withholding is computed inside the circuit from each gross salary and
+            the rule set recorded for that period, so these columns are what the
+            published rates produce — not what anyone typed.
           </p>
 
           <details className="details">
@@ -164,6 +181,17 @@ export function Payroll() {
     deployments,
     account?.coinPublicKey ?? null
   );
+
+  // A link carrying #end-employment has to wait for the section to exist: the
+  // instances load from the chain, so the element is not in the document when
+  // the route mounts and the browser's own hash handling finds nothing.
+  useEffect(() => {
+    if (loading) return;
+    const id = window.location.hash.replace(/^#/, "");
+    if (!id) return;
+    const target = document.getElementById(id);
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [loading, instances]);
 
   const head = (
     <section className="area-head">
@@ -232,6 +260,33 @@ export function Payroll() {
           <PeriodHistory instance={instance} />
         </ErrorBoundary>
       ))}
+      {asEmployer.length > 0 && asEmployer[0]!.state ? (
+        // Recovering a payslip needs the passphrase and nothing else — the
+        // openings are already on chain. Rendered per employer instance so a
+        // month filed weeks ago is still reachable without re-filing it.
+        <>
+          <PayslipRecovery
+            contractAddress={asEmployer[0]!.deployment.contractAddress}
+            networkId={networkId}
+            periods={[...asEmployer[0]!.state!.periods]
+              .map(Number)
+              .sort((a, b) => b - a)}
+          />
+          {/* Below payslips because it is rarer and irreversible: a termination
+              is written once, and an employer reaching for a payslip should not
+              have to pass a button that cannot be undone. */}
+          <EndEmployment
+            contractAddress={asEmployer[0]!.deployment.contractAddress}
+            instance={asEmployer[0]!.name.replace(/^payroll:/, "")}
+            networkId={networkId}
+            periods={[...asEmployer[0]!.state!.periods]
+              .map(Number)
+              .sort((a, b) => b - a)}
+            delegateProving={false}
+          />
+        </>
+      ) : null}
+
       {asEmployer.length > 0 ? (
         <RosterUpload
           // The first instance this key is employer of. An employer controlling

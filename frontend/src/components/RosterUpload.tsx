@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { DUTCH_V1, computeLine } from "../generated/tax-params";
 import { servedLocally } from "../lib/origin";
 import type { ParsedRoster } from "../generated/roster";
 import { submitPayroll, walletCanProve, type SubmitResult } from "../lib/submitPayroll";
@@ -10,6 +11,7 @@ import {
   type RunResult,
 } from "../lib/payPayroll";
 import { loadDeployments } from "../lib/deployments";
+import { Payslips } from "./Payslips";
 import { useWallet } from "../wallet/WalletContext";
 
 // The xlsx parser drags in ~950 kB of spreadsheet library. Loading it only when
@@ -20,6 +22,7 @@ const ROSTER_COLUMNS = [
   "Full name",
   "Address",
   "Monthly gross salary",
+  "Weeks worked",
   "Coin public key",
   "Encryption public key",
 ] as const;
@@ -173,6 +176,21 @@ export function RosterUpload({
   }, [target?.contractAddress, networkId, submitted, payResult]);
 
   const usable = roster !== null && roster.problems.length === 0;
+
+  // Summed per employee, never a rate reapplied to the gross total: floor
+  // division does not distribute and the brackets are progressive, so taxing
+  // the sum is a different figure — and not the one the circuit will publish.
+  const totals = (roster?.rows ?? []).reduce(
+    (acc, row) => {
+      const line = computeLine(row.salaryMinor, DUTCH_V1);
+      return {
+        tax: acc.tax + line.taxMinor,
+        social: acc.social + line.contribMinor,
+        net: acc.net + line.netMinor,
+      };
+    },
+    { tax: 0n, social: 0n, net: 0n }
+  );
   const needsConfirmation = firstFiling !== false;
   const passphraseReady =
     passphrase.length >= 8 && (!needsConfirmation || confirmation === passphrase);
@@ -231,6 +249,7 @@ export function RosterUpload({
             tokenId: peur.tokenId,
             period: roster.period,
             salaries: roster.rows.map((row) => row.salaryMinor),
+            weeks: roster.rows.map((row) => row.weeks),
             payees: roster.rows.map((row) => ({
               coinPublicKey: row.coinPublicKey,
               encryptionPublicKey: row.encryptionPublicKey,
@@ -247,6 +266,7 @@ export function RosterUpload({
             contractAddress: target.contractAddress,
             period: roster.period,
             salaries: roster.rows.map((row) => row.salaryMinor),
+            weeks: roster.rows.map((row) => row.weeks),
             payees: roster.rows.map((row) => ({
               coinPublicKey: row.coinPublicKey,
               encryptionPublicKey: row.encryptionPublicKey,
@@ -279,7 +299,9 @@ export function RosterUpload({
         passphrase,
         period: roster.period,
         salaries: roster.rows.map((row) => row.salaryMinor),
+        weeks: roster.rows.map((row) => row.weeks),
         payees: roster.rows.map((row) => row.coinPublicKey),
+        names: roster.rows.map((row) => row.fullName),
         onProgress: setStep,
       });
       setSubmitted(result);
@@ -358,40 +380,64 @@ export function RosterUpload({
               <tr>
                 <th>#</th>
                 <th>Full name</th>
-                <th>Address</th>
                 <th>Pays to</th>
-                <th className="num">Monthly gross</th>
+                <th className="num">Gross</th>
+                <th className="num derived">Tax</th>
+                <th className="num derived">Social</th>
+                <th className="num derived">Net</th>
               </tr>
             </thead>
             <tbody>
-              {roster.rows.map((row) => (
-                <tr key={row.index}>
-                  <td className="muted">{row.index}</td>
-                  <td>{row.fullName}</td>
-                  <td className="muted">{row.address}</td>
-                  {/* Enough of the key to compare against what the employee
-                      sent, without a column of 64 characters per row. */}
-                  <td className="mono" title={row.coinPublicKey}>
-                    {row.coinPublicKey
-                      ? `${row.coinPublicKey.slice(0, 8)}…${row.coinPublicKey.slice(-6)}`
-                      : "—"}
-                  </td>
-                  <td className="num">{formatPeur(row.salaryMinor)}</td>
-                </tr>
-              ))}
+              {roster.rows.map((row) => {
+                // Shown, not entered. The employer supplies gross; these are
+                // what the published rule set produces from it, computed here
+                // with the same arithmetic the circuit will redo and refuse to
+                // disagree with.
+                const line = computeLine(row.salaryMinor, DUTCH_V1);
+                return (
+                  <tr key={row.index}>
+                    <td className="muted">{row.index}</td>
+                    <td>{row.fullName}</td>
+                    <td className="mono" title={row.coinPublicKey}>
+                      {row.coinPublicKey
+                        ? `${row.coinPublicKey.slice(0, 8)}…${row.coinPublicKey.slice(-6)}`
+                        : "—"}
+                    </td>
+                    <td className="num">{formatPeur(row.salaryMinor)}</td>
+                    <td className="num muted">{formatPeur(line.taxMinor)}</td>
+                    <td className="num muted">{formatPeur(line.contribMinor)}</td>
+                    <td className="num">{formatPeur(line.netMinor)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={4}>
-                  Total <span className="muted">— the only figure that becomes public</span>
+                <td colSpan={3}>
+                  Totals <span className="muted">— the only figures that become public</span>
                 </td>
                 <td className="num total">{formatPeur(roster.totalMinor)}</td>
+                <td className="num total">{formatPeur(totals.tax)}</td>
+                <td className="num total">{formatPeur(totals.social)}</td>
+                <td className="num total">{formatPeur(totals.net)}</td>
               </tr>
             </tfoot>
           </table>
 
                     {usable ? (
             <>
+              {/* Asked repeatedly, and reasonably: if the chain computes the
+                  withholding, why is it on screen before anything is filed? */}
+              <p className="note">
+                <strong>Gross is from your workbook. Tax, social and net are
+                not.</strong> They are computed here from the published rule set
+                and shown so you can see what a period will cost before you file
+                it — but they are not what makes them true. The circuit rebuilds
+                the same figures from each gross salary and refuses any it did
+                not produce, so a wrong number here fails to file rather than
+                filing wrongly.
+              </p>
+
               <p className="note">
                 Ready: {ROSTER_SIZE} employees
                 {roster.period ? ` for ${periodName(roster.period)}` : ""}. Only the total
@@ -618,17 +664,20 @@ export function RosterUpload({
               ) : null}
 
               {submitted ? (
-                <div className="problems">
-                  <strong>
-                    Filed {periodName(submitted.period)} — {formatPeur(submitted.totalMinor)} pEUR
-                  </strong>
-                  <ul>
-                    <li>tx {submitted.txHash}</li>
-                    {submitted.blockHeight !== null ? (
-                      <li>block {submitted.blockHeight}</li>
-                    ) : null}
-                  </ul>
-                </div>
+                <>
+                  <div className="problems">
+                    <strong>
+                      Filed {periodName(submitted.period)} — {formatPeur(submitted.totalMinor)} pEUR
+                    </strong>
+                    <ul>
+                      <li>tx {submitted.txHash}</li>
+                      {submitted.blockHeight !== null ? (
+                        <li>block {submitted.blockHeight}</li>
+                      ) : null}
+                    </ul>
+                  </div>
+                  <Payslips slips={submitted.payslips} />
+                </>
               ) : null}
             </>
           ) : null}

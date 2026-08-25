@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchContractState } from "./chain";
-import { loadContract, type PayrollLedger } from "./contracts";
+import { decodePayrollLedger, loadContract, type PayrollLedger } from "./contracts";
 import { forNetwork, type Deployment, type Deployments } from "./deployments";
 import { bytesToHex as hex, sameKey } from "./keys";
 
@@ -66,13 +66,14 @@ export function usePayrollInstances(
             // instance including the employer's own working one.
             let state: PayrollLedger | null = null;
             if (chainState) {
-              try {
-                state = contract.ledger(chainState.data) as PayrollLedger;
-              } catch (cause) {
+              // Decoding is per instance, and a failure skips that one instead
+              // of emptying the list. `ledger()` is lazy, so this probes fields
+              // eagerly — see decodePayrollLedger.
+              state = decodePayrollLedger(contract, chainState.data);
+              if (!state) {
                 console.warn(
-                  `[payroll] ${name} (${deployment.contractAddress}) could not be ` +
-                    "decoded — deployed from an older contract version?",
-                  cause
+                  `[payroll] ${name} (${deployment.contractAddress}) does not match ` +
+                    "this build's contract — deployed from an older version?"
                 );
                 return null;
               }

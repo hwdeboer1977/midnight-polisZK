@@ -14,9 +14,20 @@ export const ROSTER_COLUMNS = [
   "Full name",
   "Address",
   "Monthly gross salary",
+  "Weeks worked",
   "Coin public key",
   "Encryption public key",
 ] as const;
+
+/**
+ * Weeks worked when the column is left blank.
+ *
+ * A full month. Recorded in the commitment so a claim can reason about partial
+ * months later; it does NOT prorate the salary, because no proration rule has
+ * been agreed and inventing one here would silently change what people are
+ * paid.
+ */
+export const FULL_MONTH_WEEKS = 4;
 
 /**
  * Both keys, because a shielded coin needs both to arrive.
@@ -28,7 +39,7 @@ export const ROSTER_COLUMNS = [
  * both off their own dashboard and sends them to their employer; neither is a
  * secret, and neither lets the employer spend anything.
  */
-export const KEY_COLUMNS = { coin: 4, encryption: 5 } as const;
+export const KEY_COLUMNS = { coin: 5, encryption: 6 } as const;
 
 /**
  * Decodes a Bech32m key to hex, the form contracts and the SDK both work in.
@@ -93,8 +104,16 @@ export interface RosterRow {
   index: number;
   fullName: string;
   address: string;
-  /** Minor units (1e-6 pEUR), as the contract counts them. */
+  /**
+   * Gross, in minor units (1e-6 pEUR).
+   *
+   * The only money figure the employer supplies. Tax, contribution and net are
+   * derived from it by the published rule set — in the circuit, not here — so
+   * there is no column an employer could understate independently of gross.
+   */
   salaryMinor: bigint;
+  /** Weeks worked in the period. Committed to, not applied to the salary. */
+  weeks: number;
   /** Hex, 32 bytes. Hashed into `payeeFor`; the preimage stays here. */
   coinPublicKey: string;
   /** Hex. Never reaches the chain — it is an input to building the coin. */
@@ -204,6 +223,34 @@ export async function parseRosterWorkbook(
     );
   }
 
+  // Check the header names before reading a single row.
+  //
+  // A workbook from an older template has the right columns in the wrong
+  // places, and every value then fails the validation for whatever column it
+  // has landed in: a coin public key gets rejected for not being a number of
+  // weeks, and the last column reads as missing because it was never there.
+  // Each of those messages is accurate and none of them is the problem, which
+  // is the worst way for a file to fail — the reader chases six symptoms
+  // instead of one cause.
+  const headerMismatch = ROSTER_COLUMNS.map((expected, i) => ({
+    column: i + 1,
+    expected,
+    found: text(readCell(headerRow, i + 1)),
+  })).filter(({ expected, found }) => normalized(found) !== normalized(expected));
+
+  if (headerMismatch.length > 0) {
+    const first = headerMismatch[0]!;
+    problems.push({
+      row: headerRow,
+      message:
+        `column ${first.column} is "${first.found || "(empty)"}" but should be ` +
+        `"${first.expected}" — this workbook was made for an older template. ` +
+        `Generate a fresh one with \`npm run roster:template\` and copy your rows across, ` +
+        `or insert the missing columns.`,
+    });
+    return { rows, problems, period: null, totalMinor: 0n };
+  }
+
   const period = readPeriod(readCell, normalized, text, headerRow, problems);
 
   sheet.eachRow((row, rowNumber) => {
@@ -214,6 +261,7 @@ export async function parseRosterWorkbook(
     const fullName = String(cell(1) ?? "").trim();
     const address = String(cell(2) ?? "").trim();
     const rawSalary = cell(3);
+    const rawWeeks = cell(4);
     const rawCoinKey = String(cell(KEY_COLUMNS.coin) ?? "").trim();
     const rawEncKey = String(cell(KEY_COLUMNS.encryption) ?? "").trim();
 
@@ -227,6 +275,22 @@ export async function parseRosterWorkbook(
       (rawSalary === null || rawSalary === undefined || rawSalary === "")
     ) {
       return;
+    }
+
+    // Blank means a full month rather than an error: most rows are, and making
+    // every employer type "4" on every line would be noise that invites typos.
+    let weeks = FULL_MONTH_WEEKS;
+    const weeksText = String(rawWeeks ?? "").trim();
+    if (weeksText !== "") {
+      const parsed = Number(weeksText);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
+        problems.push({
+          row: rowNumber,
+          message: `"${weeksText}" is not a whole number of weeks from 1 to 5`,
+        });
+      } else {
+        weeks = parsed;
+      }
     }
 
     if (!fullName) problems.push({ row: rowNumber, message: "missing full name" });
@@ -283,6 +347,7 @@ export async function parseRosterWorkbook(
       fullName,
       address,
       salaryMinor,
+      weeks,
       coinPublicKey,
       encryptionPublicKey,
     });
@@ -381,6 +446,7 @@ export async function writeRosterTemplate(
     fullName: string;
     address: string;
     salary: string;
+    weeks?: number;
     coinPublicKey?: string;
     encryptionPublicKey?: string;
   }[] = [],
@@ -395,6 +461,7 @@ export async function writeRosterTemplate(
   sheet.getColumn(3).width = 22;
   sheet.getColumn(3).numFmt = "#,##0.00";
   // Bech32m keys are long. Narrower and Excel shows a column of ####.
+  sheet.getColumn(4).width = 14;
   sheet.getColumn(KEY_COLUMNS.coin).width = 64;
   sheet.getColumn(KEY_COLUMNS.encryption).width = 64;
 
@@ -438,6 +505,9 @@ export async function writeRosterTemplate(
   // row, and a line of prose below it parses as one more employee.
   const help = sheet.getCell(`A${HEADER_ROW - 1}`);
   help.value =
+    "Tax, social contribution and net pay are NOT columns: they are computed " +
+    "from gross by the published rule set, inside the circuit. Weeks may be " +
+    "left blank for a full month. " +
     "Each employee sends you both keys from their own dashboard — neither is a " +
     "secret, and neither lets you spend their salary. Without them the payment " +
     "is made and their wallet can never find it.";
@@ -458,6 +528,7 @@ export async function writeRosterTemplate(
     // scale from a salary stored as a number.
     const salary = sample[i]?.salary;
     row.getCell(3).value = salary ? Number(salary) : null;
+    row.getCell(4).value = sample[i]?.weeks ?? null;
     // Text, so Excel cannot decide a long key is a number and round it.
     row.getCell(KEY_COLUMNS.coin).value = sample[i]?.coinPublicKey ?? null;
     row.getCell(KEY_COLUMNS.encryption).value = sample[i]?.encryptionPublicKey ?? null;

@@ -1,12 +1,31 @@
 # midnight-polisZK
 
-Private payroll on Midnight. Two contracts:
+Private payroll on Midnight, and an unemployment benefit paid from it without
+anyone learning who claimed or how much. Four contracts:
 
 - **`payroll`** — one instance per employer. Individual salaries never reach the
-  chain; only the headcount, the total, and one commitment per employee do.
+  chain; only the headcount, the totals, and one commitment per employee do. It
+  also holds the withheld tax and contributions until they are remitted, and
+  records the employer's attestation that someone's employment ended.
+- **`taxparams`** — one shared instance. The versioned, append-only record of
+  what the rates were, so a filing stays checkable against the rules in force
+  when it was made.
 - **`peur`** — a shielded EUR stablecoin the payroll is denominated in. Balances
   and transfer amounts are private; total supply is public so it can be audited
   against reserves.
+- **`fund`** — one shared instance. Holds the money benefits are paid from and
+  the per-period Merkle roots a claim proves membership of. A claimant proves
+  she was employed long enough and what her final salary was, discloses neither,
+  and is indistinguishable from everyone terminated in the same month anywhere
+  on the platform.
+
+Nobody is recorded as unemployed anywhere. There is no claimant list, no status
+field, and nothing an observer can enumerate to find one — see **The fund**.
+
+The product is branded **IncomeLayerZK**. The repository name and the
+`polisZK/...` domain-separation tags keep the older name and **must not be
+renamed** — they derive keys and commitments, so changing either invalidates
+every commitment already on chain.
 
 ## Prerequisites
 
@@ -26,12 +45,24 @@ npm run proof:up      # standalone proof server on :6300
 npm run compile       # compiles every contracts/*.compact
 npm run check-balance # sanity check: wallet syncs, has tNIGHT/tDUST
 
-INSTANCE=acme npm run deploy:payroll   # deploy an employer's payroll
+INSTANCE=acme npm run deploy:tax       # registry + v1 rules + payroll + rule window
 INSTANCE=acme npm run payroll          # assign employer, set salaries
 
 npm run deploy:peur   # deploy pEUR and mint the initial supply
 npm run peur          # token status, mint more
+
+npm run deploy:fund   # the unemployment fund (one per network)
+npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1
+npm run fund -- deposit --amount 200   # the FIRST deposit fixes the benefit token forever
+npm run fund status
 ```
+
+Use `deploy:tax` rather than `deploy:payroll` for the payroll contract. The
+generic `deploy.js` passes no constructor arguments, and `payroll`'s constructor
+now takes both treasury keys; `deploy:tax` and `npm run onboard` supply them
+from `TAX_TREASURY_KEY` / `SOCIAL_TREASURY_KEY`. It also records the rule-set
+hash for a window of periods, without which a freshly deployed instance can file
+nothing — see **taxparams**.
 
 `MIDNIGHT_NETWORK=local` needs no wallet secret: the devnet's `dev` genesis
 preset pre-funds a well-known account, and the app falls back to it when neither
@@ -41,6 +72,11 @@ The proof server is started with `docker run` rather than from `compose.yml`. It
 fails to fetch key material from `srs.midnight.network` when compose starts it,
 but works as a standalone container. It listens on the host at `localhost:6300`,
 so it does not need to share the compose network.
+
+⚠️ **The `--` before fund flags is not decoration.** Without it npm reads
+`--amount 200` as its own config and the script never sees it, so the command
+fails asking for the argument you just typed. Same convention as
+`npm run payee <seed> -- --balance` and `npm run relay -- <period> --publish`.
 
 ## payroll
 
@@ -209,6 +245,180 @@ cannot overflow the `Uint<64>` total; the compiler rejects the assignment
 otherwise. Compact has no mutable locals (`let` is reserved), so the sum is
 written out across ten terms.
 
+## What the compiler would not do
+
+The tax work started as four contracts — a rule registry, `payroll`, a tax vault
+and a contribution vault — with `payroll` routing withheld money into the
+vaults. Five stubs in `probe/` settled whether that was buildable before
+anything real was written, and it is not. Each probe records its own result at
+the bottom of the file.
+
+| Probe | Question | Answer |
+| --- | --- | --- |
+| `probe_xcall` | Can a contract call another contract? | **No** — `cross-contract calls are not yet supported`, compactc 0.31.1 and 0.33.0 |
+| `probe_xread` | Can a contract read another's ledger? | **No** — an external `contract` block accepts circuit declarations only |
+| `probe_source` + `probe_sink` | Can a contract send a shielded coin to a contract? | Compiles, then strands the coin |
+| `probe_arith` | Can the band arithmetic be done without division? | **Yes** — witnessed quotient, pinned by two comparisons |
+
+What each one actually establishes:
+
+- **A contract value has nowhere to come from.** There is no cast from
+  `ContractAddress`, and both an exported circuit argument and a witness return
+  are rejected with "cannot include contract values". A constructor parameter is
+  accepted — and then the call is refused. So the compiler does model external
+  contracts (`contract Sink { circuit … }` resolves against
+  `managed/Sink/compiler/contract-info.json`) but will not emit a call to one.
+- **A vault cannot enforce what it is owed.** Reading `payroll.totalTaxFor`
+  directly is a parse error (`found keyword "ledger" looking for an external
+  contract circuit`), and reaching it through a declared circuit hits the same
+  wall as above.
+- **Contract-to-contract shielded sends strand the coin.** The receiver has to
+  `receiveShielded` in the same transaction, and `Transaction.merge` throws when
+  both sides carry contract interactions.
+- **One transaction can carry several calls; midnight-js will not build one.**
+  `Intent.addCall` is repeatable and `Transaction.addCalls` takes an array, but
+  `createUnprovenCallTx` hardcodes a single `.addCall`.
+- **Compact has no division operator.** Floor division is witnessed and pinned:
+  `q * d <= n < (q + 1) * d` admits exactly one `q`, using only multiplication
+  and comparison. The client computes the quotient, the circuit checks it.
+- **`contract` and `from` are reserved words.**
+- **`ledger()` is lazy.** Handed state from a different contract it returns an
+  object and throws only when a field is read, so `try { ledger(…) } catch`
+  guards nothing. `decodePayrollLedger` in `frontend/src/lib/contracts.ts`
+  probes fields eagerly, so a stale instance fails at decode instead of
+  somewhere later.
+
+Everything in the next section is shaped by this. Withheld money stays in the
+payroll contract's own pools and is remitted to treasury **wallets** — keys, not
+contracts — which is the only arrangement that needs none of the missing
+features. `tax-and-vaults-approach.md` is the pre-probe design and is superseded
+by it.
+
+## taxparams
+
+The rule set payroll is computed under: one shared instance, holds no money, and
+exists so that a period filed in August 2026 stays checkable against August
+2026's rules forever. A payroll whose rates can be rewritten afterwards proves
+nothing.
+
+```compact
+export ledger authority:      ZswapCoinPublicKey;
+export ledger paramsFor:      Map<Uint<16>, TaxParams>;   // version -> rules
+export ledger versions:       Set<Uint<16>>;
+export ledger latestVersion:  Uint<16>;
+export ledger versionCount:   Uint<16>;
+```
+
+**Append-only, and that is the whole safety property.** A version is written
+once and can never be edited or replaced; a mistake is corrected the way a
+mistake in a published statute is, by publishing a later version that supersedes
+it. The design this replaced was "editable until first use, then frozen", which
+is both weaker and unbuildable here — freezing on first use needs `payroll` to
+tell the registry it has been used, and contracts cannot call each other.
+Append-only needs no such signal, because there is no moment at which editing
+must stop.
+
+`paramsHash` is a `pure` circuit over the published fields, so the employer, the
+platform and any reviewer all compute the identical value. It is what `payroll`
+records per period, which is how a filing names the rules it was made under
+without reading the registry — which it could not do anyway.
+
+**The authority is not the platform.** In production this is a public body or a
+threshold key; the party that sets rates is not the party that runs a payroll
+platform. In this deployment it is one key, and the app says so.
+
+### Version 1
+
+Dutch bands as supplied, in `src/utils/tax-params.ts` so the deploy script, the
+frontend and any reviewer read one copy:
+
+| | |
+| --- | --- |
+| band 1, up to €38,883/yr (€3,240.25/mo) | 35.75% |
+| band 2, €38,883 – €78,426/yr (€6,535.50/mo) | 37.56% |
+| band 3, above €78,426/yr | 49.50% |
+| social contribution, flat | 3.00% |
+
+Thresholds are published annually and a period is a month, so each is divided by
+twelve; both divide exactly into whole minor units, which is checked rather than
+assumed. `maxContribBase` is a **placeholder** — no ceiling was specified for the
+3%, so it is set above any salary this system will see. Capping it later means
+publishing version 2, not editing version 1.
+
+### Two implementations of one calculation
+
+Because Compact has no division, the arithmetic exists twice: `computeLine` in
+TypeScript produces the quotients, `setPayroll` pins them. `npm run test:bands`
+is a differential test over every boundary value — exactly on a threshold, one
+minor unit either side, zero — comparing the two.
+
+The per-employee figures are summed to make the public totals. A rate is never
+reapplied to the gross total: floor division does not distribute and the bands
+are progressive, so taxing the sum gives a materially different and wrong
+number.
+
+### Which rules a period was filed under
+
+`payroll` cannot read the registry, so the platform records the hash per period
+with `setParamsFor`, and `setPayroll` rejects any period with none recorded
+("no rule set recorded for that period"). Onboarding therefore opens a window —
+`ruleWindow` in `src/utils/rule-window.ts`, six months starting two months back,
+because an employer's first act is usually to file the month that just ended.
+
+A contract that is deployed, assigned and owned by its employer, but has no
+periods recorded, can file nothing at all.
+
+### Withholding
+
+Tax and contributions are withheld into pools inside the payroll contract, and
+remitted to treasury wallets:
+
+```compact
+export ledger taxTreasury:    ZswapCoinPublicKey;   // frozen in the constructor
+export ledger socialTreasury: ZswapCoinPublicKey;
+export ledger taxPool:        Uint<64>;
+export ledger socialPool:     Uint<64>;
+export ledger taxRemitted:    Uint<64>;
+export ledger socialRemitted: Uint<64>;
+```
+
+- `fundWithholding(period, taxCoin, socialCoin)` — employer only. Both coins
+  must equal `totalTaxFor[period]` and `totalSocialFor[period]` exactly, so the
+  contract cannot be underfunded; the coin ordinals are recorded the same way
+  employee coins are.
+- `remitTax(period, coin)` / `remitSocial(period, coin)` — employer **or**
+  platform, sending that period's amount to the frozen treasury key.
+
+The destinations are fixed at deploy and never settable again. That is what
+makes exposing remit to either party safe: remitting moves money the employer
+has already parted with and the employee never owned, so whoever can trigger it
+must not also choose where it lands. The worst either can do is pay the treasury
+early.
+
+`TAX_TREASURY_KEY` and `SOCIAL_TREASURY_KEY` are required rather than defaulted
+(`src/utils/treasury.ts`). Falling back to the deployer's key would deploy
+cleanly, run correctly, and remit tax to the platform — wrong in a way nobody
+notices until someone asks where the tax went. Generate them with `npm run
+payee`.
+
+**Assessed, not yet collected.** The three circuits compile and are deployed,
+but nothing in the UI calls them, so `taxPool` and `socialPool` read €0.00 and
+the Public page's "Tax collected" is honestly zero. Wiring them is the next step.
+
+### Deploying the tax half
+
+`npm run deploy:tax` does the whole sequence, because every step after the first
+needs a value the previous one produced and three of them are irreversible — a
+registry version cannot be edited, a payroll's treasuries cannot be changed, an
+employer cannot be reassigned. Getting the order wrong does not fail; it
+succeeds into a state that cannot be corrected.
+
+```bash
+REGISTRY_ONLY=1 npm run deploy:tax          # registry only — for browser signup
+INSTANCE=acme EMPLOYER_KEY=… npm run deploy:tax
+PERIODS=202608,202609 npm run deploy:tax    # record rules for those months
+```
+
 ## peur
 
 The stablecoin payroll is paid in. **Shielded**, so balances and transfer
@@ -256,6 +466,340 @@ your `mn_shield-addr_...` address, and wallet apps generally will not display it
 because the token type is custom to this deployment rather than tNIGHT or tDUST.
 `npm run peur` lists the coins, their values, and the shielded address holding
 them.
+
+## The fund
+
+One shared instance, deployed by the platform. It holds the money benefits are
+paid from, the versioned benefit rules, one Merkle root per period, and the set
+of spent nullifiers.
+
+```
+preview/fund  8615dd7a691ab805874e089efdb10e8b0572cdc518387a662d8ea0baf6c356a6
+```
+
+### Why it is a separate contract, and what that costs
+
+A payroll contract cannot call the fund and the fund cannot read a payroll
+ledger. Both were probed and both are walls — see **What the compiler would not
+do**. So the fund cannot look up the commitment a claim rests on. It has to be
+*told*, by a relay, and that relay is trusted to be faithful.
+
+What is **enforced** is that a claimant knows an opening matching something the
+fund was told. That what it was told is a true copy of payroll state is
+**publicly verifiable by anyone with an indexer, and not enforced**. Stating it
+the other way round would be a lie about what the proof proves.
+
+### The anonymity set is the design
+
+Roots are published as **one tree per period over every accredited employer on
+the platform** — not per employer, and not per employee. A claim discloses the
+period its attestation names and nothing else, so a claimant is
+indistinguishable from everyone terminated in the same month anywhere on the
+platform.
+
+A root per employer would undo that: the disclosed root would name the employer.
+
+Membership is proved with a **path**, not a map lookup, for the same reason. A
+`Map` lookup takes a public key, and every candidate key is enumerable from
+public payroll state — instance, period and slot are all published — so a lookup
+would announce exactly which slot of which employer the claim was for. The path
+is a witness; only the root and the period are public.
+
+### The benefit rules live in source, because only their hash is on chain
+
+`paramsFor` stores `persistentHash<BenefitParams>(…)`, never the figures. The
+chain can therefore **check** a rule set and cannot **tell you** one — and
+`claim` requires the whole struct as an argument. So the numbers must reach a
+claimant from somewhere off chain, and that somewhere is
+`src/utils/benefit-params.ts`, copied into the frontend bundle by
+`npm run frontend:config`.
+
+```
+v1   cap €4,000.00/month · 7000 bp (70%) · minMonths 1 · from 200001
+     published 2026-08-25, tx a99421c5ce1505633ea4b277fc087254ee83fba8a929d75e67306cc28bbcd226
+```
+
+⚠️ **Editing a published version in that file silently breaks every claim under
+it.** The registry is append-only on purpose: a new schedule is a new version
+and a new `fund params` call, never an edit. `npm run fund -- params` refuses to
+publish figures that contradict a version already recorded there, and shouts if
+you publish one the file does not know.
+
+`minMonths: 1` is a **pilot figure**, not the scheme's twelve. It was chosen over
+the alternative — an employer attesting twelve months against an instance whose
+public filings show one — because a published rule set that says what it is stays
+honest, while a fabricated attestation contradicts a record anybody can read.
+
+### `fund-pool.json` is the only copy of the fund's coin nonces
+
+`fundBenefits` receives a shielded coin and the contract keeps only an ordinal:
+`poolOrdinal`, which of its receipts the pool is. It does **not** keep the nonce,
+and the contract says why — publishing a nonce next to the public coin commitment
+would let anyone try candidate values until one matched, recovering the pool
+balance and with it every benefit ever paid, from the differences between claims.
+
+The consequence is unavoidable and worth stating plainly: **the nonce exists in
+exactly one place, `fund-pool.json`, and if it is lost the coin cannot be
+described to `claim` again.** The money stays in the contract and nothing can
+spend it. There is no recovery path — a nonce is 32 random bytes, and the only
+thing that could confirm a guess is the commitment, which is what makes guessing
+infeasible in the first place.
+
+So the deposit is written to disk **before** the transaction is submitted. A
+crash between the two leaves a `pending` entry that may or may not describe a
+real coin, which is recoverable by looking; the other order leaves a real coin
+nobody can describe, which is not. The file is gitignored as `fund-pool*` —
+globbed, so a `.bak` is caught too. **Back it up.**
+
+### Change coins, and why `reconcile` exists
+
+`sendShielded` splits the coin it spends: the benefit goes to the claimant and
+the remainder returns to the contract as a **new coin whose nonce is derived from
+the spent one and published nowhere**. After a claim, the pool is therefore a
+coin this machine has no record of.
+
+The derivation is `evolveChangeNonce` in `src/utils/fund-pool.ts` —
+`upgradeFromTransient(transientHash([field("midnight:kernel:nonce_evolve/2"),
+degradeToTransient(nonce)]))`, read off the compiled circuit rather than off
+documentation. **Verified on chain 2026-08-25**: the derived nonce reproduced the
+change coin's commitment at leaf 42896 exactly.
+
+```bash
+npm run fund -- reconcile --value 96
+```
+
+It rebuilds the candidate coin from every parent it knows, hashes it, and
+**refuses to record one whose commitment does not match what the chain holds**.
+That turns "probably the right nonce" into "provably the coin at leaf N".
+
+⚠️ **The value cannot be derived, only checked.** The benefit a claim paid is
+private, so the operator does not know what the change came to — they must be
+told, or work it out. That is not a gap in the tooling: it is the same property
+that stops an observer reading the pool balance, seen from the inside.
+
+### Operator commands
+
+Flags come **after `--`**. Without it npm reads `--amount 10` as its own config
+and the script never sees it; the CLI detects that case and says so.
+
+```bash
+npm run fund status                    # rules, claims paid, token, trees
+npm run fund pool                      # coins, which is the pool, what is spendable
+npm run fund -- pool --full            # full nonces
+npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1
+npm run fund -- deposit --amount 200   # put money in
+npm run fund -- reconcile --value 96   # recover a post-claim change coin
+```
+
+The **first** deposit fixes `benefitToken` for the contract's lifetime. The token
+is read off the deployed pEUR contract rather than out of `.env`, because a stale
+copy in a config file would not cause a failed transaction — it would cause a
+successful one that pins the wrong token, and the only fix after that is a new
+fund.
+
+`pool` works out which coins are spent by deriving each one's change nonce and
+looking for it among the others, so a spent coin and its own remainder are not
+counted twice:
+
+```
+    €        250.00  coin #2    leaf 42886  spent
+  → €         96.00  coin #3    leaf 42896  change
+deposited      : €460.00
+spendable now  : €306.00  (unspent coins this machine can still describe)
+```
+
+## Ending employment
+
+A period simply stops appearing when someone leaves, and "stopped appearing" is
+not a statement anybody made — it is indistinguishable from a month not yet
+filed. So the employer says it, once, on chain.
+
+`endEmployment(period, index, attestation)` writes **one commitment per slot**,
+write-once. What it commits to is `Termination { finalPeriod, monthsWorked,
+claimKeyHash, nonce }`. None of those figures is published: months worked per
+slot would be a tenure record for a worker, and a claim-key hash per slot would
+be a stable handle appearing identically at every employer that person uses it
+with — rebuilding the cross-employer linkage `payeeFor` gives up convenience to
+prevent.
+
+Write-once matters: an employer who could reissue a termination could restate the
+final month after seeing what it entitled someone to. Correcting one means
+re-filing the period, which has its own guards.
+
+**The employer cannot claim on it.** `claim` requires the payee's own wallet key,
+which `payeeFor` binds and no employer holds.
+
+### The claim key has to exist before the dismissal
+
+The claim-key hash goes into the attestation, which only the employer can write.
+So the order is:
+
+> employee derives a claim key → hands the **hash** to her employer → employer
+> ends the employment → employee claims
+
+She has to be in the loop at the moment she is being dismissed, holding a secret
+she generated earlier. That is not how a benefit office works, where you turn up
+afterwards with nothing but your identity. The alternative — anchoring the hash
+at hire, carried in the roster and written by `setPayroll` — is a contract change
+and a redeploy, and has not been made.
+
+The employer only ever sees the hash, never the key, so neither arrangement lets
+them compute her nullifier.
+
+### Two routes
+
+| | Browser | CLI |
+| --- | --- | --- |
+| Where | `/employer/payroll` → **End employment** | `npm run terminate -- <instance> <period> <slot> --payee <key> --claim-key-hash <hash>` |
+| Signs with | the employer's wallet extension | `.env` |
+| Works for | any employer | only when employer == operator |
+
+Both produce an **opening file** — the figures behind the commitment. It is not
+stored anywhere and cannot be recovered from the page afterwards. Download it and
+put it in `terminations/`; the relay reads that directory.
+
+## The relay and the claim tree
+
+```bash
+npm run relay -- 202601             # build the tree, write claim bundles
+npm run relay -- 202601 --publish   # and publish the root to the fund
+```
+
+The relay reads `terminations/*.json`, checks each opening against the
+attestation on chain, builds one tree over every termination in the period, and
+publishes the root. It writes one bundle per claimant into
+`claims/<period>/claim-bundle-<instance>-<period>-slot-N.json`.
+
+It **refuses** any opening that does not reproduce its on-chain attestation — a
+relay that published a leaf the employer never attested to would be publishing
+its own claim about someone's employment.
+
+What the relay never sees: any salary. Leaves are built from commitments and
+payee bindings, both already public and both opaque. The one non-public input is
+the termination opening, which carries months worked and a claim-key hash — not
+an amount.
+
+### What the trust actually is
+
+A **forged** root is not prevented: nothing in the fund can tell a true copy from
+an invented one. It is *attributable* and publicly recomputable, since every
+input except the opening is public payroll state and the opening is checked
+against the chain. And `publishRoot` is **permissionless**, so a relay that
+declines to publish cannot silently block a claim — someone else can publish the
+same root. Only the platform's root lands in `rootFor` today; widening that is a
+policy change, not a contract change, because the roots are all there and
+attributable.
+
+### The bundle carries a pool coin, and that is a real cost
+
+`claim` takes the fund's coin as an argument — nonce, value and leaf — so a
+claimant cannot claim without being handed one. Two consequences follow, and
+neither is fixable from the relay:
+
+- she **learns that coin's value**;
+- two claimants handed the same coin would **race**, the second losing to a spent
+  input. So each gets a distinct one, and the relay warns when there are fewer
+  coins than claimants.
+
+The relay also **cannot size them**. It sees commitments, never salaries, so it
+has no idea what any benefit comes to. An undersized coin surfaces as a claim
+that will not prove, and the fix is a deposit rather than a change to the relay.
+
+⚠️ **`terminations/…json` and `claims/…json` are not interchangeable.** The
+employer's opening travels employer → relay; the bundle travels relay →
+claimant, and only the bundle has a path. They were one character apart in
+filename until the bundle was renamed to `claim-bundle-…`; the claim page now
+recognises an opening loaded by mistake and says which is which.
+
+## Claiming
+
+A claim is made from the claimant's **own browser**, on `/claim`. It has to be:
+`claim` rebuilds the leaf's `payeeBinding` from `ownPublicKey()`, so the
+transaction must be signed by the wallet payroll filed as payee — not by the
+fund, not by a relay, not by an agency acting for her. That assertion is what
+stops an employer collecting on their own leavers, so it cannot be relaxed for
+convenience.
+
+### Three inputs, and the split is the architecture
+
+| Input | From | Why it cannot come from anywhere else |
+| --- | --- | --- |
+| **Claim bundle** | the relay | a path through a tree over everyone else terminated that month — being unable to build it alone is what keeps her anonymous inside it |
+| **Payslip** | her employer | the nonce that opens the commitment derives from *their* passphrase |
+| **Passphrase** | her | the one input nobody else can supply |
+
+Everything else is read from the chain rather than trusted from a file: the
+employer key and the tax `paramsHash` come from the payroll ledger.
+
+### Her claim key is derived, not stored
+
+On `/employee` → **Your claim key**: a passphrase, PBKDF2-SHA256 at 600,000
+iterations, salted with her own coin public key so two people who choose the same
+words still get different keys. Only the **hash** is displayed; the key itself is
+the nullifier secret and a page that shows it invites it into a screenshot.
+
+The route to that choice is the same one the employer's key took: no extension
+hands a page its seed, the connector signs non-deterministically so a signature
+cannot be a root, and it exposes no decrypt operation.
+
+⚠️ **This is not the key `npm run payee <seed> -- --claim-key` produces.** That
+one is `sha256("polisZK/claim/v1", shieldedSeed)` and needs a seed no browser
+wallet surrenders. The two roots differ by necessity, so an employee is anchored
+under one route and must claim under the same one — wallet employees in the
+browser, seed-based test employees from the CLI. Nothing enforces it; a mismatch
+surfaces only as an anchor she cannot open.
+
+### Every assertion is checked before proving
+
+The circuit's checks are re-run off-circuit first, against the same pure
+circuits, so a wrong file names itself instead of costing minutes of proving and
+then reporting `assertion failed`:
+
+- the payslip is for this contract, this period, this slot;
+- the bundle was filed for the connected wallet (`payeeHash`);
+- the payslip figures open the published commitment (`commitmentFor`);
+- **the passphrase reproduces the anchored claim key** — the likeliest failure in
+  the whole flow, and the one worth naming precisely, since the anchor is
+  write-once;
+- the pool coin covers the benefit.
+
+### What a claim discloses
+
+The period, the params version, the nullifier, and that a claim happened. **Not**
+the employer, not the slot, not the salary, not the benefit paid.
+
+The nullifier is `hash(claimKey, window, fund)` — keyed on a secret. The obvious
+construction, `hash(domain, ownPublicKey, window)`, is computable by everyone who
+has ever been given her coin public key, which is an address she hands out to be
+paid. They would enumerate windows, test membership of the public `spent` set,
+and read her benefit history. It is the single most sensitive fact in the system
+and it would have been recoverable by every employer she ever had.
+
+### The benefit is derived from the final month alone
+
+```
+benefit = min(gross, maxMonthlyGross) × rate / 10000
+```
+
+Compact has no division, so the quotient is witnessed and pinned by
+`q × 10000 ≤ n < (q + 1) × 10000`, which admits exactly one value.
+
+⚠️ **Stated rather than buried.** Real WW computes a dagloon from SV-loon across
+a reference year, precisely because one month can be distorted by a bonus,
+overtime, or a partial month worked. Deriving from the final month alone is more
+manipulable than that. The mitigations not built are capping the final gross
+against the accumulated average, or taking the median of the last three. What
+**is** built is the cap, and the structural deterrent that inflating a final
+salary moves the employer's own published `totalPayrollFor` and is assessed for
+tax and contribution — the attack is priced rather than free.
+
+The rate is also **flat**, where the real scheme steps it down after the opening
+months. That belongs in `BenefitParams` as a schedule and is not modelled.
+
+Months worked is **attested by the employer, not derived**. The fund cannot read
+a payroll ledger to count for itself, and a public per-person counter would be a
+tenure record keyed to one worker. It stays auditable after the fact, because the
+filings are public.
 
 ## Frontend
 
@@ -611,6 +1155,36 @@ than an error.
 `npm run frontend` regenerates it first, so a normal start stays in sync. Running
 `npm --prefix frontend run dev` directly skips that step.
 
+### 4. End employment, and claim
+
+Once a period is filed, the benefit half runs without the period being funded or
+paid at all — `claim` opens `commitmentsFor` and `payeeFor` and checks the
+termination; it never looks at `fundedFor` or `paidFor`.
+
+```bash
+# platform, once per fund
+npm run deploy:fund
+npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1
+npm run fund -- deposit --amount 200
+```
+
+Then, in order and each by the party that must do it:
+
+1. **Employee** — `/employee` → **Your claim key** → passphrase → copy the hash.
+   Also **View my payroll keys**, which is what the roster needs.
+2. **Employer** — `/employer/payroll` → **End employment** → look the employee up
+   by coin public key, paste her claim-key hash and the payroll passphrase.
+   Download the opening into `terminations/`.
+3. **Employer** — **Get payslips** for that period and send the employee hers.
+4. **Relay** — `npm run relay -- <period> --publish`.
+5. **Employee** — `/claim` → her bundle from `claims/<period>/`, her payslip, her
+   passphrase → **Claim my benefit**.
+6. **Operator** — `npm run fund -- reconcile --value <EUR>` to recover the change
+   coin the claim left behind, so the pool stays spendable.
+
+Step 6 is not optional bookkeeping. Until it runs, the fund's remaining balance
+is a coin whose nonce exists nowhere.
+
 ## What is private, and what is not
 
 Everything below was verified on preview, not inferred from documentation. Where
@@ -629,9 +1203,22 @@ something is unproven it says so.
 | **Amounts moved when paying** | no | shielded coins |
 | **Who each employee is** | no | `payeeFor` stores a hash of the coin public key |
 | **The openings** | no | sealed under the employer's key |
+| A termination happened, for some slot | **yes** | `terminationFor` has a key per terminated slot |
+| **Months worked, and the claim-key hash** | no | committed inside the attestation |
+| Which periods have a claim tree | **yes** | `rootFor` |
+| How many claims have settled | **yes** | `claimsPaid` — a count, never an amount |
+| One spent nullifier per claim | **yes** | opaque; the image of a secret, linked to nobody |
+| **Who claimed, and for how much** | no | the benefit is a shielded coin |
+| **The fund's balance** | no | a shielded coin, so the fund is *not* publicly solvent |
 
 The public total is deliberate and useful: an auditor can check what a company
 paid in a month without learning what anyone earns.
+
+The fund's opposite is deliberate too, and costs something real. It publishes
+**counts, not amounts**, and its balance is a shielded coin — so it cannot
+demonstrate solvency publicly. That cannot be fixed without also revealing
+individual benefits: successive balances would give away the differences between
+them. The Claim page says so rather than implying an audit that is not possible.
 
 ### Contract-held coins are private — with a condition
 
@@ -683,6 +1270,7 @@ on the operator's own machine either way.
 | Works for any employer | yes | only when employer == operator |
 | Circuits without coin operations (`setPayroll`) | **works** | works |
 | Circuits with coin operations (`fundEmployee`, `payEmployee`) | **works** | works |
+| The benefit claim (`claim`) | **works** — proved in the claimant's own page | n/a: needs the payee's key, which the CLI does not hold |
 | Salaries leave the machine | no | no (localhost only) |
 | Prover key delivery | fetched from `public/zk` (10 MB+) | read from disk |
 
@@ -896,7 +1484,24 @@ long as nobody calls it employees being paid.
 The browser route does not collapse those roles. In the verified run above the
 employer signed with their own wallet extension and the platform could not have
 filed, funded or paid on their behalf — the contract asserts it. **Employer and
-operator are genuinely separate there; only employer and employee are not.**
+operator are genuinely separate there.**
+
+### The 2026-08-25 run was not custodial at all
+
+Both employees held their own 1AM wallets, supplied their own coin and encryption
+public keys into the roster, and one derived her own claim key from her own
+passphrase and claimed with it. No key in that chain was derived from the
+employer's passphrase.
+
+`claim` makes that structural rather than a matter of good practice: it rebuilds
+`payeeBinding` from `ownPublicKey()`, so a benefit can only be claimed by the
+wallet payroll filed as payee. A custodial employee — one whose key the employer
+derived — is one whose *employer* could claim her benefit. The derived-key
+shortcut is therefore fine for demonstrating a payment rail and **not fine once
+benefits are involved**.
+
+What is still custodial: the seed-based test employees `npm run payee`
+generates, and any roster still using employer-derived keys.
 
 ## Decoding node and proof-server errors
 
@@ -942,9 +1547,13 @@ to be a bug.
 
 ```
 undeployed/payroll:acme
-preview/payroll
+preview/payroll:blockstat-solutions-v5
+preview/taxparams
 preview/peur
 ```
+
+`taxparams` has no instance suffix: there is one registry per network, shared by
+every employer.
 
 The network is part of the key because the same contract is routinely deployed
 to the local devnet and to preview, and those are entirely different chains.
@@ -1092,6 +1701,10 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 | `npm run demo:server`    | ⚠️ demo-only self-service onboarding on :8787      |
 | `npm run roster:template`| write roster-template.xlsx                        |
 | `npm run deploy:payroll` | deploy a payroll instance (`INSTANCE=x`)          |
+| `npm run deploy:tax`     | registry, v1, payroll, employer, rule window — in the one order that works |
+| `npm run registry`       | inspect `taxparams`: versions, rates, `paramsHash` |
+| `npm run payee`          | generate a keypair — used for the treasury keys   |
+| `npm run test:bands`     | differential test: TypeScript bracket arithmetic vs the circuit's |
 | `npm run payroll`        | assign employer, set payroll, verify, recover openings |
 | `npm run deploy:peur`    | deploy pEUR, then mint the initial supply         |
 | `npm run peur`           | pEUR status, mint, send to an employer            |
@@ -1103,6 +1716,13 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 | `npm run frontend:build` | production build of the frontend                  |
 | `npm run frontend:config`| copy contract module, ZK assets and addresses into `frontend/` — also available from inside `frontend/` as `npm run config` |
 | `npm run validate`       | typecheck + compile                               |
+| `npm run deploy:fund`    | deploy the unemployment fund                      |
+| `npm run fund`           | fund status, params, deposit, pool, reconcile — **flags need `--`** |
+| `npm run terminate`      | end an employee's employment from the CLI         |
+| `npm run relay`          | build a period's claim tree, optionally publish the root |
+| `npm run test:payslip`   | payslip encode/decode and commitment round-trip   |
+| `npm run test:tree`      | claim-tree paths fold to the root, and tampering does not |
+| `npm run test`           | bands + payslip + tree                            |
 
 `npm run deploy` is the generic form the two deploy scripts wrap; it takes
 `CONTRACT_NAME` and `INSTANCE` from the environment.
@@ -1113,25 +1733,37 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 midnight-polisZK/
 ├── compose.yml                    # local devnet: node + indexer
 ├── contracts/
-│   ├── payroll.compact            # private salaries, public aggregate
+│   ├── payroll.compact            # private salaries, public aggregate, terminations
+│   ├── taxparams.compact          # versioned, append-only tax rules
 │   ├── peur.compact               # shielded stablecoin
+│   ├── fund.compact               # unemployment fund: rules, roots, nullifiers, pool
 │   └── managed/                   # compiled artifacts, per contract (gitignored)
 ├── src/
 │   ├── deploy.ts                  # deploys whichever CONTRACT_NAME names
 │   ├── payroll-cli.ts             # payroll CLI
 │   ├── peur-cli.ts                # pEUR CLI
+│   ├── fund-cli.ts                # fund: status, params, deposit, pool, reconcile
+│   ├── terminate-cli.ts           # end employment (CLI route)
+│   ├── relay.ts                   # build + publish a period's claim tree
 │   ├── check-balance.ts           # address + tNIGHT/tDUST
 │   ├── providers/                 # midnight-js provider wiring
-│   └── utils/                     # network config, wallet, contract, deployments
+│   └── utils/
+│       ├── benefit-params.ts      # the published rule sets — only their HASH is on chain
+│       ├── claim-tree.ts          # the tree, hashed by the contract's own pure circuits
+│       ├── fund-pool.ts           # coin nonces + change-nonce derivation
+│       └── …                      # network config, wallet, contract, deployments
 ├── frontend/                      # wallet-connect UI (Vite + TypeScript)
 │   ├── public/deployments.json    # generated by npm run frontend:config
 │   └── src/
 │       ├── wallet/WalletContext.tsx   # connect, account snapshot, refresh
-│       ├── pages/                     # Overview, Payroll, Peur
-│       ├── components/                # CopyRow, Tile, WalletPicker
-│       └── lib/                       # formatting, deployments
+│       ├── pages/                     # Public, Employer, Employee, Claim
+│       ├── components/                # ClaimForm, ClaimKey, EndEmployment, CopyRow, …
+│       └── lib/                       # claim.ts, claimKey.ts, endEmployment.ts, payslip, …
+├── terminations/                  # employers' termination openings — input to the relay
+├── claims/<period>/               # claim bundles the relay writes, one per claimant
 ├── .env                           # config (keep private!)
 ├── deployment.json                # addresses, keyed <network>/<contract>[:instance]
+├── fund-pool.json                 # ⚠️ the ONLY copy of the fund's coin nonces (gitignored)
 ├── .wallet-state/                 # cached sync state (gitignored, 0600)
 └── payroll-secrets.*.json         # local cache of openings, rebuildable from chain (gitignored, 0600)
 ```
@@ -1172,6 +1804,32 @@ Every claim this project makes, in one contract:
   contract recorded for it, so August's payment and September's are independent.
   This is the case that broke every earlier attempt.
 
+### Tax and net pay, verified on chain
+
+Preview, 2026-08-20. One registry, one payroll instance, one period.
+
+```
+taxparams  7feb657fb4a0541e3308d8fb14eca4538e6343d16f0a7540b620ed7547492910
+           version 1 published — 35.75 / 37.56 / 49.50 %,
+           thresholds 3,240.25 and 6,535.50 per month, contribution 3.00 %
+
+payroll:blockstat-solutions-v5
+           7fd5cddcef5c8945ce0b563dd6ceff0a71fdaeff9ac59339aec7b3656db89a7f
+           employer assigned, period 202610 filed
+
+period 202610   gross €560.00 = tax €200.20 + social €16.80 + net €343.00
+taxPool €0.00   socialPool €0.00     (withholding not yet called)
+```
+
+Recomputing the same period offline from the gross figures alone reproduces
+those totals exactly — the point of publishing the rules and the `paramsHash`
+rather than only the result. The pools being zero is the honest reading of the
+chain, not a failed decode: nothing has funded them yet.
+
+Three payroll instances still in `deployment.json` predate the current contract.
+The Public page counts them as unreadable and says so, rather than dropping them
+and reporting a total that silently omits whatever they hold.
+
 ### Both proving routes work
 
 Proofs can be generated by the local proof server or by the wallet, and the page
@@ -1197,6 +1855,53 @@ A wallet that proves in-tab keeps them on the machine; one that forwards to a
 hosted prover does not, and which of those happens is the wallet's decision.
 That makes it a privacy question before it is a performance one — worth
 establishing for whichever wallet a deployment targets.
+
+### A benefit claimed, end to end
+
+Preview, 2026-08-25. One fund, one termination, one claim — every step signed by
+the key that should sign it, and the claim proved in the claimant's own browser.
+
+```
+fund      8615dd7a691ab805874e089efdb10e8b0572cdc518387a662d8ea0baf6c356a6
+          v1 published        tx a99421c5ce1505633ea4b277fc087254ee83fba8a929d75e67306cc28bbcd226
+          €460 deposited      3 coins, nonces in fund-pool.json
+
+payroll:blockstat-solutions-v6
+          6220bb394fbb3c6c3a08fe85329de1f6bf78d6138781917975f0742c790b7a0a
+          employer 9e584bd4…  (a browser wallet, NOT the platform)
+          202601 filed, 2 employees
+
+termination  slot 0, 1 month  tx 202f43bd649b5cc6ca96655ce502cfd192485b85a9bd16c3853cd4f02d272f1d
+claim tree   root 52386831…  over 1 leaf
+             published       tx 492b2178a3c8fa49e13fb371472dd5343c9bd6bf2a88eeb55ed741e97668c705
+
+claim        €154.00 paid    tx aa50aa27e5003a…0074d0da36
+             claimsPaid 1    pool moved to change coin #3
+```
+
+What that run establishes:
+
+- **The claimant signed.** Not the platform, not the employer, not a relay. The
+  wallet payroll filed as payee is the only key that can produce the
+  `payeeBinding` the circuit rebuilds from `ownPublicKey()`.
+- **The employer signed the termination**, from their own browser wallet, on an
+  instance the platform cannot sign for.
+- **The benefit is arithmetically pinned.** €220 gross × 70%, capped at €4,000 →
+  €154.00. The witnessed quotient admits exactly one value, so no other figure
+  would have proved.
+- **The path was checked before publishing.** `pathRoot(path) == root` via the
+  contract's own pure circuit, and `payeeHash` confirmed slot 0 was the employee
+  it was supposed to be.
+- **The change coin was recovered and verified.** `evolveChangeNonce` reproduced
+  the on-chain commitment at leaf 42896 exactly — so the €96 remainder is
+  spendable rather than stranded.
+
+⚠️ **€154 exceeds that employee's €134.75 net pay.** Being dismissed pays better
+than working, which is an artifact of two modelling gaps rather than a wrong
+rate: the benefit has **no withholding** (real WW benefit is taxable income), and
+the tax model has **no allowance**, applying 35.75% + 3% from the first cent — so
+a €220 salary is taxed like a mid-range one. Fixing either is a `tax-params.ts`
+change or a v2 rule set, not a contract change.
 
 ### Roster size is two
 
@@ -1232,8 +1937,20 @@ payment was batched would make that 2 regardless of roster size.
 | Wallet-delegated proving (`getProvingProvider`) | **working** — 2 funded, 2 paid, 159s |
 | Several periods paid on one contract | **working** — coin ordinals map each slot to its own leaf |
 | DUST sponsorship | **untested** — mechanism exists in the SDK; attempts failed with `138` |
-| Employees holding their own keys | **not started** — wave 1 is custodial |
-| Tax / net pay | **not started** |
+| Employees holding their own keys | **working for wallet employees** — both employees in the 2026-08-25 run held their own 1AM wallets and supplied their own keys; the seed-based test employees the CLI generates are still custodial |
+| Versioned tax rules (`taxparams`) | **working** — v1 published on preview, append-only |
+| Tax and net pay computed in-circuit | **working** — bands pinned by witnessed quotients, verified on chain |
+| Withholding into the contract's pools | **built, not wired** — `fundWithholding` compiles and is deployed; no UI calls it, so the pools read €0.00 |
+| Remitting to the treasuries | **built, not wired** — same; `remitTax` / `remitSocial` are deployed and uncalled |
+| Unemployment fund deployed and funded | **working** — €460 in, rule set v1 published |
+| Ending employment | **working** — from the employer's browser and from the CLI |
+| Claim tree relay | **working** — root published for 202601 |
+| Claims and benefit payment | **working** — €154.00 claimed end to end from the claimant's browser; see **A benefit claimed** |
+| Claimant's claim key in the browser | **working** — passphrase + PBKDF2, salted with her coin public key |
+| Recovering a post-claim change coin | **working** — `fund reconcile`, verified against the on-chain commitment |
+| Anchoring the claim key at hire rather than termination | **not built** — needs a contract change; today she must hand the hash over before being dismissed |
+| Benefit withholding | **not modelled** — the benefit is paid untaxed, so it can exceed net pay |
+| Stepped benefit rate | **not modelled** — `BenefitParams` carries one flat rate, not a schedule |
 
 ### Known sharp edges
 
@@ -1253,15 +1970,62 @@ payment was batched would make that 2 regardless of roster size.
   process**.
 - **Roster size is compile-time.** Changing it means editing every
   `Vector<N, …>`, recompiling and redeploying.
+- **`fund-pool.json` is unrecoverable.** It is the only copy of the fund's coin
+  nonces. Lose it and the money stays in the contract, unspendable, forever.
+- **npm eats CLI flags without `--`.** `npm run fund deposit --amount 10` passes
+  npm's own config, not the script's; the flag vanishes and the command fails
+  asking for the argument you just typed. Use `npm run fund -- deposit --amount
+  10`. The CLI detects this case and says so.
+- **A termination opening is not a claim bundle.** `terminations/…json` goes
+  employer → relay; `claims/<period>/claim-bundle-…json` goes relay → claimant,
+  and only the second has a path. Their filenames were nearly identical until the
+  bundle was renamed.
+- **`connectContract` took a `contractName` it did not use.** It always imported
+  the payroll module while pointing the ZK provider at the named contract's
+  assets, so the first non-payroll caller fetched a verifier key for a circuit
+  that contract does not have. Fixed by loading through the same `LOADERS` map —
+  worth remembering as a shape: a parameter that is only *partly* honoured is
+  worse than one that is missing.
+- **A stale comment outlived the bug it described.** `payroll-run.ts` claimed
+  coin circuits could not be proved in the browser for a long time after that was
+  fixed and written up here. When the README and a code comment disagree about a
+  defeat, check the README.
 
 ## Not built yet
 
-`payroll` records what each employee is owed; `peur` holds the value. **Nothing
-connects them** — there is no payment path today.
+Money is **assessed, not collected**. `setPayroll` computes tax, contribution
+and net per employee in circuit and publishes the totals, and the payment path
+from contract to employee works end to end — but the three withholding circuits
+that would move the withheld money have no caller. Until the UI calls
+`fundWithholding`, `taxPool` and `socialPool` are genuinely zero, and the Public
+page says so rather than showing an assessed figure as if it had been collected.
 
-The interesting version is a treasury model: pEUR held by the payroll contract
-and disbursed against the salary commitments already stored there, so an
-employer provably pays what they committed. That needs an employee key registry,
-because the contract currently knows commitments but not identities — and each
-employee must supply both a coin public key and an encryption public key before
-a shielded coin can reach them.
+The benefit side is now the opposite shape: it works end to end, and the money
+in it got there by hand. **Contributions do not reach the fund.** A payroll
+contract cannot call the fund, so a remittance is a transfer to a key and then a
+deliberate `fund deposit` by whoever holds it. The €460 in the fund was put there
+by the operator, not collected from anyone's payroll.
+
+In order:
+
+1. **Wire withholding.** `fundWithholding`, then `remitTax` / `remitSocial`.
+   The circuits are deployed; this is client work.
+2. **Connect contributions to the fund.** Today the two halves are assessed and
+   paid independently. Closing that loop is an operational design — who holds the
+   key between `remitSocial` and `fund deposit` — before it is code.
+3. **Anchor the claim key at hire.** Today it is written into the termination
+   attestation, so an employee must hand the hash to her employer *before* being
+   dismissed. Carrying it in the roster and writing it in `setPayroll` is the
+   faithful shape, and it needs a contract change and a redeploy.
+4. **Model the benefit properly.** Withholding on the benefit itself, and a rate
+   that steps down after the opening months — both are `BenefitParams` and
+   client work, not contract walls. Until then a benefit can exceed net pay.
+5. **Employees holding their own keys** is **done for wallet-based employees**:
+   both employees in the 2026-08-25 run held their own 1AM wallets, supplied
+   their own coin and encryption public keys, and one derived her own claim key
+   and claimed with it. What remains custodial is the seed-based test employees
+   the CLI generates.
+
+`tax-and-vaults-approach.md` describes a four-contract version of this with
+separate tax and contribution vaults. It is superseded — see **What the compiler
+would not do** for why that shape cannot be built.

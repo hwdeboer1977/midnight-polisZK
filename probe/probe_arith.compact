@@ -1,0 +1,51 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+// Probe 5: the whole per-employee calculation, in the shape payroll needs.
+//
+// Compact has no `/`, so each floor division is witnessed and pinned:
+//   q * 10000 <= n < (q + 1) * 10000
+// admits exactly one q, using only multiplication and comparison.
+export ledger taxOut: Uint<64>;
+export ledger contribOut: Uint<64>;
+export ledger netOut: Uint<64>;
+
+export circuit line(
+  gross: Uint<60>,
+  t1: Uint<60>,
+  t2: Uint<60>,
+  r1: Uint<16>,
+  r2: Uint<16>,
+  r3: Uint<16>,
+  maxBase: Uint<60>,
+  cr: Uint<16>,
+  taxQ: Uint<60>,
+  contribQ: Uint<60>
+): [] {
+  // Three bands. Each subtraction is guarded by the comparison in front of it,
+  // so none can go below zero.
+  const b1 = gross < t1 ? gross : t1;
+  const b2 = gross <= t1 ? 0 : ((gross < t2 ? gross : t2) - t1) as Uint<60>;
+  const b3 = gross <= t2 ? 0 : (gross - t2) as Uint<60>;
+
+  const taxN =
+    (b1 as Uint<80>) * (r1 as Uint<80>) +
+    (b2 as Uint<80>) * (r2 as Uint<80>) +
+    (b3 as Uint<80>) * (r3 as Uint<80>);
+
+  assert((taxQ as Uint<80>) * 10000 <= taxN, "tax quotient too small");
+  assert(taxN < ((taxQ as Uint<80>) + 1) * 10000, "tax quotient too large");
+
+  const base = gross < maxBase ? gross : maxBase;
+  const contribN = (base as Uint<80>) * (cr as Uint<80>);
+
+  assert((contribQ as Uint<80>) * 10000 <= contribN, "contribution quotient too small");
+  assert(contribN < ((contribQ as Uint<80>) + 1) * 10000, "contribution quotient too large");
+
+  assert(taxQ + contribQ <= gross, "tax and contribution exceed gross");
+  const net = (gross - taxQ - contribQ) as Uint<60>;
+
+  taxOut = disclose(taxQ) as Uint<64>;
+  contribOut = disclose(contribQ) as Uint<64>;
+  netOut = disclose(net) as Uint<64>;
+}

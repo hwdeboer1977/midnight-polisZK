@@ -25,17 +25,21 @@
  * either tool, for as long as the passphrase is remembered.
  */
 
-const SEALED_BYTES = 68;
+const SEALED_BYTES = 100;
 const IV_BYTES = 12;
 const SALARY_BYTES = 8;
 const NONCE_BYTES = 32;
-const PLAINTEXT_BYTES = SALARY_BYTES + NONCE_BYTES;
+/** Four 8-byte amounts, weeks padded to 8, and the 32-byte nonce. */
+const AMOUNTS = 4;
+const WEEKS_BYTES = 8;
+const PLAINTEXT_BYTES = SALARY_BYTES * AMOUNTS + WEEKS_BYTES + NONCE_BYTES;
 
 const DOMAIN = {
   nonce: "polisZK/nonce/v1",
   seal: "polisZK/seal/v1",
   employee: "polisZK/employee/v1",
   coin: "polisZK/coin/v1",
+  termination: "polisZK/termination/v1",
 } as const;
 
 /**
@@ -103,6 +107,23 @@ export async function deriveEmployerKey(
   return new Uint8Array(bits);
 }
 
+/**
+ * The blinding nonce for one employee's termination attestation.
+ *
+ * Byte-identical to `deriveTerminationNonce` in `src/utils/payroll-openings.ts`,
+ * for the same reason the salary nonce is: an attestation made here must be
+ * reopenable by the CLI and vice versa. A termination is signed once and
+ * consumed months later by a relay, so a random nonce would have to survive in
+ * a file nobody thought to keep.
+ */
+export async function deriveTerminationNonce(
+  employerKey: Uint8Array,
+  period: number,
+  index: number
+): Promise<Uint8Array> {
+  return sha256(DOMAIN.termination, employerKey, `${period}:${index}`);
+}
+
 /** The nonce for one employee in one period. Deterministic, hence recoverable. */
 export async function deriveNonce(
   employerKey: Uint8Array,
@@ -128,9 +149,17 @@ async function sealingKey(employerKey: Uint8Array): Promise<CryptoKey> {
  * then repeat with the same key on different plaintext. Under GCM that leaks
  * the XOR of the two salaries and voids authentication.
  */
+export interface PayrollLine {
+  grossMinor: bigint;
+  taxMinor: bigint;
+  socialMinor: bigint;
+  netMinor: bigint;
+  weeks: number;
+}
+
 export async function sealOpening(
   employerKey: Uint8Array,
-  salaryMinor: bigint,
+  line: PayrollLine,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
   if (nonce.length !== NONCE_BYTES) {
@@ -138,8 +167,12 @@ export async function sealOpening(
   }
 
   const plaintext = new Uint8Array(PLAINTEXT_BYTES);
-  new DataView(plaintext.buffer).setBigUint64(0, salaryMinor, false);
-  plaintext.set(nonce, SALARY_BYTES);
+  const view = new DataView(plaintext.buffer);
+  [line.grossMinor, line.taxMinor, line.socialMinor, line.netMinor].forEach(
+    (amount, i) => view.setBigUint64(i * SALARY_BYTES, amount, false)
+  );
+  view.setBigUint64(SALARY_BYTES * AMOUNTS, BigInt(line.weeks), false);
+  plaintext.set(nonce, SALARY_BYTES * AMOUNTS + WEEKS_BYTES);
 
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const ciphertext = new Uint8Array(
@@ -166,7 +199,7 @@ export async function sealOpening(
 export async function openSealed(
   employerKey: Uint8Array,
   sealed: Uint8Array
-): Promise<{ salaryMinor: bigint; nonce: Uint8Array }> {
+): Promise<PayrollLine & { nonce: Uint8Array }> {
   if (sealed.length !== SEALED_BYTES) {
     throw new Error(`sealed opening is ${sealed.length} bytes, expected ${SEALED_BYTES}`);
   }
@@ -179,13 +212,14 @@ export async function openSealed(
     )
   );
 
+  const view = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength);
   return {
-    salaryMinor: new DataView(
-      plaintext.buffer,
-      plaintext.byteOffset,
-      plaintext.byteLength
-    ).getBigUint64(0, false),
-    nonce: plaintext.slice(SALARY_BYTES),
+    grossMinor: view.getBigUint64(0, false),
+    taxMinor: view.getBigUint64(SALARY_BYTES, false),
+    socialMinor: view.getBigUint64(SALARY_BYTES * 2, false),
+    netMinor: view.getBigUint64(SALARY_BYTES * 3, false),
+    weeks: Number(view.getBigUint64(SALARY_BYTES * AMOUNTS, false)),
+    nonce: plaintext.slice(SALARY_BYTES * AMOUNTS + WEEKS_BYTES),
   };
 }
 

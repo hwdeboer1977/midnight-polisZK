@@ -1,0 +1,105 @@
+pragma language_version >= 0.16;
+
+import CompactStandardLibrary;
+
+// The rule sets payroll is computed under, versioned and immutable.
+//
+// One instance, shared by every employer. It holds no money and has exactly one
+// job: to be the record of what the rates were, so that a period filed in
+// August 2026 stays checkable against August 2026's rules forever. A payroll
+// whose rules can be rewritten afterwards proves nothing, and every claim
+// derived from it becomes unprovable the moment the rates change.
+//
+// ── Append-only, and that is the whole safety property ────────────────────
+//
+// A version is written once and can never be edited or replaced. The design
+// this replaces was "editable until first use, then frozen", which is strictly
+// weaker AND unbuildable here: freezing on first use needs the payroll contract
+// to tell this one that it has been used, and cross-contract calls are not
+// supported by the compiler. Append-only needs no such signal — nothing can be
+// edited, so there is no moment at which editing must stop.
+//
+// The cost is that a mistake is permanent. It is corrected the way a mistake in
+// a published statute is corrected: by publishing a later version that
+// supersedes it, not by altering the record.
+
+struct TaxParams {
+  // Monotonic. Identifies the rule set; the map is keyed by it.
+  version: Uint<16>;
+  // YYYYMM this version first applies to. A field rather than the key, so a
+  // correction can supersede an earlier version for the same month.
+  validFrom: Uint<32>;
+
+  // Three brackets, so two thresholds. Monthly, in minor units.
+  threshold1: Uint<60>;
+  threshold2: Uint<60>;
+  // Basis points: 3705 is 37.05%.
+  rate1: Uint<16>;
+  rate2: Uint<16>;
+  rate3: Uint<16>;
+
+  // The social contribution: a flat rate on gross up to a ceiling.
+  maxContribBase: Uint<60>;
+  contribRate: Uint<16>;
+}
+
+// Whoever may publish a version.
+//
+// In production this is a public body or a threshold key — the party that sets
+// tax rates is not the party that runs a payroll platform. In this deployment
+// it is one key, and the app says so rather than implying otherwise.
+export ledger authority: ZswapCoinPublicKey;
+
+// version -> the rule set. Written once per version, never overwritten.
+export ledger paramsFor: Map<Uint<16>, TaxParams>;
+
+// Every version published, so the registry can be enumerated and audited
+// without knowing what to look for.
+export ledger versions: Set<Uint<16>>;
+export ledger latestVersion: Uint<16>;
+export ledger versionCount: Uint<16>;
+
+constructor() {
+  authority = disclose(ownPublicKey());
+  latestVersion = 0;
+  versionCount = 0;
+}
+
+// Publishes a rule set. Once.
+//
+// Everything here is public — the rates have to be, or nobody can recheck the
+// arithmetic that a payroll's published totals claim to follow.
+export circuit publish(params: TaxParams): [] {
+  assert(ownPublicKey() == authority, "only the authority may publish rules");
+
+  const v = disclose(params.version);
+  assert(v > 0, "version must be greater than zero");
+  assert(!paramsFor.member(v), "that version is already published and cannot be changed");
+
+  const startsAt = disclose(params.validFrom);
+  assert(startsAt >= 200001, "validFrom must be YYYYMM, e.g. 202601");
+  assert(startsAt <= 299912, "validFrom must be YYYYMM, e.g. 202601");
+
+  // Ordering the brackets here means the payroll circuit does not have to.
+  assert(
+    disclose(params.threshold1) < disclose(params.threshold2),
+    "thresholds must be in ascending order"
+  );
+
+  paramsFor.insert(v, disclose(params));
+  versions.insert(v);
+  versionCount = (versionCount + 1) as Uint<16>;
+  if (v > latestVersion) {
+    latestVersion = v;
+  }
+}
+
+// The hash a payroll contract records for a period.
+//
+// Pure, so the employer, the platform and any reviewer all compute the identical
+// value from the identical published fields — and so a claim circuit can later
+// prove WHICH rules produced an attestation without re-reading this registry,
+// which it could not do anyway: contracts cannot read each other's state.
+export pure circuit paramsHash(params: TaxParams): Bytes<32> {
+  return persistentHash<TaxParams>(params);
+}

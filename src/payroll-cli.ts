@@ -13,7 +13,8 @@ import {
   openSealed,
   sealOpening,
 } from "./utils/payroll-openings.js";
-import { parseRosterWorkbook, ROSTER_SIZE } from "./utils/roster.js";
+import { FULL_MONTH_WEEKS, parseRosterWorkbook, ROSTER_SIZE } from "./utils/roster.js";
+import { DUTCH_V1, computeLine } from "./utils/tax-params.js";
 // The one formatter, rather than a local copy: this file had its own, and it
 // kept dividing by 100 long after the unit became 1e-6, which is exactly the
 // drift a second implementation is free to have.
@@ -41,6 +42,16 @@ interface Opening {
   index: number;
   salary: string;
   nonce: string;
+  /**
+   * Weeks worked, when the record is new enough to have it.
+   *
+   * The commitment binds it, but it is not derivable from the gross — unlike
+   * tax, contribution and net, which the published rule set fixes. A record
+   * written before withholding existed has neither, so verification falls back
+   * to deriving the three and assuming a full month, and says so rather than
+   * reporting a mismatch it cannot explain.
+   */
+  weeks?: number;
 }
 
 interface SecretRecord {
@@ -271,7 +282,8 @@ async function recoverOpenings(
         continue;
       }
       try {
-        const { salaryMinor, nonce } = openSealed(employerKey, blob);
+        const opened = openSealed(employerKey, blob);
+        const { grossMinor, taxMinor, socialMinor, netMinor, weeks, nonce } = opened;
 
         // The commitment is the authority. A blob that decrypts cleanly but
         // does not reproduce the on-chain commitment is worse than one that
@@ -281,7 +293,17 @@ async function recoverOpenings(
           // Recomputed with the contract's own pure circuit, so this is the
           // identical hash the proof committed to — not a re-implementation.
           const actual = hex(
-            conn.contractModule.pureCircuits.commitmentFor(salaryMinor, nonce)
+            conn.contractModule.pureCircuits.commitmentFor(
+              grossMinor,
+              taxMinor,
+              socialMinor,
+              netMinor,
+              BigInt(weeks),
+              BigInt(period),
+              ledger.employer,
+              ledger.paramsHashFor.lookup(BigInt(period)),
+              nonce
+            )
           );
           if (actual !== expected) {
             console.log(
@@ -294,7 +316,7 @@ async function recoverOpenings(
 
         employees.push({
           index,
-          salary: salaryMinor.toString(),
+          salary: grossMinor.toString(),
           nonce: hex(nonce),
         });
       } catch {
@@ -618,8 +640,18 @@ async function main() {
           const nonces = salaries.map((_, index) =>
             deriveNonce(employerKey, period, index)
           );
-          const sealedOpenings = salaries.map((salary, index) =>
-            sealOpening(employerKey, salary, nonces[index]!)
+          const lines = salaries.map((grossMinor) => {
+            const c = computeLine(grossMinor, DUTCH_V1);
+            return {
+              grossMinor,
+              taxMinor: c.taxMinor,
+              socialMinor: c.contribMinor,
+              netMinor: c.netMinor,
+              weeks: FULL_MONTH_WEEKS,
+            };
+          });
+          const sealedOpenings = lines.map((line, index) =>
+            sealOpening(employerKey, line, nonces[index]!)
           );
 
           try {
@@ -631,18 +663,27 @@ async function main() {
             // is rejected at the runtime type check rather than coerced.
             // Who each slot is payable to, hashed with the contract's own pure
             // circuit so it matches what `payEmployee` will check.
+            const instanceBytes = Uint8Array.from(
+              Buffer.from(conn.contractAddress.replace(/^0x/, ""), "hex")
+            );
             const payees = payeeKeys.map((key) =>
-              conn.contractModule.pureCircuits.payeeHash({
-                bytes: Uint8Array.from(Buffer.from(key, "hex")),
-              })
+              conn.contractModule.pureCircuits.payeeHash(
+                { bytes: Uint8Array.from(Buffer.from(key, "hex")) },
+                BigInt(period),
+                instanceBytes
+              )
             );
 
             const tx = await conn.deployed.callTx.setPayroll(
               BigInt(period),
               salaries,
+              lines.map((l) => BigInt(l.weeks)),
+              lines.map((l) => l.taxMinor),
+              lines.map((l) => l.socialMinor),
               nonces,
               sealedOpenings,
-              payees
+              payees,
+              toCircuitParams(DUTCH_V1)
             );
 
             writeSecrets(
@@ -652,6 +693,7 @@ async function main() {
                 index,
                 salary: salary.toString(),
                 nonce: hex(nonces[index]!),
+                weeks: lines[index]?.weeks ?? 4,
               }))
             );
 
@@ -731,10 +773,26 @@ async function main() {
               break;
             }
 
+            // The commitment binds the whole line, so opening it needs more
+            // than the gross the record stores. Tax, contribution and net are
+            // recomputed from the published rule set — the same arithmetic the
+            // circuit pins — and weeks comes from the record when it has one.
+            const grossMinor = BigInt(record.salary);
+            const line = computeLine(grossMinor, DUTCH_V1);
+            const assumedWeeks = record.weeks === undefined;
+            const weeksUsed = record.weeks ?? 4;
+
             // Recomputed with the contract's own pure circuit, so this is the
             // identical hash the proof committed to — not a re-implementation.
             const expected = conn.contractModule.pureCircuits.commitmentFor(
-              BigInt(record.salary),
+              grossMinor,
+              line.taxMinor,
+              line.contribMinor,
+              line.netMinor,
+              BigInt(weeksUsed),
+              BigInt(period),
+              ledger.employer,
+              ledger.paramsHashFor.lookup(BigInt(period)),
               Uint8Array.from(Buffer.from(record.nonce, "hex"))
             );
             const onChain = forPeriod.lookup(BigInt(index));
@@ -742,13 +800,25 @@ async function main() {
 
             console.log();
             console.log(`Period:          ${periodName(period)}`);
-            console.log(`Salary (local):  ${formatPeur(BigInt(record.salary))} pEUR`);
+            console.log(`Salary (local):  ${formatPeur(grossMinor)} pEUR`);
+            console.log(
+              chalk.gray(
+                `Weeks:           ${weeksUsed}` +
+                  (assumedWeeks ? " (assumed — this record predates the field)" : "")
+              )
+            );
             console.log(chalk.gray(`On chain:        ${hex(onChain)}`));
             console.log(chalk.gray(`Recomputed:      ${hex(expected)}`));
             console.log(
               matches
                 ? chalk.green.bold("✅ Commitment matches — this salary is what was committed.\n")
-                : chalk.red.bold("❌ Mismatch — the local record does not open this commitment.\n")
+                : chalk.red.bold(
+                    "❌ Mismatch — the local record does not open this commitment.\n" +
+                      (assumedWeeks
+                        ? "   The weeks worked were assumed. If this period was filed with\n" +
+                          "   anything other than a full month, that alone explains it.\n"
+                        : "")
+                  )
             );
           } catch (error) {
             console.error(chalk.red("❌ Verification failed:"), error);
@@ -816,3 +886,18 @@ main().catch((error) => {
   console.error(chalk.red("\n❌ Error:"), error);
   process.exit(1);
 });
+
+/** The shared rule set in the shape the generated binding expects. */
+function toCircuitParams(p: typeof DUTCH_V1) {
+  return {
+    version: BigInt(p.version),
+    validFrom: BigInt(p.validFrom),
+    threshold1: p.threshold1,
+    threshold2: p.threshold2,
+    rate1: BigInt(p.rate1),
+    rate2: BigInt(p.rate2),
+    rate3: BigInt(p.rate3),
+    maxContribBase: p.maxContribBase,
+    contribRate: BigInt(p.contribRate),
+  };
+}

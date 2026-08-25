@@ -1,7 +1,13 @@
 import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { fetchContractState, INDEXERS, INDEXER_WS } from "./chain";
-import { deriveEmployerKey, deriveNonce, sealedCoinNonce } from "./openings";
+import {
+  deriveEmployerKey,
+  deriveNonce,
+  sealedCoinNonce,
+  type PayrollLine,
+} from "./openings";
+import { DUTCH_V1, computeLine } from "../generated/tax-params";
 import { submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
 import { connectContract, type ProvingMode } from "./submitPayroll";
 
@@ -20,7 +26,12 @@ import { connectContract, type ProvingMode } from "./submitPayroll";
 /** One slot's state, as the contract sees it. */
 export interface SlotState {
   index: number;
-  salaryMinor: bigint;
+  /**
+   * The whole line. The commitment covers all four amounts plus the weeks, so
+   * opening it needs every one of them — and the coin that settles the slot
+   * carries `netMinor`, not the gross.
+   */
+  line: PayrollLine;
   funded: boolean;
   paid: boolean;
 }
@@ -53,18 +64,28 @@ export interface PayeeKeys {
 export function slotStates(
   ledger: any,
   period: number,
-  salaries: bigint[]
+  salaries: bigint[],
+  weeks: number[]
 ): SlotState[] {
   const p = BigInt(period);
   const funded = ledger.fundedFor?.member(p) ? ledger.fundedFor.lookup(p) : null;
   const paid = ledger.paidFor?.member(p) ? ledger.paidFor.lookup(p) : null;
 
-  return salaries.map((salaryMinor, index) => ({
+  return salaries.map((grossMinor, index) => {
+    const computed = computeLine(grossMinor, DUTCH_V1);
+    return {
     index,
-    salaryMinor,
+    line: {
+      grossMinor,
+      taxMinor: computed.taxMinor,
+      socialMinor: computed.contribMinor,
+      netMinor: computed.netMinor,
+      weeks: weeks[index] ?? 4,
+    },
     funded: funded?.member(BigInt(index)) ? funded.lookup(BigInt(index)) : false,
     paid: paid?.member(BigInt(index)) ? paid.lookup(BigInt(index)) : false,
-  }));
+    };
+  });
 }
 
 const toHexBytes = (value: string): Uint8Array => {
@@ -118,15 +139,22 @@ export async function fundPeriod(options: {
     const salaryNonce = await deriveNonce(employerKey, period, slot.index);
     const coinNonce = await sealedCoinNonce(employerKey, period, round, slot.index);
 
+    // The coin carries net: what the employer funds for this slot is what the
+    // worker is owed after withholding. Tax and the contribution are funded
+    // once for the period by `fundWithholding`.
     await deployed.callTx.fundEmployee(
       BigInt(period),
       BigInt(slot.index),
-      slot.salaryMinor,
+      slot.line.grossMinor,
+      slot.line.taxMinor,
+      slot.line.socialMinor,
+      slot.line.netMinor,
+      BigInt(slot.line.weeks),
       salaryNonce,
       {
         nonce: coinNonce,
         color: toHexBytes(tokenId),
-        value: slot.salaryMinor,
+        value: slot.line.netMinor,
       }
     );
     done += 1;
@@ -227,7 +255,7 @@ export async function payPeriod(options: {
   onProgress(`Paying ${outstanding.length} employees in one transaction…`);
 
   const color = toHexBytes(tokenId);
-  const salaries = slots.map((s) => s.salaryMinor);
+  const lines = slots.map((s) => s.line);
   const salaryNonces: Uint8Array[] = [];
   const coins: unknown[] = [];
   const payees: { bytes: Uint8Array }[] = [];
@@ -242,7 +270,7 @@ export async function payPeriod(options: {
     coins.push({
       nonce: await sealedCoinNonce(employerKey, period, round, index),
       color,
-      value: slot.salaryMinor,
+      value: slot.line.netMinor,
       mt_index: BigInt(leaves[index]!),
     });
     payees.push({ bytes: payee });
@@ -266,7 +294,17 @@ export async function payPeriod(options: {
     compiledContract,
     contractAddress,
     circuitId: "payPeriod",
-    args: [BigInt(period), salaries, salaryNonces, coins, payees],
+    args: [
+      BigInt(period),
+      lines.map((l) => l.grossMinor),
+      lines.map((l) => l.taxMinor),
+      lines.map((l) => l.socialMinor),
+      lines.map((l) => l.netMinor),
+      lines.map((l) => BigInt(l.weeks)),
+      salaryNonces,
+      coins,
+      payees,
+    ],
     additionalCoinEncPublicKeyMappings: new Map(encMappings),
   } as any);
 
@@ -336,6 +374,8 @@ export async function fundAndPayPeriod(options: {
   tokenId: string;
   period: number;
   salaries: bigint[];
+  /** Weeks worked per employee, in roster order. */
+  weeks: number[];
   /** The employees' public keys, in roster order. See {@link PayeeKeys}. */
   payees: PayeeKeys[];
   provingMode?: ProvingMode;
@@ -349,6 +389,7 @@ export async function fundAndPayPeriod(options: {
     tokenId,
     period,
     salaries,
+    weeks,
     provingMode = "local",
   } = options;
   const onProgress = options.onProgress ?? (() => {});
@@ -374,7 +415,7 @@ export async function fundAndPayPeriod(options: {
   const ledger = (contractModule as any).ledger(
     await currentLedgerState(networkId, contractAddress)
   );
-  const slots = slotStates(ledger, period, salaries);
+  const slots = slotStates(ledger, period, salaries, weeks);
 
   // Which filing round this is. Re-filing a period bumps it, so its coins get
   // fresh nonces instead of colliding with the previous round's.
@@ -570,6 +611,8 @@ export async function fundAndPayViaService(options: {
   contractAddress: string;
   period: number;
   salaries: bigint[];
+  /** Weeks worked per employee, in roster order. */
+  weeks: number[];
   /** The employees' public keys, in roster order. See {@link PayeeKeys}. */
   payees: PayeeKeys[];
   passphrase: string;
@@ -581,6 +624,7 @@ export async function fundAndPayViaService(options: {
     contractAddress,
     period,
     salaries,
+    weeks,
     payees: payeeKeys,
     passphrase,
   } = options;
@@ -604,11 +648,16 @@ export async function fundAndPayViaService(options: {
   // employees' PUBLIC keys, so a compromised service learns this month's
   // amounts and cannot open another period or spend anyone's salary.
   const slots = [];
-  for (const [index, salary] of salaries.entries()) {
+  for (const [index, grossMinor] of salaries.entries()) {
     const keys = payeeKeys[index];
     if (!keys) throw new Error(`No payee keys for employee ${index + 1}`);
+    const computed = computeLine(grossMinor, DUTCH_V1);
     slots.push({
-      salary: salary.toString(),
+      gross: grossMinor.toString(),
+      tax: computed.taxMinor.toString(),
+      social: computed.contribMinor.toString(),
+      net: computed.netMinor.toString(),
+      weeks: weeks[index] ?? 4,
       salaryNonce: toHex(await deriveNonce(employerKey, period, index)),
       coinNonce: toHex(await sealedCoinNonce(employerKey, period, round, index)),
       payee: keys.coinPublicKey.toLowerCase(),

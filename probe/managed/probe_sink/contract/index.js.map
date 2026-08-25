@@ -1,0 +1,8 @@
+{
+  "version": 3,
+  "file": "index.js",
+  "sourceRoot": "../../../../",
+  "sources": ["probe/probe_sink.compact", "compiler/standard-library.compact"],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;EAAA;;;;;;;;;;MAeA,AAAA,MAMC;;;;;cANqB,MAAsB;cAAE,KAAc;;;;;;;;;;;;;;;;;;;;;;;;;yCAAtC,MAAsB,+BAAE,KAAc;;;;;;;mEAAtC,MAAsB,EAAE,KAAc;;;OAM3D;;;;GACA;EAtBD;;;;;;;;;;;;;;;;;;;;;;;;;;;IASA;;;;;;;;;yEAAgC;IAChC;;;;;;;;;;yEAAmD;;;;;;;GAYlD;ECmBD,AAAA,SAA2B;yEACqC;;EAgHhE,AAAA,8CAA+B;UACvB,oDAAuD;;;;;;;;;;;;yDAC3C,QAAM;UACxB,+BAA4C,QAAM;IAAlD;;;;;;;;;;;2HAAA;;;;;;;;EA8FF,AAAA,kBACE,QACA;;;0CAKU;8CACI;;sCACJ;sCAAoB;sCAAuB;;EApQvD,AAAA,kBAAA;oEAAA;;;EAAA,AAAA,gDAAA,QAAA;;wDAAA;wDAAA;;;;;;;EDeA,AAAA,SAMC,4BANqB,MAAsB,EAAE,KAAc;uDACjC,MAAI;UAC7B,KAAQ;IAAR;;;;;;;;;;6FAAA,KAAQ;;;;wEAAA;UAEF,OAA6E,2BAArE;;;;;;;;;;;mKAA0B,KAAG;;;;iHAApB;;4CAAyB;;;;;;;;;;;;;;uIAA0B,KAAG;;;iHAApB;;;UACzD,KAAS;;;;;qBAAwB,OAAK,GAAY,MAAI;IAAtD;;;;;;;;;;2HAA0B,KAAG;;;2HAA7B,KAAS;;;wEAAA;;GACV;;;;;;;;;;;;;;;;IAZD;sCAAA;;;;;;;;;;;2GAAgC;KAAA;IAChC;;;;;uCAAA;;;;;;;;;;;;;;;;4GAAmD;;;;;;wCAAnD;;;;;;;;;;;;6GAAmD;;;;;;;;;;;;;;uCAAnD;;;;;;;;;;;;;;;4GAAmD;;;;;;;;;;;;;;uCAAnD;;;;;;;;;;;;;;;;;4GAAmD;;;;;;;;;KAAA;;;;;;;;;;"
+}

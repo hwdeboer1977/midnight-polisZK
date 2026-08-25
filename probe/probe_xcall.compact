@@ -1,0 +1,34 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+contract Sink {
+  circuit accept(coin: ShieldedCoinInfo, tag: Bytes<32>): [];
+}
+
+// Where can a contract value legally come from? Not a cast, not an exported
+// argument, not a witness. Constructor parameter is what is left.
+export ledger vault: Sink;
+export ledger pushed: Counter;
+
+constructor(target: Sink) {
+  vault = target;
+}
+
+export circuit pushToVault(coin: ShieldedCoinInfo, tag: Bytes<32>): [] {
+  vault.accept(disclose(coin), disclose(tag));
+  pushed.increment(1);
+}
+
+// ── RESULT ────────────────────────────────────────────────────────────────
+//
+// `cross-contract calls are not yet supported` — compactc 0.31.1 / 0.33.0.
+//
+// Reached after eliminating every other way to obtain a contract value:
+//   ContractAddress -> Sink            no cast exists
+//   exported circuit argument          "cannot include contract values"
+//   witness return value               "cannot include contract values"
+//   constructor parameter              accepted, then the CALL is rejected
+//
+// So the compiler models external contracts — `contract Sink { circuit … }`
+// resolves against managed/Sink/compiler/contract-info.json — but will not
+// emit a call to one.

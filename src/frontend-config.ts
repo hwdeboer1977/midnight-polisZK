@@ -47,7 +47,7 @@ const PUBLIC = path.join(process.cwd(), "frontend", "public");
  * the drift would show up as money — a salary parsed at one scale and paid at
  * another — so they are copied rather than reimplemented.
  */
-const SHARED = ["roster.ts", "constructor-args.ts"];
+const SHARED = ["roster.ts", "constructor-args.ts", "tax-params.ts", "benefit-params.ts"];
 
 function copySharedSource(): void {
   fs.mkdirSync(GENERATED, { recursive: true });

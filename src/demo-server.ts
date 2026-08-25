@@ -192,6 +192,11 @@ const server = createServer((req, res) => {
           period?: number;
           slots?: {
             salary?: string;
+            gross?: string;
+            tax?: string;
+            social?: string;
+            net?: string;
+            weeks?: number;
             salaryNonce?: string;
             coinNonce?: string;
             payee?: string;
@@ -216,7 +221,14 @@ const server = createServer((req, res) => {
         // material for the period being paid, so a compromised service learns
         // one month's amounts rather than every period and every employee key.
         const slots = body.slots.map((slot, i) => ({
-          salary: BigInt(slot.salary ?? "0"),
+          // `gross` is what the page sends; `salary` is the older name, kept so
+          // a request built against the previous shape fails on the missing
+          // withholding fields rather than silently funding a wrong figure.
+          salary: BigInt(slot.gross ?? slot.salary ?? "0"),
+          tax: BigInt(slot.tax ?? "0"),
+          social: BigInt(slot.social ?? "0"),
+          net: BigInt(slot.net ?? "0"),
+          weeks: Number(slot.weeks ?? 4),
           salaryNonce: hex(slot.salaryNonce, `slots[${i}].salaryNonce`),
           coinNonce: hex(slot.coinNonce, `slots[${i}].coinNonce`),
           payee: hex(slot.payee, `slots[${i}].payee`),
@@ -224,6 +236,14 @@ const server = createServer((req, res) => {
           // and the mapping wants it as the hex string the SDK compares against.
           payeeEnc: (slot.payeeEnc ?? "").toLowerCase(),
         }));
+
+        if (slots.some((slot) => slot.net <= 0n)) {
+          return json(res, 400, {
+            error:
+              "every slot needs gross, tax, social and net — the commitment binds " +
+              "all four, so the gross alone cannot open it",
+          });
+        }
 
         if (slots.some((slot) => !/^[0-9a-f]+$/.test(slot.payeeEnc))) {
           return json(res, 400, {

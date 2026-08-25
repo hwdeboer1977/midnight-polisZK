@@ -1,16 +1,20 @@
 import { submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
-import { connect, readLedger, type Connection } from "./contract.js";
+import { connect, contractLeaves, readLedger } from "./contract.js";
 import { EnvironmentManager } from "./environment.js";
 
 /**
  * Funding and paying a period, from Node.
  *
- * This exists because the browser cannot do it. Circuits with coin operations —
- * `fundEmployee`, `payEmployee` — build a transaction the proof server rejects
- * with an empty 400 when constructed through the DApp connector, while the
- * identical circuits prove fine from here. The contract, the keys and the proof
- * server were each ruled out; the fault is in the browser's transaction
- * construction and is unresolved.
+ * ⚠️ This no longer exists because the browser cannot do it — it can. Coin
+ * circuits prove in the page once the provider stack matches the reference
+ * pattern (see "Proving coin circuits in the browser" in the README). This
+ * header claimed otherwise for a while after that was fixed, which is worth
+ * more than a correction: a comment describing a defeat outlives the defeat.
+ *
+ * What it is still for: an operator running payroll on someone's behalf, where
+ * the employer's key is not available to the page at all. That is a narrower
+ * job than "the browser cannot", and the browser path is the better one
+ * wherever the employer can sign for themselves.
  *
  * What this deliberately does NOT take is the payroll passphrase. It takes only
  * the material for the period being paid: the amounts, their nonces, the coin
@@ -36,6 +40,18 @@ export interface RunProgress {
 export interface SlotInput {
   /** Minor units, as filed. */
   salary: bigint;
+  /**
+   * The rest of the line the commitment binds.
+   *
+   * The commitment stopped being a hash of the gross alone when withholding was
+   * added: it now covers gross, tax, contribution, net and weeks together. A
+   * caller that supplies only the gross cannot open it, and the coin that
+   * settles a slot carries the NET rather than the gross.
+   */
+  tax: bigint;
+  social: bigint;
+  net: bigint;
+  weeks: number;
   /** Opens this employee's commitment for this period. */
   salaryNonce: Uint8Array;
   /** Identifies the coin funding this slot. */
@@ -61,24 +77,6 @@ export interface RunResult {
   paid: number;
   alreadyFunded: number;
   alreadyPaid: number;
-}
-
-/**
- * The leaf indices of the coins a contract owns, ascending.
- *
- * The contract stores nothing about its own coins — storing them would publish
- * the values — so the indexer is the only place this exists.
- */
-async function contractLeaves(conn: Connection): Promise<number[]> {
-  const result = await conn.providers.publicDataProvider.queryZSwapAndContractState(
-    conn.contractAddress
-  );
-  if (!result) return [];
-  const [zswap] = result as any;
-  const text = String(zswap.filter(conn.contractAddress).toString(true));
-  return [...text.matchAll(/(\d+): \([0-9a-f]{64}, Some\(ContractAddress/g)]
-    .map((m) => Number(m[1]))
-    .sort((a, b) => a - b);
 }
 
 function flag(map: any, period: bigint, index: number): boolean {
@@ -121,6 +119,13 @@ export async function fundAndPay(
     // roster does not match what was filed — and nothing below can succeed.
     const check = conn.contractModule.pureCircuits.commitmentFor(
       slots[0]!.salary,
+      slots[0]!.tax,
+      slots[0]!.social,
+      slots[0]!.net,
+      BigInt(slots[0]!.weeks),
+      p,
+      { bytes: ledger.employer.bytes },
+      ledger.paramsHashFor.lookup(p),
       slots[0]!.salaryNonce
     );
     const onChain = ledger.commitmentsFor.lookup(p).lookup(0n);
@@ -140,11 +145,19 @@ export async function fundAndPay(
         continue;
       }
       log(`Funding employee ${i + 1}/${slots.length}…`);
-      await conn.deployed.callTx.fundEmployee(p, BigInt(i), slot.salary, slot.salaryNonce, {
-        nonce: slot.coinNonce,
-        color,
-        value: slot.salary,
-      });
+      // The coin carries the NET: what the employer funds for this slot is what
+      // the worker is owed after withholding.
+      await conn.deployed.callTx.fundEmployee(
+        p,
+        BigInt(i),
+        slot.salary,
+        slot.tax,
+        slot.social,
+        slot.net,
+        BigInt(slot.weeks),
+        slot.salaryNonce,
+        { nonce: slot.coinNonce, color, value: slot.net }
+      );
       funded += 1;
     }
 
@@ -157,7 +170,7 @@ export async function fundAndPay(
     // happens in index order, so the nth contract leaf funds the nth slot.
     // Already-paid slots therefore consume their leaf without paying again.
     const after = await readLedger(conn);
-    const everyLeaf = await contractLeaves(conn);
+    const everyLeaf = await contractLeaves(conn.providers.publicDataProvider, conn.contractAddress);
 
     // Which coin funds which slot, recorded by the contract when it received
     // them. `filter(address)` lists every coin ever received — spent ones
@@ -229,11 +242,15 @@ export async function fundAndPay(
         args: [
           p,
           slots.map((s) => s.salary),
+          slots.map((s) => s.tax),
+          slots.map((s) => s.social),
+          slots.map((s) => s.net),
+          slots.map((s) => BigInt(s.weeks)),
           slots.map((s) => s.salaryNonce),
           slots.map((s, i) => ({
             nonce: s.coinNonce,
             color,
-            value: s.salary,
+            value: s.net,
             mt_index: BigInt(allLeaves[i]!),
           })),
           slots.map((s) => ({ bytes: s.payee })),

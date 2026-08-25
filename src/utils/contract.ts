@@ -119,3 +119,26 @@ export async function readLedger(conn: Connection): Promise<any | null> {
   );
   return state ? conn.contractModule.ledger(state.data) : null;
 }
+
+/**
+ * The leaf indices of the coins a contract owns, ascending.
+ *
+ * The contract stores nothing about its own coins — storing a
+ * `QualifiedShieldedCoinInfo` would publish its value in cleartext — so the
+ * indexer is the only place this exists. `filter(address)` reports every coin
+ * the contract ever received, spent ones included; there is no unspent view.
+ * That is why callers match leaves to a contract's own `coinsReceived` ordinal
+ * rather than counting positions from zero.
+ */
+export async function contractLeaves(
+  publicDataProvider: { queryZSwapAndContractState: (address: string) => Promise<unknown> },
+  contractAddress: string
+): Promise<number[]> {
+  const result = await publicDataProvider.queryZSwapAndContractState(contractAddress);
+  if (!result) return [];
+  const [zswap] = result as any;
+  const text = String(zswap.filter(contractAddress).toString(true));
+  return [...text.matchAll(/(\d+): \([0-9a-f]{64}, Some\(ContractAddress/g)]
+    .map((m) => Number(m[1]))
+    .sort((a, b) => a - b);
+}

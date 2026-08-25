@@ -19,8 +19,10 @@
     "reset": "rm -rf contracts/managed deployment.json dist && npm run compile",
     "validate": "tsc --noEmit && npm run compile",
     "clean": "rm -rf dist contracts/managed deployment.json",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run test:bands && npm run test:payslip && npm run test:tree",
+    "test:bands": "npm run build && node tests/bands.test.mjs",
     "deploy:payroll": "npm run build && CONTRACT_NAME=payroll node dist/deploy.js",
+    "deploy:tax": "npm run build && node dist/deploy-tax.js",
     "payroll": "npm run build && node dist/payroll-cli.js",
     "payee": "npm run build && node dist/payee-cli.js",
     "wallet:reset": "rm -rf .wallet-state",
@@ -34,7 +36,13 @@
     "demo:server": "npm run build && node dist/demo-server.js",
     "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose stop postgres",
-    "registry": "npm run build && node dist/registry-cli.js"
+    "registry": "npm run build && node dist/registry-cli.js",
+    "test:payslip": "npm run build && node tests/payslip.test.mjs",
+    "relay": "npm run build && node dist/relay.js",
+    "test:tree": "npm run build && node tests/claim-tree.test.mjs",
+    "deploy:fund": "npm run build && CONTRACT_NAME=fund node dist/deploy.js",
+    "fund": "npm run build && node dist/fund-cli.js",
+    "terminate": "npm run build && node dist/terminate-cli.js"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-js": "2.5.1",
