@@ -21,9 +21,14 @@ function CompanyKeys({
 }) {
   return (
     <>
-      <CopyRow label="Signing key" value={signingKey} />
-      <CopyRow label="Payment key" value={paymentKey} />
-      <CopyRow label="Fee address" value={feeAddress} />
+      {/* The same names the roster columns, the employee page and the workbook
+          use. This panel called them "Signing key" and "Payment key", which put
+          two names on one value a few centimetres from the panel that used the
+          other pair — and "Payment key" for the encryption key is wrong twice
+          over, since paying someone needs both of these, not this one. */}
+      <CopyRow label="Coin public key" value={signingKey} />
+      <CopyRow label="Encryption public key" value={paymentKey} />
+      <CopyRow label="Unshielded address (fees)" value={feeAddress} />
     </>
   );
 }
@@ -141,22 +146,10 @@ export function Register() {
           </p>
         </section>
 
-        <section className="callout">
-          <h2>Your company keys</h2>
-          <CompanyKeys
-            signingKey={signingKeyHex ?? account.coinPublicKey}
-            paymentKey={account.encryptionPublicKey}
-            feeAddress={account.unshieldedAddress}
-          />
-          {keyError ? (
-            <p className="status error">Could not read the signing key: {keyError}</p>
-          ) : null}
-          <p className="note">
-            All three are public. We fund these with pEUR to pay salaries from, and with
-            the small amount of network fuel every transaction costs. None of them can
-            move money or change salaries on their own.
-          </p>
-        </section>
+        {/* The keys are not repeated here. `Keys and addresses` at the top of
+            this page lists them and `Keys to receive pEUR` below explains the
+            pair — three panels for two values was what made one string look
+            like two different facts. */}
       </>
     );
   }

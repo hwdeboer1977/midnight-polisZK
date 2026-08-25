@@ -1,49 +1,21 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { WalletPicker } from "../components/WalletPicker";
-import { fetchContractState } from "../lib/chain";
-import { decodePayrollLedger, loadContract } from "../lib/contracts";
+import { findAttestations, type Attestation } from "../lib/attestations";
 import { CopyRow } from "../components/CopyRow";
 import { ClaimKey } from "../components/ClaimKey";
 import { FilePicker } from "../components/FilePicker";
-import { formatPeur } from "../lib/format";
+import { formatPeur, formatPeurTile } from "../lib/format";
 import {
-  forNetwork,
   loadDeployments,
   type Deployment,
   type Deployments,
 } from "../lib/deployments";
 import { periodName } from "../generated/roster";
-import { bytesToHex, keyToHex, sameKey } from "../lib/keys";
+import { bytesToHex } from "../lib/keys";
 import { checkPayslip, type CheckedPayslip } from "../lib/checkPayslip";
 import { useWallet } from "../wallet/WalletContext";
 
-interface Attestation {
-  period: number;
-  slot: number;
-  employer: string;
-  contractAddress: string;
-  paid: boolean;
-  funded: boolean;
-  /**
-   * Whether the employer has attested that this was the final period.
-   *
-   * Public state — `terminationFor` has a key per terminated slot — so an
-   * employee can learn from the chain that their employment ended, rather than
-   * only from being told. What it commits to stays private: the months worked
-   * and the claim-key hash are inside the commitment, not beside it.
-   */
-  ended: boolean;
-  /** The commitment published for this slot — opaque without the opening. */
-  commitment: string;
-  /**
-   * The other two public inputs to that commitment: who filed it, and under
-   * which rule set. Captured here so a payslip can be checked without a second
-   * pass over the chain — and public precisely so an employee can do it.
-   */
-  employerKey: Uint8Array;
-  paramsHash: Uint8Array;
-}
 
 /**
  * The worker's own view: which periods name them, and what they were paid.
@@ -120,107 +92,11 @@ export function Employee() {
       try {
         const deployments = await loadDeployments();
         if (!cancelled) setDeployments(deployments);
-        const payrolls = forNetwork(deployments, networkId).filter(
-          ([, d]) => d.contractName === "payroll"
-        );
-        if (payrolls.length === 0) {
-          if (!cancelled) setRows([]);
-          return;
-        }
 
-        const contract = await loadContract("payroll");
-        const module = contract as unknown as {
-          pureCircuits: {
-            payeeHash: (
-              key: { bytes: Uint8Array },
-              period: bigint,
-              instance: Uint8Array
-            ) => Uint8Array;
-          };
-        };
-
-        // The same hash the circuit checks, computed with the contract's own
-        // pure circuit rather than a TypeScript re-implementation that could
-        // drift from the struct encoding Compact uses.
-        //
-        // Now bound to the period and the contract, so it is one value per slot
-        // rather than one value per person — which is the point: equal hashes
-        // across months no longer reveal that the same worker is behind them.
-        // The cost is that this cannot be computed once up front.
-        const myKey = fromHex(keyToHex(account.coinPublicKey));
-        const bindingFor = (period: bigint, address: string) =>
-          bytesToHex(
-            module.pureCircuits.payeeHash(
-              { bytes: myKey },
-              period,
-              fromHex(address.replace(/^0x/, ""))
-            )
-          );
-
-        const found: Attestation[] = [];
-        let employs: string | null = null;
-        for (const [name, deployment] of payrolls) {
-          const state = await fetchContractState(networkId, deployment.contractAddress);
-          if (!state) continue;
-
-          const ledger = decodePayrollLedger(contract, state.data);
-          if (!ledger) continue;
-
-          if (
-            ledger.employerAssigned &&
-            sameKey(bytesToHex(ledger.employer.bytes), account.coinPublicKey)
-          ) {
-            employs = employerLabel(name, deployment);
-          }
-
-          for (const period of [...ledger.periods]) {
-            if (!ledger.payeeFor.member(period)) continue;
-            const payees = ledger.payeeFor.lookup(period);
-            const count = ledger.employeeCountFor.member(period)
-              ? Number(ledger.employeeCountFor.lookup(period))
-              : 0;
-
-            for (let slot = 0; slot < count; slot += 1) {
-              const key = BigInt(slot);
-              if (!payees.member(key)) continue;
-              if (
-                bytesToHex(payees.lookup(key)) !==
-                bindingFor(period, deployment.contractAddress)
-              ) {
-                continue;
-              }
-
-              found.push({
-                period: Number(period),
-                slot,
-                employer: employerLabel(name, deployment),
-                contractAddress: deployment.contractAddress,
-                paid: ledger.paidFor.member(period) && ledger.paidFor.lookup(period).member(key)
-                  ? ledger.paidFor.lookup(period).lookup(key)
-                  : false,
-                funded: ledger.fundedFor.member(period) && ledger.fundedFor.lookup(period).member(key)
-                  ? ledger.fundedFor.lookup(period).lookup(key)
-                  : false,
-                commitment: ledger.commitmentsFor.member(period) &&
-                  ledger.commitmentsFor.lookup(period).member(key)
-                  ? bytesToHex(ledger.commitmentsFor.lookup(period).lookup(key))
-                  : "",
-                ended:
-                  ledger.terminationFor?.member(period) === true &&
-                  ledger.terminationFor.lookup(period).member(key),
-                employerKey: ledger.employer.bytes,
-                paramsHash: ledger.paramsHashFor.member(period)
-                  ? ledger.paramsHashFor.lookup(period)
-                  : new Uint8Array(32),
-              });
-            }
-          }
-        }
-
-        found.sort((a, b) => b.period - a.period);
+        const scan = await findAttestations(networkId, account.coinPublicKey);
         if (!cancelled) {
-          setRows(found);
-          setEmployerOf(employs);
+          setRows(scan.rows);
+          setEmployerOf(scan.employerOf);
         }
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
@@ -298,6 +174,14 @@ export function Employee() {
       </section>
 
       {error ? <p className="status error">{error}</p> : null}
+
+      {/* First, and outside every branch. It is the most consequential thing on
+          this page and the only one with a closing window: the employer writes
+          the hash into a write-once termination, so an employee who reaches the
+          end of their employment without having done it can never claim. It was
+          at the bottom, under the balance and the periods table — nothing told
+          anyone they were missing it until it was too late to fix. */}
+      <ClaimKey coinPublicKey={account.coinPublicKey} />
 
       {/* Outside the wallet-dependent branches, because a payslip is readable in
           every state this page can be in — including the one that used to be a
@@ -386,7 +270,9 @@ export function Employee() {
       ) : (
         <>
           <section className="card headline">
-            <div className="headline-value">€{formatPeur(balance)}</div>
+            <div className="headline-value" title={`Exactly €${formatPeur(balance)}`}>
+              €{formatPeurTile(balance)}
+            </div>
             <div className="headline-label">
               pEUR in your wallet ·{" "}
               {paid.length === 1 ? "1 period" : `${paid.length} periods`} received
@@ -403,39 +289,47 @@ export function Employee() {
           {rows.some((row) => row.ended) ? (
             <section className="callout">
               <h2>Your employment ended — you can claim</h2>
-              <p className="note" style={{ marginTop: 0 }}>
-                An employer has attested on chain that{" "}
+              <p className="lead-sm" style={{ margin: "0 0 12px" }}>
                 {rows
                   .filter((row) => row.ended)
                   .map((row) => periodName(row.period))
                   .join(", ")}{" "}
-                was a final period. Claiming proves you were employed long enough
-                and what you earned, and discloses neither.
+                was attested on chain as a final period. You will need three
+                things:
               </p>
-              <p className="note">
-                You will need three things: the <strong>claim bundle</strong>{" "}
-                from the fund's relay, your <strong>payslip for that period</strong>,
-                and the <strong>passphrase</strong> you used for your claim key
-                below. All three, and this same wallet connected.
-              </p>
-              {/* This page cannot tell whether a claim has already been made.
-                  The nullifier that records one is derived from the claimant's
-                  secret claim key, so computing it needs the passphrase — which
-                  is exactly what stops anyone else reading her claim history,
-                  and what blinds this page too. Saying "you can claim" without
-                  this reads as a promise the fund may refuse. */}
-              <p className="note">
-                Each period can be claimed once. This page cannot tell you
-                whether you already have — checking would mean deriving your
-                claim key, and nothing here holds your passphrase. That is the
-                same reason nobody else can look up your claim history either. If
-                you claim twice, the fund refuses the second one.
-              </p>
+              <ul className="needs">
+                <li>
+                  <strong>Your claim bundle</strong> — from the fund's relay
+                </li>
+                <li>
+                  <strong>Your payslip for that period</strong> — from your
+                  employer
+                </li>
+                <li>
+                  <strong>Your claim passphrase</strong> — the one above, with
+                  this same wallet connected
+                </li>
+              </ul>
               <div className="actions">
                 <Link className="button" to="/claim">
                   Make a claim
                 </Link>
               </div>
+              {/* Behind a disclosure: it matters, but it is an explanation of a
+                  limit rather than something needed to act, and it was sitting
+                  between the headline and the button. */}
+              <details className="why">
+                <summary>Can I tell whether I already claimed?</summary>
+                <p className="note">
+                  Not from this page. Each period can be claimed once, and the
+                  record of a claim is a nullifier derived from your secret claim
+                  key — so checking it would mean deriving that key, and nothing
+                  here holds your passphrase. That is exactly what stops anyone
+                  else looking up your claim history, and it blinds this page for
+                  the same reason. If you claim twice, the fund refuses the
+                  second one.
+                </p>
+              </details>
             </section>
           ) : null}
 
@@ -463,7 +357,10 @@ export function Employee() {
                         row.contractAddress.replace(/^0x/, "").toLowerCase() ? (
                         <strong>{formatPeur(BigInt(opened.slip.net))}</strong>
                       ) : (
-                        <span className="muted">—</span>
+                        // Not an em-dash. A blank money column on a page whose
+                        // point is that amounts stay private reads as broken
+                        // data; "sealed" says the emptiness is the design.
+                        <span className="muted">sealed</span>
                       )}
                     </td>
                     <td>
@@ -550,11 +447,6 @@ export function Employee() {
         </>
       )}
 
-      {/* Outside the payroll branch on purpose: this has to be done BEFORE an
-          employer ends the employment, which is exactly when there may be no
-          period filed for this wallet yet. Hiding it until payroll appears
-          would hide it until it is too late to use. */}
-      <ClaimKey coinPublicKey={account.coinPublicKey} />
     </>
   );
 }

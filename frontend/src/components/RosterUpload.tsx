@@ -7,11 +7,15 @@ import { submitPayroll, walletCanProve, type SubmitResult } from "../lib/submitP
 import {
   fundAndPayPeriod,
   fundAndPayViaService,
+  fundWithholding,
   periodStatus,
   type RunResult,
 } from "../lib/payPayroll";
 import { loadDeployments } from "../lib/deployments";
+import { recordRoster } from "../lib/collected";
 import { FilePicker } from "./FilePicker";
+import { MonthSteps } from "./MonthSteps";
+import { PayslipRecovery } from "./PayslipRecovery";
 import { Payslips } from "./Payslips";
 import { useWallet } from "../wallet/WalletContext";
 
@@ -67,10 +71,37 @@ export interface SubmitTarget {
 export function RosterUpload({
   target,
   onSubmitted,
+  onRoster,
+  monthState,
+  openPeriod,
 }: {
   /** Absent when the connected key is not an employer — then there is nothing to submit to. */
   target?: SubmitTarget;
   onSubmitted?: () => void;
+  /**
+   * The parsed workbook, handed up as soon as it is read.
+   *
+   * Ending someone's employment needs their coin public key, and the chain only
+   * holds a hash of it — so the workbook is the only place on this page that
+   * knows who the employees are. Reporting it lets the termination form offer a
+   * list of names instead of a paste field.
+   */
+  onRoster?: (roster: ParsedRoster | null) => void;
+  /**
+   * What the chain says about the loaded month, from the page above.
+   *
+   * Local signals only know what happened in this session — after a reload a
+   * filed month would look unfiled. Chain state is the truth where it exists.
+   */
+  monthState?: { filed: boolean; paid: boolean; withheld: boolean };
+  /**
+   * The month the card is open on, when no workbook is loaded.
+   *
+   * Withholding needs a period and nothing else from the sheet, so without this
+   * the one step the card exists to surface had no way to name its month — and
+   * therefore no button.
+   */
+  openPeriod?: number | null;
 } = {}) {
   const { api, networkId } = useWallet();
   const [step, setStep] = useState<string | null>(null);
@@ -81,6 +112,9 @@ export function RosterUpload({
   /** Null until the chain has been asked whether this contract has been filed before. */
   const [firstFiling, setFirstFiling] = useState<boolean | null>(null);
   const [payStep, setPayStep] = useState<string | null>(null);
+  const [withheld, setWithheld] = useState<
+    { taxMinor: bigint; socialMinor: bigint; alreadyDone: boolean } | null
+  >(null);
   const [payResult, setPayResult] = useState<RunResult | null>(null);
   const [payError, setPayError] = useState<string | null>(null);
   /** Name of a filed-but-unpaid period, so the card can say why a file is needed. */
@@ -118,10 +152,35 @@ export function RosterUpload({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * The blank workbook, built in the page.
+   *
+   * It used to be reachable only by running `npm run roster:template`, printed
+   * as instructions on an employer-facing screen. The builder is the same code
+   * the CLI uses, so the file an employer downloads here and the one a
+   * developer generates are the same workbook.
+   */
+  async function downloadTemplate() {
+    const { buildRosterTemplate } = await loadParser();
+    const workbook = await buildRosterTemplate();
+    const buffer = await workbook.xlsx.writeBuffer();
+    const url = URL.createObjectURL(
+      new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      })
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "roster-template.xlsx";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function onFile(file: File) {
     setBusy(true);
     setError(null);
     setRoster(null);
+    onRoster?.(null);
     setSubmitted(null);
     setSubmitError(null);
     setFileName(file.name);
@@ -131,7 +190,12 @@ export function RosterUpload({
         loadParser(),
         file.arrayBuffer(),
       ]);
-      setRoster(await parseRosterWorkbook(buffer));
+      const parsed = await parseRosterWorkbook(buffer);
+      setRoster(parsed);
+      onRoster?.(parsed);
+      // Remembered so pages rebuilt from chain — which only holds hashes — can
+      // show who these people are.
+      if (target) recordRoster(target.contractAddress, parsed.rows);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -282,6 +346,51 @@ export function RosterUpload({
     }
   }
 
+  /**
+   * Moves this period's withheld tax and contribution into the contract.
+   *
+   * Separate from paying, because it is a different obligation to a different
+   * party — and until it runs, the public page reports the withholding as
+   * assessed and not collected, which is the honest reading of a contract whose
+   * pools are empty.
+   */
+  async function onWithhold() {
+    // Deliberately not gated on a loaded roster. The amounts come from
+    // `totalTaxFor` and `totalSocialFor` on chain, so a month filed weeks ago
+    // can be withheld without finding the workbook again — which is the whole
+    // point of publishing those totals.
+    const period = roster?.period ?? openPeriod ?? null;
+    if (period === null || !target || !api) return;
+
+    setPayError(null);
+    setPayStep("Starting…");
+    try {
+      const deployments = await loadDeployments();
+      const peur = Object.values(deployments).find(
+        (d) => d.contractName === "peur" && d.networkId === networkId
+      );
+      if (!peur?.tokenId) {
+        throw new Error(`No pEUR token id for ${networkId} — run \`npm run frontend:config\`.`);
+      }
+      const result = await fundWithholding({
+        api,
+        networkId,
+        contractAddress: target.contractAddress,
+        passphrase,
+        tokenId: peur.tokenId,
+        period,
+        provingMode: delegateProving ? "wallet" : "local",
+        onProgress: setPayStep,
+      });
+      setWithheld(result);
+      onSubmitted?.();
+    } catch (cause) {
+      setPayError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPayStep(null);
+    }
+  }
+
   async function onSubmit() {
     if (!roster || roster.period === null || !target || !api) return;
 
@@ -314,10 +423,12 @@ export function RosterUpload({
     }
   }
 
-  return (
-    <section className="card">
-      <h2>Run new payroll</h2>
-
+  // Step one's control, and everything that used to be a panel around it. The
+  // prose is folded into a disclosure rather than cut: it answers questions an
+  // employer has once, and it was sitting between them and the file chooser
+  // every month.
+  const chooseFile = (
+    <>
       {target && outstanding ? (
         <p className="note first-time">
           <strong>{outstanding} is filed but not fully paid.</strong> Load the same
@@ -326,56 +437,66 @@ export function RosterUpload({
         </p>
       ) : null}
 
-      <p className="lead-sm">
-        A payroll period is one month's figures for the people already on your{" "}
-        <Link to="/employer/roster">roster</Link>. Load the workbook for the month
-        you are filing; the period it is for is read from the sheet.
-      </p>
-
       <FilePicker
         label={busy ? "Reading…" : "Choose this period's .xlsx"}
         loaded={fileName}
         accept=".xlsx"
         disabled={busy}
         onFile={onFile}
-      />
-      <p className="note">
-        Year and Month above the table, then columns: {ROSTER_COLUMNS.join(" · ")}.
-        Generate a starting point with <code>npm run roster:template</code>. Parsed in
-        your browser — the file is never uploaded anywhere.
-      </p>
-      {/* Said out loud because the workbook carries both, and an employer should
-          not be left thinking they re-create the company every month. */}
-      <p className="note">
-        The same workbook carries the employee keys and this month's salaries, so
-        filing a period is also what keeps your roster current. Only the amounts
-        belong to the period — the people carry across months.
-      </p>
+      />{" "}
+      <button type="button" className="ghost" onClick={() => void downloadTemplate()}>
+        Download a blank template
+      </button>
+
+      <details className="why">
+        <summary>What goes in the workbook</summary>
+        <p className="note">
+          A payroll period is one month's figures for the people already on your{" "}
+          <Link to="/employer/roster">roster</Link>. Year and Month above the table,
+          then columns: {ROSTER_COLUMNS.join(" · ")}. The period it is for is read
+          from the sheet. Parsed in your browser — the file is never uploaded
+          anywhere.
+        </p>
+        <p className="note">
+          The same workbook carries the employee keys and this month's salaries, so
+          filing a period is also what keeps your roster current. Only the amounts
+          belong to the period — the people carry across months.
+        </p>
+      </details>
 
       {error ? <p className="status error">Could not read {fileName}: {error}</p> : null}
+    </>
+  );
 
-      {roster ? (
+  // ── the month, as steps that carry their own controls ──────────────────
+  //
+  // This used to be a panel headed "Run new payroll" sitting under a separate
+  // status strip, which meant the page described filing twice in two different
+  // structures — and the strip's first step had no button, because the file
+  // chooser was in the panel. One structure now: the steps are the form.
+
+  const filed = monthState?.filed ?? alreadyFiled;
+  const paid = monthState?.paid ?? payResult !== null;
+  const withheldDone = monthState?.withheld ?? withheld !== null;
+  const ready = Boolean(roster && usable);
+
+  const previewBlock = roster ? (
+    <>
+      {roster.problems.length > 0 ? (
+        <div className="problems">
+          <strong>{fileName} is not usable yet:</strong>
+          <ul>
+            {roster.problems.map((problem, i) => (
+              <li key={i}>
+                {problem.row === 0 ? problem.message : `row ${problem.row}: ${problem.message}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {usable ? (
         <>
-          {roster.problems.length > 0 ? (
-            <div className="problems">
-              <strong>{fileName} is not usable yet:</strong>
-              <ul>
-                {roster.problems.map((problem, i) => (
-                  <li key={i}>
-                    {problem.row === 0 ? problem.message : `row ${problem.row}: ${problem.message}`}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {roster.period ? (
-            <p className="status">
-              Payroll period: <strong>{periodName(roster.period)}</strong>{" "}
-              <span className="muted">({roster.period})</span>
-            </p>
-          ) : null}
-
           <table className="roster">
             <thead>
               <tr>
@@ -424,266 +545,290 @@ export function RosterUpload({
               </tr>
             </tfoot>
           </table>
-
-                    {usable ? (
-            <>
-              {/* Asked repeatedly, and reasonably: if the chain computes the
-                  withholding, why is it on screen before anything is filed? */}
-              <p className="note">
-                <strong>Gross is from your workbook. Tax, social and net are
-                not.</strong> They are computed here from the published rule set
-                and shown so you can see what a period will cost before you file
-                it — but they are not what makes them true. The circuit rebuilds
-                the same figures from each gross salary and refuses any it did
-                not produce, so a wrong number here fails to file rather than
-                filing wrongly.
-              </p>
-
-              <p className="note">
-                Ready: {ROSTER_SIZE} employees
-                {roster.period ? ` for ${periodName(roster.period)}` : ""}. Only the total
-                and one commitment per employee will be published; the names and addresses
-                above stay here. Each employee's coin public key is published only as a
-                hash, so the chain shows that a slot has a payee without showing who.
-              </p>
-
-              {target ? (
-                <>
-                  <div className="passphrase">
-                    {needsConfirmation ? (
-                      <p className="note first-time">
-                        <strong>You are creating this passphrase now.</strong> Nothing has
-                        been filed against this contract yet, so there is no existing one
-                        to look up — choose it here and save it somewhere you will still
-                        have it in a year. A password manager, under the company's
-                        records, not on this machine alone.
-                      </p>
-                    ) : null}
-
-                    <label>
-                      {needsConfirmation
-                        ? "Choose a payroll passphrase"
-                        : "Payroll passphrase"}
-                      <input
-                        type="password"
-                        autoComplete="off"
-                        value={passphrase}
-                        disabled={submitting}
-                        onChange={(e) => setPassphrase(e.target.value)}
-                        placeholder={
-                          needsConfirmation
-                            ? "at least 8 characters"
-                            : "the one you chose when you first filed"
-                        }
-                      />
-                    </label>
-                    {needsConfirmation ? (
-                      <label>
-                        Confirm passphrase
-                        <input
-                          type="password"
-                          autoComplete="off"
-                          value={confirmation}
-                          disabled={submitting}
-                          onChange={(e) => setConfirmation(e.target.value)}
-                          placeholder="type it again"
-                        />
-                      </label>
-                    ) : null}
-                    <p className="note">
-                      It derives every nonce and unlocks every sealed opening for this
-                      contract, and the CLI asks for the same one. It is never sent
-                      anywhere and never stored — only a one-way fingerprint, to catch a
-                      typo.{" "}
-                      {needsConfirmation ? (
-                        <strong>
-                          There is no reset: lose it and no commitment on this contract
-                          can ever be reopened.
-                        </strong>
-                      ) : (
-                        "It is checked against an opening already on chain before anything is sent, so a wrong one is refused rather than filed."
-                      )}
-                    </p>
-                  </div>
-
-                  {alreadyFiled ? (
-                    <div className="refile">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={allowRefile}
-                          disabled={submitting || payStep !== null}
-                          onChange={(e) => setAllowRefile(e.target.checked)}
-                        />{" "}
-                        Re-file {roster.period ? periodName(roster.period) : "this month"} —
-                        replaces its commitments and marks every employee unpaid
-                      </label>
-                      <p className="note">
-                        Already on chain. To pay it, use <strong>Fund and pay</strong>{" "}
-                        below; re-filing is for correcting a month, and any payment
-                        already made against the old commitments would no longer match.
-                      </p>
-                    </div>
-                  ) : null}
-
-                  {/* Applies to filing and to paying alike, so it sits above
-                      both buttons rather than under one of them. */}
-                  <label className="prove-here">
-                    <input
-                      type="checkbox"
-                      checked={delegateProving && canDelegate}
-                      disabled={submitting || payStep !== null || !canDelegate}
-                      onChange={(e) => setDelegateProving(e.target.checked)}
-                    />{" "}
-                    Let the wallet generate the proofs
-                    <span className="muted">
-                      {" "}
-                      — instead of the proof server on this machine. Applies to filing,
-                      and to funding and paying when those run in this browser.{" "}
-                      <strong>
-                        Proving consumes the salaries, so this hands them to the wallet,
-                        and where it proves is its choice — in-process, or a remote
-                        service.
-                      </strong>{" "}
-                      Unticked they reach <code>127.0.0.1:6300</code> and nowhere else.
-                      {canDelegate
-                        ? " This wallet proves in the tab, so the salaries stay on this machine either way — the difference is speed, not exposure."
-                        : " This wallet does not implement getProvingProvider, so the local proof server is the only option."}
-                    </span>
-                  </label>
-
-                  <button
-                    className="primary"
-                    onClick={() => void onSubmit()}
-                    disabled={!canSubmit}
-                  >
-                    {submitting
-                      ? "Submitting…"
-                      : alreadyFiled
-                        ? `Re-file ${roster.period ? periodName(roster.period) : "this period"}`
-                        : `Submit payroll for ${roster.period ? periodName(roster.period) : "this period"}`}
-                  </button>
-                  <p className="note">
-                    Files against <strong>{target.name}</strong>. Your wallet will ask you
-                    once, to authorise the transaction. Proving runs on your own machine
-                    and takes a few minutes — the salaries are never sent anywhere.
-                  </p>
-                </>
-              ) : (
-                <p className="note">
-                  Connect the employer key for a payroll contract to submit. This key does
-                  not control one, so there is nothing to file against.
-                </p>
-              )}
-
-              {/* Funding and paying reuse the same passphrase and the same
-                  roster, so they live here rather than on the contract card —
-                  the chain holds commitments, not salaries. */}
-              <button
-                className="primary secondary-action"
-                onClick={() => void onFundAndPay()}
-                disabled={
-                  !usable ||
-                  roster.period === null ||
-                  !api ||
-                  !passphraseReady ||
-                  submitting ||
-                  payStep !== null
-                }
-              >
-                {payStep !== null ? "Funding and paying…" : "Fund and pay this period"}
-              </button>
-              <p className="note">
-                Moves pEUR into the contract, one coin per employee carrying exactly the
-                committed salary, then pays each one out. The circuit refuses any amount
-                that does not open that employee's commitment, so nobody — including you
-                — can pay a figure other than the one filed. One proof per employee to fund,
-                then one for the whole payment. Safe to re-run: funded and paid slots
-                are skipped.
-              </p>
-              <label className="prove-here">
-                <input
-                  type="checkbox"
-                  checked={useBrowser}
-                  disabled={payStep !== null || !serviceUsable}
-                  onChange={(e) => setProveHere(e.target.checked)}
-                />{" "}
-                Prove in this browser instead of the local service
-                <span className="muted">
-                  {" "}
-                  — the salaries, the passphrase and the proving all stay in the page,
-                  and your own wallet signs.
-                  {/* Two different reasons the service can be out, and saying
-                      the wrong one sends someone hunting the wrong problem. */}
-                  {!serviceUsable ? (
-                    <>
-                      {" "}
-                      <strong>
-                        {!servedLocally
-                          ? "Required here: the local payroll service runs on your own machine and this app is served from the web, so there is nothing to hand the run to."
-                          : "Required here: this contract\u2019s employer is your wallet, not the platform, and the service can only sign as the platform."}
-                      </strong>
-                    </>
-                  ) : null}
-                </span>
-              </label>
-
-              <p className="note">
-                <strong>Runs in the local payroll service</strong> (
-                <code>npm run demo:server</code>), not in this page. Only used when the box
-                above is unticked; the browser can prove these circuits now. It needs
-                the service running, it signs with the platform wallet rather than yours,
-                and this period's amounts are sent to <code>127.0.0.1</code>. Your
-                passphrase is <strong>not</strong> sent — the nonces and the employees'
-                public keys are derived here first, so the service can pay this month and
-                nothing else.
-              </p>
-
-              {step ? <p className="status">{step}</p> : null}
-              {payStep ? <p className="status">{payStep}</p> : null}
-
-              {payError ? (
-                <p className="status error">Could not fund/pay: {payError}</p>
-              ) : null}
-
-              {payResult ? (
-                <div className="problems">
-                  <strong>
-                    Funded {payResult.funded}, paid {payResult.paid} employee
-                    {payResult.paid === 1 ? "" : "s"}
-                    {payResult.seconds !== undefined
-                      ? ` — ${payResult.seconds}s, proved ${
-                          payResult.proving === "wallet" ? "by the wallet" : "locally"
-                        }`
-                      : ""}
-                  </strong>
-                </div>
-              ) : null}
-
-              {submitError ? (
-                <p className="status error">Could not submit: {submitError}</p>
-              ) : null}
-
-              {submitted ? (
-                <>
-                  <div className="problems">
-                    <strong>
-                      Filed {periodName(submitted.period)} — {formatPeur(submitted.totalMinor)} pEUR
-                    </strong>
-                    <ul>
-                      <li>tx {submitted.txHash}</li>
-                      {submitted.blockHeight !== null ? (
-                        <li>block {submitted.blockHeight}</li>
-                      ) : null}
-                    </ul>
-                  </div>
-                  <Payslips slips={submitted.payslips} />
-                </>
-              ) : null}
-            </>
-          ) : null}
+          <details className="why">
+            <summary>Why are tax and net already filled in?</summary>
+            <p className="note">
+              <strong>Gross is from your workbook. Tax, social and net are not.</strong>{" "}
+              They are computed here from the published rule set so you can see what a
+              period will cost before you file it — but they are not what makes them
+              true. The circuit rebuilds the same figures from each gross salary and
+              refuses any it did not produce, so a wrong number here fails to file
+              rather than filing wrongly.
+            </p>
+            <p className="note">
+              Only the totals and one commitment per employee are published. The names
+              and addresses stay here, and each coin public key is published as a hash,
+              so the chain shows a slot has a payee without showing who.
+            </p>
+          </details>
         </>
       ) : null}
-    </section>
+    </>
+  ) : null;
+
+  const passphraseBlock = (
+    <div className="passphrase">
+      {needsConfirmation ? (
+        <p className="note first-time">
+          <strong>You are creating this passphrase now.</strong> Nothing has been filed
+          against this contract yet, so there is no existing one to look up — choose it
+          here and save it somewhere you will still have it in a year.
+        </p>
+      ) : null}
+
+      <label>
+        {needsConfirmation ? "Choose a payroll passphrase" : "Payroll passphrase"}
+        <input
+          type="password"
+          autoComplete="off"
+          value={passphrase}
+          disabled={submitting}
+          onChange={(e) => setPassphrase(e.target.value)}
+          placeholder={
+            needsConfirmation ? "at least 8 characters" : "the one you chose when you first filed"
+          }
+        />
+      </label>
+      {needsConfirmation ? (
+        <label>
+          Confirm passphrase
+          <input
+            type="password"
+            autoComplete="off"
+            value={confirmation}
+            disabled={submitting}
+            onChange={(e) => setConfirmation(e.target.value)}
+            placeholder="type it again"
+          />
+        </label>
+      ) : null}
+      <p className="note">
+        It derives every nonce and unlocks every sealed opening for this contract, and
+        the CLI asks for the same one. Never sent anywhere, never stored.{" "}
+        {needsConfirmation ? (
+          <strong>
+            There is no reset: lose it and no commitment on this contract can ever be
+            reopened.
+          </strong>
+        ) : (
+          "It is checked against an opening already on chain before anything is sent, so a wrong one is refused rather than filed."
+        )}
+      </p>
+    </div>
+  );
+
+  const provingChoice = (
+    <label className="prove-here">
+      <input
+        type="checkbox"
+        checked={delegateProving && canDelegate}
+        disabled={submitting || payStep !== null || !canDelegate}
+        onChange={(e) => setDelegateProving(e.target.checked)}
+      />{" "}
+      Let the wallet generate the proofs
+      <span className="muted">
+        {" "}
+        — instead of the proof server on this machine.{" "}
+        <strong>
+          Proving consumes the salaries, so this hands them to the wallet, and where it
+          proves is its choice.
+        </strong>{" "}
+        {/* The port was in the sentence. An employer does not configure a proof
+            server, and an address in body copy reads as something they are
+            expected to act on — same category as the EXPLORERS note. It stays
+            reachable on hover. */}
+        <span title="Unticked, proving runs against the proof server on this machine at 127.0.0.1:6300 and reaches nowhere else.">
+          Unticked, they stay on this machine.
+        </span>
+        {canDelegate
+          ? " This wallet proves in the tab, so the salaries stay here either way."
+          : " This wallet cannot prove on its own, so the local proof server is the only option."}
+      </span>
+    </label>
+  );
+
+  const fileAction = !target ? (
+    <p className="note">
+      Connect the employer key for a payroll contract to file. This key does not control
+      one, so there is nothing to file against.
+    </p>
+  ) : (
+    <>
+      {passphraseBlock}
+      {alreadyFiled ? (
+        <div className="refile">
+          <label>
+            <input
+              type="checkbox"
+              checked={allowRefile}
+              disabled={submitting || payStep !== null}
+              onChange={(e) => setAllowRefile(e.target.checked)}
+            />{" "}
+            Re-file {roster?.period ? periodName(roster.period) : "this month"} — replaces
+            its commitments and marks every employee unpaid
+          </label>
+          <p className="note">
+            Re-filing is for correcting a month. Any payment already made against the old
+            commitments would no longer match.
+          </p>
+        </div>
+      ) : null}
+      {provingChoice}
+      <button className="primary" onClick={() => void onSubmit()} disabled={!canSubmit}>
+        {submitting
+          ? "Submitting…"
+          : alreadyFiled
+            ? `Re-file ${roster?.period ? periodName(roster.period) : "this period"}`
+            : `File ${roster?.period ? periodName(roster.period) : "this period"}`}
+      </button>
+      {step ? <p className="status">{step}</p> : null}
+      {submitError ? <p className="status error">Could not submit: {submitError}</p> : null}
+      {submitted ? (
+        <p className="ok-line">
+          ✓ Filed {periodName(submitted.period)} — {formatPeur(submitted.totalMinor)} pEUR
+        </p>
+      ) : null}
+    </>
+  );
+
+  const payAction = (
+    <>
+      <button
+        className="primary"
+        onClick={() => void onFundAndPay()}
+        disabled={
+          !usable || roster?.period === null || !api || !passphraseReady || submitting || payStep !== null
+        }
+      >
+        {payStep !== null ? "Funding and paying…" : "Fund and pay this period"}
+      </button>
+      <details className="why">
+        <summary>What the circuit will and will not allow</summary>
+        <p className="note">
+          The circuit refuses any amount that does not open that employee's commitment,
+          so nobody — including you — can pay a figure other than the one filed. Safe to
+          re-run: funded and paid slots are skipped.
+        </p>
+        <p className="note">
+          Unticking <strong>Let the wallet generate the proofs</strong> above hands the
+          run to a local service instead, which signs with the platform wallet rather
+          than yours. Your passphrase is <strong>not</strong> sent — only this month's
+          derived material, which pays this month and nothing else.
+        </p>
+      </details>
+      {payStep ? <p className="status">{payStep}</p> : null}
+      {payError ? <p className="status error">Could not fund/pay: {payError}</p> : null}
+      {payResult ? (
+        <p className="ok-line">
+          ✓ Funded {payResult.funded}, paid {payResult.paid} employee
+          {payResult.paid === 1 ? "" : "s"}
+          {payResult.seconds !== undefined ? ` — ${payResult.seconds}s` : ""}
+        </p>
+      ) : null}
+    </>
+  );
+
+  const withholdAction = (
+    <>
+      {/* Its own passphrase entry when no workbook is open: the file step
+          collapses once a month is filed, and it was the only place asking for
+          one — leaving the live step with a button it could never enable. */}
+      {ready ? null : passphraseBlock}
+      <button
+        className="primary"
+        onClick={() => void onWithhold()}
+        disabled={
+          (roster?.period ?? openPeriod ?? null) === null ||
+          !api ||
+          !passphraseReady ||
+          submitting ||
+          payStep !== null
+        }
+      >
+        {payStep !== null ? "Working…" : "Move withholding into the contract"}
+      </button>
+      <p className="note">
+        Two coins carrying the published totals; the circuit refuses any other figure.
+        Sending them onward to the treasuries runs from the CLI, which holds their
+        encryption keys.
+      </p>
+      {withheld ? (
+        <p className="ok-line">
+          {withheld.alreadyDone
+            ? "✓ Already moved for this period"
+            : `✓ €${formatPeur(withheld.taxMinor)} tax and €${formatPeur(withheld.socialMinor)} contribution now held by the contract`}
+        </p>
+      ) : null}
+    </>
+  );
+
+  return (
+    <MonthSteps
+      steps={[
+        {
+          title: "Load this month's figures",
+          detail: "Same workbook as last month — change only what changed.",
+          cost: "no transaction",
+          // Filing proves a workbook was loaded, even if not in this session.
+          // Leaving this open beside a ticked "File the period" said the month
+          // was both done and not started, which is the one thing a stepper
+          // exists to prevent.
+          state: ready || filed ? "done" : "now",
+          result: ready
+            ? `${roster!.rows.length} employees · €${formatPeur(roster!.totalMinor)} gross${roster!.period ? ` · ${periodName(roster!.period)}` : ""}`
+            : filed
+              ? "Already filed from a workbook — load it again to fund, pay or correct"
+              : null,
+          action: chooseFile,
+        },
+        {
+          title: "File the period",
+          detail:
+            "Publishes the totals and one sealed commitment per employee. Salaries stay on this machine.",
+          cost: "1 transaction · about 30 seconds",
+          state: filed ? "done" : ready ? "now" : "todo",
+          action: ready ? fileAction : null,
+        },
+        {
+          title: "Fund and pay everyone",
+          detail: "Each employee receives their net as a shielded transfer.",
+          cost: roster
+            ? `${roster.rows.length + 1} transactions · one per employee to fund, then one to pay`
+            : "one transaction per employee, then one to pay",
+          state: paid ? "done" : filed && ready ? "now" : "todo",
+          action: ready && filed ? payAction : null,
+        },
+        {
+          title: "Move withholding into the contract",
+          detail:
+            "Tax and contributions leave your wallet for the contract's pools. Until this runs they are assessed, not collected.",
+          cost: "1 transaction",
+          state: withheldDone ? "done" : paid ? "now" : "todo",
+          action: filed ? withholdAction : null,
+        },
+        {
+          title: "Send payslips",
+          detail: "One file per person. This is the only way they learn what they were paid.",
+          cost: "no transaction",
+          // Never "done": nothing records that a file reached a person.
+          state: paid ? "now" : "todo",
+          // Straight after filing they are already in hand; otherwise they are
+          // rebuilt from the sealed openings. Showing them only when the filing
+          // happened in this session left the step with no control at all after
+          // a reload — for the one thing an employee cannot get any other way.
+          action: submitted ? (
+            <Payslips slips={submitted.payslips} />
+          ) : filed && target ? (
+            <PayslipRecovery
+              contractAddress={target.contractAddress}
+              networkId={networkId}
+              periods={openPeriod ? [openPeriod] : []}
+              names={roster?.rows.map((row) => row.fullName)}
+              bare
+            />
+          ) : null,
+        },
+      ]}
+    />
   );
 }

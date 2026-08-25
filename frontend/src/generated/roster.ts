@@ -440,18 +440,37 @@ function readPeriod(
  *   4  Full name | Address | Monthly gross salary
  *   5+ one row per employee
  */
+export interface TemplateRow {
+  fullName: string;
+  address: string;
+  salary: string;
+  weeks?: number;
+  coinPublicKey?: string;
+  encryptionPublicKey?: string;
+}
+
+/** Writes the template to disk. The CLI's `npm run roster:template`. */
 export async function writeRosterTemplate(
   filePath: string,
-  sample: {
-    fullName: string;
-    address: string;
-    salary: string;
-    weeks?: number;
-    coinPublicKey?: string;
-    encryptionPublicKey?: string;
-  }[] = [],
+  sample: TemplateRow[] = [],
   period?: { year: number; month: number }
 ): Promise<void> {
+  const workbook = await buildRosterTemplate(sample, period);
+  await workbook.xlsx.writeFile(filePath);
+}
+
+/**
+ * The blank workbook, built rather than written.
+ *
+ * Split out so the browser can offer the same file as a download. It used to be
+ * reachable only by running `npm run roster:template`, which was printed as
+ * instructions on a page an employer opens and a developer does not — the same
+ * mistake as the explorer note on the setup page.
+ */
+export async function buildRosterTemplate(
+  sample: TemplateRow[] = [],
+  period?: { year: number; month: number }
+): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "midnight-polisZK";
   const sheet = workbook.addWorksheet("Roster");
@@ -534,6 +553,5 @@ export async function writeRosterTemplate(
     row.getCell(KEY_COLUMNS.encryption).value = sample[i]?.encryptionPublicKey ?? null;
   }
 
-
-  await workbook.xlsx.writeFile(filePath);
+  return workbook;
 }

@@ -114,12 +114,12 @@ const EMPLOYER_TABS: {
     blocked: "Register and get your payroll contract first",
   },
   {
-    // Gated on the contract, not on employees existing. Adding an employee has
-    // no store of its own — the only evidence a roster was assembled is a filed
-    // period, and filing one is what this tab does. Locking it behind employees
-    // means a new employer can never reach the page that would unlock it.
+    // "History", not "Payroll": running one moved to Overview, where it sits in
+    // the month it belongs to. This page is the record — every period filed,
+    // and the payslips for them — and two tabs that both looked like the place
+    // to file was the confusion worth removing.
     to: "/employer/payroll",
-    label: "Payroll",
+    label: "History",
     needs: "contract",
     blocked: "Register and get your payroll contract first",
   },
@@ -150,7 +150,13 @@ function EmployerTabs() {
   const unlocked = (needs?: "contract" | "employees") =>
     !needs || stage.loading || (needs === "contract" ? stage.contract : stage.employees);
 
-  const setupDone = stage.registered && stage.contract;
+  // No tick on Setup any more.
+  //
+  // It meant "a wallet is connected and controls a contract", which is a
+  // fraction of setting up — and once Setup became a reference page it stopped
+  // being a thing that completes at all. Meanwhile the checklist below it can
+  // read "0 of 2 claim-key hashes collected", so a tick in the tab was
+  // announcing completion over the top of outstanding work.
 
   return (
     <nav className="subnav">
@@ -158,11 +164,6 @@ function EmployerTabs() {
         unlocked(tab.needs) ? (
           <NavLink key={tab.to} to={tab.to} end={tab.end} className={link}>
             {tab.label}
-            {tab.to === "/employer/setup" && setupDone ? (
-              <span className="tab-done" aria-label="complete">
-                ✓
-              </span>
-            ) : null}
           </NavLink>
         ) : (
           <span key={tab.to} className="subnav-link locked" title={tab.blocked}>

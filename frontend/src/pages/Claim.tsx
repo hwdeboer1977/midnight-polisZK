@@ -1,4 +1,8 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { findAttestations, type Attestation } from "../lib/attestations";
+import { periodName } from "../generated/roster";
+import { useWallet } from "../wallet/WalletContext";
 import { ClaimForm } from "../components/ClaimForm";
 import { BENEFIT_V1 } from "../generated/benefit-params";
 
@@ -18,48 +22,96 @@ import { BENEFIT_V1 } from "../generated/benefit-params";
  * never published — which is a good deal more interesting than private payroll
  * on its own.
  */
-const REQUIREMENTS = [
-  {
-    title: "Accredited employer",
-    status: "available" as const,
-    body: "The payroll contract naming you was deployed by the platform and assigned to a registered employer — provable today from the contract's own ledger.",
-  },
-  {
-    // Neither available nor missing, and saying either would be wrong. The
-    // check runs — `claim` asserts months worked against the published minimum
-    // — but the number it checks is one the employer asserted, not one derived
-    // from the twelve filings. The fund cannot read a payroll ledger, so it
-    // cannot count them for itself; that is the same wall that shapes
-    // everything else here, and it is a real limit rather than an unfinished
-    // edge.
-    // The heading reads the PUBLISHED rule set rather than the scheme's twelve.
-    // The deployed pilot requires one month, and a page claiming twelve while
-    // the contract accepts one would be the single easiest thing here to catch
-    // out.
-    title: `${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} employment`,
-    status: "partial" as const,
-    body: `The published rule set requires ${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} — a pilot figure, not the twelve the real scheme asks for. The claim circuit checks it against a count your employer signed into the termination attestation, not against the filings themselves. A fund contract cannot read a payroll contract's ledger, so it cannot do the counting; what it can do is refuse a claim whose attestation says fewer months. The count stays auditable afterwards, because the filings are public.`,
-  },
-  {
-    // "Assessed", not "paid", and the distinction is not pedantry: it is the
-    // strongest claim the evidence supports. A commitment binds what was
-    // WITHHELD from a salary. Whether it then reached a treasury is a shielded
-    // transfer to a key nothing here can observe — `remitSocial` sends to
-    // `socialTreasury`, and a fund contract cannot see that any more than it
-    // can read another contract's ledger. Writing "paid" would be the one word
-    // in this list a careful reviewer tests first.
-    title: "Contributions assessed",
-    status: "available" as const,
-    body: "Each period's commitment binds the contribution withheld from your salary alongside the gross, so twelve openings prove twelve months of contributions were assessed. That they were remitted onward is a separate fact, and not one this system can show you.",
-  },
-  {
-    title: "Termination attestation",
-    status: "available" as const,
-    body: "Your employer signs one statement that employment ended, naming the final period — which is what stops anyone choosing their best month later. It is published as a commitment, so the statement is fixed before anyone acts on it while months worked and your claim key stay off chain. The employer cannot spend it: claiming needs your own wallet key.",
-  },
-];
+type Check = {
+  title: string;
+  /** What the chain says for THIS wallet, or null while unknown. */
+  found: string | null;
+  /** True when the item is a statement about the system, not about you. */
+  general?: boolean;
+  pilot?: boolean;
+  body: string;
+};
 
+/**
+ * The four requirements, bound to the connected wallet where they can be.
+ *
+ * They used to be four fixed rows with ticks beside them, describing how the
+ * system works — and a tick reads as "you have this". Someone scanning the
+ * panel concluded they had already qualified. Now each row reports what was
+ * actually found for this wallet, so the panel is a pre-flight check rather
+ * than a description with misleading punctuation.
+ */
+function requirementsFor(rows: Attestation[] | null): Check[] {
+  const ended = rows?.filter((row) => row.ended) ?? [];
+  const employers = [...new Set(rows?.map((row) => row.employer) ?? [])];
+
+  return [
+    {
+      title: "Accredited employer",
+      found:
+        rows === null
+          ? null
+          : employers.length > 0
+            ? `${employers.join(", ")} — assigned on chain`
+            : "",
+      body: "The payroll contract naming you was deployed by the platform and assigned to a registered employer — provable today from the contract's own ledger.",
+    },
+    {
+      title: `${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} employment`,
+      // Not a per-wallet fact: the count lives inside the termination
+      // commitment, so this page cannot read it. What it can do is refuse to
+      // imply it has.
+      found: null,
+      general: true,
+      pilot: true,
+      body: `The published rule set requires ${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} — a PILOT figure, not the twelve the real scheme asks for. The claim circuit checks it against a count your employer signed into the termination attestation, not against the filings themselves. A fund contract cannot read a payroll contract's ledger, so it cannot do the counting; what it can do is refuse a claim whose attestation says fewer months. The count stays auditable afterwards, because the filings are public. This page cannot show you the number: it is committed, not published.`,
+    },
+    {
+      title: "Contributions assessed",
+      found:
+        rows === null
+          ? null
+          : rows.length > 0
+            ? `${rows.length} period${rows.length === 1 ? "" : "s"} filed for you`
+            : "",
+      body: "Each period's commitment binds the contribution withheld from your salary alongside the gross, so an opening proves the contribution was assessed. That it was remitted onward is a separate fact, and not one this system can show you.",
+    },
+    {
+      title: "Termination attestation",
+      found:
+        rows === null
+          ? null
+          : ended.length > 0
+            ? `found for ${ended.map((row) => periodName(row.period)).join(", ")}`
+            : "",
+      body: "Your employer signs one statement that employment ended, naming the final period — which is what stops anyone choosing their best month later. It is published as a commitment, so the statement is fixed before anyone acts on it while months worked and your claim key stay off chain. The employer cannot spend it: claiming needs your own wallet key.",
+    },
+  ];
+}
 export function Claim() {
+  const { account, networkId } = useWallet();
+  const [rows, setRows] = useState<Attestation[] | null>(null);
+
+  // The same scan the Employee page runs, so the two pages cannot disagree
+  // about which periods name this wallet.
+  useEffect(() => {
+    if (!account) {
+      setRows(null);
+      return;
+    }
+    let cancelled = false;
+    void findAttestations(networkId, account.coinPublicKey)
+      .then((scan) => {
+        if (!cancelled) setRows(scan.rows);
+      })
+      .catch(() => {
+        if (!cancelled) setRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account, networkId]);
+
   return (
     <>
       <section className="area-head">
@@ -71,21 +123,36 @@ export function Claim() {
       </section>
 
       <section className="card">
-        <h2>Eligibility requirements</h2>
+        <h2>{account ? "Your eligibility" : "Eligibility requirements"}</h2>
+        {!account ? (
+          <p className="note" style={{ marginTop: 0 }}>
+            Connect your wallet and these become a check against what the chain
+            actually holds for you, rather than a description of the rules.
+          </p>
+        ) : null}
         <ul className="reqs">
-          {REQUIREMENTS.map((req) => (
-            <li key={req.title} className={req.status === "available" ? "req ready" : "req"}>
+          {requirementsFor(account ? rows : null).map((req) => (
+            <li
+              key={req.title}
+              className={req.found ? "req ready" : req.general ? "req" : "req"}
+            >
               <span className="req-mark">
-                {req.status === "available" ? "✓" : req.status === "partial" ? "◐" : "○"}
+                {req.general ? "◐" : req.found ? "✓" : req.found === "" ? "○" : "·"}
               </span>
               <div>
                 <strong>{req.title}</strong>
+                {/* The pilot figure is the single easiest thing on this page to
+                    misread as the real scheme, and it was the quietest of the
+                    four. It is now the loudest. */}
+                {req.pilot ? <span className="req-pilot">pilot figure — not 12</span> : null}
                 <span className="req-status">
-                  {req.status === "available"
-                    ? "available"
-                    : req.status === "partial"
-                      ? "attested, not derived"
-                      : "not implemented"}
+                  {req.general
+                    ? "attested by your employer, not derived here"
+                    : req.found === null
+                      ? "connect a wallet to check"
+                      : req.found === ""
+                        ? "nothing found for this wallet"
+                        : req.found}
                 </span>
                 <p className="note" style={{ margin: "4px 0 0" }}>
                   {req.body}

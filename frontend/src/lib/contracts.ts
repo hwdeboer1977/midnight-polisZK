@@ -66,6 +66,8 @@ export interface PayrollLedger {
   sealedFor: LedgerMap<bigint, LedgerMap<bigint, Uint8Array>>;
   /** period -> employee index -> whether that slot is funded / paid. */
   fundedFor: LedgerMap<bigint, LedgerMap<bigint, boolean>>;
+  /** Whether a period's withheld tax and contribution have reached the pools. */
+  withheldFor: LedgerMap<bigint, boolean>;
   paidFor: LedgerMap<bigint, LedgerMap<bigint, boolean>>;
   /** period -> employee index -> hash of the payee's coin public key. */
   payeeFor: LedgerMap<bigint, LedgerMap<bigint, Uint8Array>>;

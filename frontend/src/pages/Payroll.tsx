@@ -1,19 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { bytesToHex as hex } from "../lib/keys";
 import { ErrorBoundary } from "../components/ErrorBoundary";
-import { EndEmployment } from "../components/EndEmployment";
 import { PayslipRecovery } from "../components/PayslipRecovery";
-import { RosterUpload } from "../components/RosterUpload";
 import { StageGate } from "../components/StageGate";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { formatPeur, group } from "../lib/format";
 import type { PayrollLedger } from "../lib/contracts";
 import { usePayrollInstances, type PayrollInstance } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
-
-const hex = (bytes: Uint8Array) =>
-  Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** 202603 -> "March 2026". */
 const MONTHS = [
@@ -176,7 +172,7 @@ export function Payroll() {
     void loadDeployments().then(setDeployments);
   }, []);
 
-  const { instances, loading, error, refresh } = usePayrollInstances(
+  const { instances, loading, error } = usePayrollInstances(
     networkId,
     deployments,
     account?.coinPublicKey ?? null
@@ -195,11 +191,12 @@ export function Payroll() {
 
   const head = (
     <section className="area-head">
-      <h1>Payroll</h1>
+      <h1>Payroll history</h1>
       <p className="lede">
-        One row per month filed. The private figures behind each row never left
-        your machine — what is on chain is the aggregate and one opaque
-        commitment per worker.
+        One row per month filed, and the payslips for them. The private figures
+        behind each row never left your machine — what is on chain is the
+        aggregate and one opaque commitment per worker. To run a month, go to{" "}
+        <Link to="/employer">Overview</Link>.
       </p>
     </section>
   );
@@ -253,6 +250,7 @@ export function Payroll() {
       {head}
 
       {error ? <p className="status error">Could not read state: {error}</p> : null}
+
       {mine.map((instance) => (
         // Per instance, not around the list: one contract left on an older
         // version of the ledger should not hide the others.
@@ -260,10 +258,8 @@ export function Payroll() {
           <PeriodHistory instance={instance} />
         </ErrorBoundary>
       ))}
+
       {asEmployer.length > 0 && asEmployer[0]!.state ? (
-        // Recovering a payslip needs the passphrase and nothing else — the
-        // openings are already on chain. Rendered per employer instance so a
-        // month filed weeks ago is still reachable without re-filing it.
         <>
           <PayslipRecovery
             contractAddress={asEmployer[0]!.deployment.contractAddress}
@@ -272,43 +268,8 @@ export function Payroll() {
               .map(Number)
               .sort((a, b) => b - a)}
           />
-          {/* Below payslips because it is rarer and irreversible: a termination
-              is written once, and an employer reaching for a payslip should not
-              have to pass a button that cannot be undone. */}
-          <EndEmployment
-            contractAddress={asEmployer[0]!.deployment.contractAddress}
-            instance={asEmployer[0]!.name.replace(/^payroll:/, "")}
-            networkId={networkId}
-            periods={[...asEmployer[0]!.state!.periods]
-              .map(Number)
-              .sort((a, b) => b - a)}
-            delegateProving={false}
-          />
-        </>
-      ) : null}
 
-      {asEmployer.length > 0 ? (
-        <RosterUpload
-          // The first instance this key is employer of. An employer controlling
-          // several would need to pick; nobody does yet, and a selector for a
-          // list of one is worse than no selector.
-          target={{
-            name: asEmployer[0]!.name,
-            contractAddress: asEmployer[0]!.deployment.contractAddress,
-            // The local service signs with the platform wallet, so it can only
-            // act on an instance whose employer IS the platform. Read off the
-            // contract rather than assumed: the ledger holds both keys.
-            operatorIsEmployer: (() => {
-              const s = asEmployer[0]!.state;
-              return s
-                ? hex(s.platform.bytes) === hex(s.employer.bytes)
-                : false;
-            })(),
-          }}
-          // A filed period changes the ledger this page is showing, so re-read
-          // rather than leaving the tiles a month behind until someone reloads.
-          onSubmitted={refresh}
-        />
+        </>
       ) : null}
     </>
   );

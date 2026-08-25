@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { periodName } from "../generated/roster";
 import { recoverPayslips } from "../lib/recoverPayslips";
+import { namesBySlot } from "../lib/collected";
 import type { Payslip } from "../lib/payslip";
 import { Payslips } from "./Payslips";
 
@@ -20,11 +21,32 @@ export function PayslipRecovery({
   contractAddress,
   networkId,
   periods,
+  bare,
+  names,
 }: {
   contractAddress: string;
   networkId: string;
   /** Filed periods, newest first. */
   periods: number[];
+  /**
+   * Rendered without its own card, for use inside a step.
+   *
+   * The month's last step had no control at all unless you happened to have
+   * filed in the same session — reload the page and the only way to hand out a
+   * payslip was to find another panel. Recovering them needs the passphrase and
+   * nothing else, so the step can own it.
+   */
+  bare?: boolean;
+  /**
+   * Employee names by slot, from the loaded workbook.
+   *
+   * A recovered payslip cannot know them: the sealed opening holds the four
+   * amounts, the weeks and the nonce — no name, deliberately, because a name on
+   * chain is the one thing that would make a slot identifiable. So recovered
+   * slips read "Employee 1" unless the workbook that produced them is open,
+   * which is exactly when the employer is about to hand them out.
+   */
+  names?: (string | undefined)[];
 }) {
   const [period, setPeriod] = useState<number | null>(periods[0] ?? null);
   const [passphrase, setPassphrase] = useState("");
@@ -47,7 +69,18 @@ export function PayslipRecovery({
         period,
         passphrase,
       });
-      setSlips(result.payslips);
+      // Names from the workbook if one is open, otherwise recognised from what
+      // this browser remembers — so a payslip recovered on the History page
+      // reads the same as one recovered beside the roster.
+      const bySlot = names
+        ? Object.fromEntries(names.map((name, slot) => [slot, name]).filter(([, n]) => n))
+        : await namesBySlot(networkId, contractAddress, period!);
+      setSlips(
+        result.payslips.map((slip) => ({
+          ...slip,
+          employee: slip.employee ?? (bySlot as Record<number, string>)[slip.slot],
+        }))
+      );
       setUnsealed(result.unsealed);
       // Held no longer than the derivation needs it.
       setPassphrase("");
@@ -58,15 +91,16 @@ export function PayslipRecovery({
     }
   }
 
-  return (
-    <section className="card">
-      <h2>Payslips</h2>
-      <p className="note" style={{ marginTop: 0 }}>
-        Rebuilt from the openings your filing sealed on chain — no transaction,
-        and nothing here disturbs a period that has already been paid. Use this
-        rather than re-filing a month: re-filing replaces its commitments and
-        marks every employee unpaid.
-      </p>
+  const body = (
+    <>
+      {bare ? null : (
+        <p className="note" style={{ marginTop: 0 }}>
+          Rebuilt from the openings your filing sealed on chain — no transaction,
+          and nothing here disturbs a period that has already been paid. Use this
+          rather than re-filing a month: re-filing replaces its commitments and
+          marks every employee unpaid.
+        </p>
+      )}
 
       <div className="actions" style={{ alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <select
@@ -133,6 +167,15 @@ export function PayslipRecovery({
           </p>
         )
       ) : null}
+    </>
+  );
+
+  return bare ? (
+    body
+  ) : (
+    <section className="card">
+      <h2>Payslips</h2>
+      {body}
     </section>
   );
 }

@@ -5,6 +5,7 @@ import {
   deriveEmployerKey,
   deriveNonce,
   sealedCoinNonce,
+  withholdingCoinNonce,
   type PayrollLine,
 } from "./openings";
 import { DUTCH_V1, computeLine } from "../generated/tax-params";
@@ -503,6 +504,97 @@ async function currentLedgerState(networkId: string, contractAddress: string) {
   const state = await fetchContractState(networkId, contractAddress);
   if (!state) throw new Error("No contract state on chain");
   return state.data;
+}
+
+/**
+ * Moves a period's withheld tax and contribution into the contract's pools.
+ *
+ * Until this runs, the withholding is **assessed and not collected**: the
+ * circuit computed it, the totals are published, and the money is still in the
+ * employer's wallet. The public page says so rather than showing an assessed
+ * figure as though it had been banked, and this is what closes that gap.
+ *
+ * Two coins, not one, because the money is owed to two destinations — and both
+ * carry exactly the published total, which is what the circuit checks. There is
+ * no figure for an employer to choose here.
+ *
+ * It does NOT remit. Sending onward needs each treasury's ENCRYPTION public key,
+ * which the contract does not store — only the coin key it pays to — so a
+ * browser has nowhere to read one from. That step runs from the CLI, which has
+ * the seeds. Splitting it this way is not a limitation of the design so much as
+ * a consequence of what a shielded transfer needs: a coin nobody can decrypt is
+ * a coin nobody can find.
+ */
+export async function fundWithholding(options: {
+  api: ConnectedAPI;
+  networkId: string;
+  contractAddress: string;
+  passphrase: string;
+  tokenId: string;
+  period: number;
+  provingMode?: ProvingMode;
+  onProgress?: StepProgress;
+}): Promise<{ taxMinor: bigint; socialMinor: bigint; alreadyDone: boolean }> {
+  const { api, networkId, contractAddress, passphrase, tokenId, period } = options;
+  const onProgress = options.onProgress ?? (() => {});
+
+  onProgress("Deriving your key (PBKDF2, deliberately slow)…");
+  const employerKey = await deriveEmployerKey(passphrase, contractAddress);
+
+  const { deployed, contractModule } = await connectContract({
+    api,
+    networkId,
+    contractAddress,
+    provingMode: options.provingMode ?? "local",
+    onProgress,
+  });
+
+  const ledger = (contractModule as any).ledger(
+    await currentLedgerState(networkId, contractAddress)
+  );
+  const key = BigInt(period);
+
+  if (!ledger.commitmentsFor.member(key)) {
+    throw new Error(`Period ${period} has not been filed on this contract.`);
+  }
+  const taxMinor: bigint = ledger.totalTaxFor.member(key)
+    ? ledger.totalTaxFor.lookup(key)
+    : 0n;
+  const socialMinor: bigint = ledger.totalSocialFor.member(key)
+    ? ledger.totalSocialFor.lookup(key)
+    : 0n;
+
+  // Write-once per period in the circuit, so re-running is a no-op rather than
+  // a second payment — worth reporting instead of failing.
+  if (ledger.withheldFor?.member(key) && ledger.withheldFor.lookup(key)) {
+    return { taxMinor, socialMinor, alreadyDone: true };
+  }
+  if (!ledger.payTokenSet) {
+    throw new Error(
+      "Fund an employee first — the contract fixes its pay token on the first " +
+        "coin it receives, and withholding cannot be the one to set it."
+    );
+  }
+
+  const round = ledger.fileRoundFor?.member(key) ? Number(ledger.fileRoundFor.lookup(key)) : 0;
+  const color = toHexBytes(tokenId);
+
+  onProgress("Moving the withheld tax and contribution into the contract…");
+  await deployed.callTx.fundWithholding(
+    key,
+    {
+      nonce: await withholdingCoinNonce(employerKey, period, round, "tax"),
+      color,
+      value: taxMinor,
+    },
+    {
+      nonce: await withholdingCoinNonce(employerKey, period, round, "social"),
+      color,
+      value: socialMinor,
+    }
+  );
+
+  return { taxMinor, socialMinor, alreadyDone: false };
 }
 
 /**

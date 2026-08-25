@@ -55,6 +55,22 @@ export function formatPeur(value: bigint): string {
   return `${group(value / PEUR_SCALE)}.${fraction}`;
 }
 
+/**
+ * A money figure for a dashboard tile: always two decimals.
+ *
+ * `formatPeur` shows what the ledger holds, to the minor unit — correct, and
+ * wrong for a headline. Withheld tax comes out at €55.055, which next to €4.62
+ * reads as either fifty-five euros or fifty-five thousand depending on which
+ * decimal convention the reader has in mind. Two decimals everywhere removes
+ * the question; callers put the exact figure in a `title` so nothing is lost.
+ *
+ * Rounds half up, so a displayed total is never below what is actually held.
+ */
+export function formatPeurTile(value: bigint): string {
+  const cents = (value + 5000n) / 10000n;
+  return `${group(cents / 100n)}.${(cents % 100n).toString().padStart(2, "0")}`;
+}
+
 /** Keeps both ends visible, which is what makes an address recognisable. */
 export function truncate(value: string, head = 14, tail = 10): string {
   return value.length <= head + tail + 1

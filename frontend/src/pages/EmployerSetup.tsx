@@ -4,6 +4,7 @@ import { EXPLORERS } from "../lib/chain";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { usePayrollInstances } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
+import { Link } from "react-router-dom";
 import { Overview } from "./Overview";
 import { Peur } from "./Peur";
 import { Register } from "./Register";
@@ -21,9 +22,14 @@ export function EmployerSetup() {
   return (
     <>
       <section className="area-head">
-        <h1>Setup</h1>
+        <h1>Reference</h1>
+        {/* Reference, not a checklist. Whether an organization is registered was
+            stated here, on Overview, and again inside Register — three places
+            answering one question, which is two too many. Overview owns "what do
+            I have to do"; this page owns "what are my keys and addresses". */}
         <p className="lede">
-          Set up your organization, payroll contract and settlement asset.
+          Your keys, your contracts and your balances. What you have to{" "}
+          <em>do</em> is on <Link to="/employer">Overview</Link>.
         </p>
       </section>
 
@@ -71,6 +77,14 @@ export function EmployerSetup() {
  * plumbing, and someone auditing the deployment should not have to hunt for it
  * behind a payroll flow.
  */
+/**
+ * The keys and addresses this employer holds, and nothing else.
+ *
+ * The "Organization: Registered ✓" row that used to lead this panel is gone:
+ * Overview's checklist answers that, and stating it here as well meant a
+ * question with two homes and, when they disagreed, no way to tell which was
+ * right.
+ */
 function SetupStatus() {
   const { account, networkId } = useWallet();
   const [deployments, setDeployments] = useState<Deployments>({});
@@ -79,50 +93,36 @@ function SetupStatus() {
     void loadDeployments().then(setDeployments);
   }, []);
 
-  const { instances } = usePayrollInstances(
-    networkId,
-    deployments,
-    account?.coinPublicKey ?? null
-  );
-  const mine = instances.filter((instance) => instance.role === "employer");
-  const payroll = mine[0]?.deployment ?? null;
-  const peur = Object.values(deployments).find(
-    (d) => d.contractName === "peur" && d.networkId === networkId
-  );
+  const here = Object.values(deployments).filter((d) => d.networkId === networkId);
+  const payroll = here.find((d) => d.contractName === "payroll");
+  const peur = here.find((d) => d.contractName === "peur");
   const explorer = EXPLORERS[networkId] ?? "";
-
   const link = (address: string) =>
     explorer ? (
       <a
         className="explorer"
         href={`${explorer}${address}`}
         target="_blank"
-        rel="noreferrer noopener"
+        rel="noreferrer"
       >
-        Explorer ↗
+        explorer
       </a>
     ) : null;
 
   return (
     <section className="card">
-      <h2>Status</h2>
+      <h2>Keys and addresses</h2>
 
       <div className="row">
-        <div className="k">Organization</div>
-        <div className="v">
-          {payroll ? (
-            <span className="ok-line">Registered ✓</span>
-          ) : (
-            <span className="muted">Not registered yet</span>
-          )}
-        </div>
+        <div className="k">Network</div>
+        <div className="v">Midnight {networkId}</div>
       </div>
 
       {account ? (
-        <CopyRow label="Company signing key" value={account.coinPublicKey} />
+        <CopyRow label="Coin public key" value={account.coinPublicKey} />
       ) : (
         <div className="row">
-          <div className="k">Company signing key</div>
+          <div className="k">Coin public key</div>
           <div className="v muted">No wallet connected</div>
         </div>
       )}
@@ -141,19 +141,10 @@ function SetupStatus() {
         </div>
       ) : null}
 
-      <div className="row">
-        <div className="k">Network</div>
-        <div className="v">Midnight {networkId}</div>
-      </div>
-
-      {explorer ? null : (
-        <p className="note">
-          No explorer URL is configured for {networkId}, so the addresses above
-          are shown without one — a dead link in front of a reviewer is worse
-          than none. Set <code>EXPLORERS</code> in <code>lib/chain.ts</code> and
-          they appear here and on the public page at once.
-        </p>
-      )}
+      <p className="note">
+        Your coin public key is what every circuit checks before it accepts a
+        filing from you. The two addresses are public and searchable.
+      </p>
     </section>
   );
 }

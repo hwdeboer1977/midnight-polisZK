@@ -266,6 +266,34 @@ export async function deriveEmployeeSeed(
  * contract counts filings per period, so the round is read from chain and the
  * nonce stays reconstructible.
  */
+/**
+ * The nonces for a period's two withholding coins.
+ *
+ * `fundWithholding` receives one coin carrying the period's tax and one
+ * carrying its contribution, and `remitTax`/`remitSocial` have to rebuild those
+ * same coins later to spend them — possibly from the CLI, months afterwards.
+ * So they are derived, like every other nonce here, rather than random.
+ *
+ * Labelled `tax` and `social` rather than numbered, which is what keeps them
+ * clear of the per-employee coins: an employee slot produces `202601:0:3`, and
+ * these produce `202601:0:tax`. A number would eventually collide with a roster
+ * large enough, and the collision would be a duplicate Zswap commitment — a
+ * failure at funding time with nothing pointing at the cause.
+ *
+ * Byte-identical to `withholdingCoinNonce` in `src/utils/payroll-openings.ts`.
+ * The browser funds these coins and the CLI spends them, so a difference
+ * between the two implementations means money the contract holds and neither
+ * tool can describe.
+ */
+export async function withholdingCoinNonce(
+  employerKey: Uint8Array,
+  period: number,
+  round: number,
+  which: "tax" | "social"
+): Promise<Uint8Array> {
+  return sha256(DOMAIN.coin, employerKey, `${period}:${round}:${which}`);
+}
+
 export async function sealedCoinNonce(
   employerKey: Uint8Array,
   period: number,

@@ -4,7 +4,10 @@ import { CopyRow } from "../components/CopyRow";
 import { StageGate } from "../components/StageGate";
 import { ROSTER_COLUMNS, ROSTER_SIZE, periodName } from "../generated/roster";
 import { loadDeployments, type Deployments } from "../lib/deployments";
-import { bytesToHex } from "../lib/keys";
+import { bytesToHex, keyToHex } from "../lib/keys";
+import { collectedFor } from "../lib/collected";
+import { fromHex } from "../lib/payslip";
+import { loadContract } from "../lib/contracts";
 import { usePayrollInstances } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
 
@@ -45,6 +48,47 @@ export function EmployerRoster() {
   );
 
   const mine = instances.filter((instance) => instance.role === "employer");
+
+  // Hash → name, for whoever this browser has seen on a workbook.
+  //
+  // The chain publishes `payeeHash(coinPublicKey, period, contract)` and never
+  // the key, so a name cannot be recovered — it has to be recognised. Every
+  // remembered employee is hashed against every filed period with the
+  // contract's own pure circuit, and a match is a person.
+  //
+  // Above the early return below, and keyed on strings rather than on `mine`:
+  // hooks after a conditional return crash the page when the branch is taken,
+  // and an array dependency is a new value every render, so the effect never
+  // stops running.
+  const [names, setNames] = useState<Record<string, string>>({});
+  const address = mine[0]?.deployment.contractAddress ?? null;
+  const periodKey = mine[0]?.state
+    ? [...mine[0].state.periods].map(String).sort().join(",")
+    : "";
+
+  useEffect(() => {
+    if (!address || !periodKey) return;
+    let cancelled = false;
+    void (async () => {
+      const known = Object.values(collectedFor(address)).filter((e) => e.fullName);
+      if (known.length === 0) return;
+      const contract = (await loadContract("payroll")) as any;
+      const instance = fromHex(address.replace(/^0x/, ""));
+      const found: Record<string, string> = {};
+      for (const employee of known) {
+        const bytes = fromHex(keyToHex(employee.coinPublicKey));
+        for (const period of periodKey.split(",")) {
+          found[
+            bytesToHex(contract.pureCircuits.payeeHash({ bytes }, BigInt(period), instance))
+          ] = employee.fullName!;
+        }
+      }
+      if (!cancelled) setNames(found);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, periodKey]);
 
   if (!account || mine.length === 0) {
     return (
@@ -105,7 +149,8 @@ export function EmployerRoster() {
   const employees = [...seen.entries()]
     .sort((a, b) => a[1].slot - b[1].slot)
     .map(([hash, meta], i) => ({
-      label: `Employee ${String(i + 1).padStart(3, "0")}`,
+      label: names[hash] ?? `Employee ${String(i + 1).padStart(3, "0")}`,
+      named: Boolean(names[hash]),
       hash,
       since: meta.first,
       active: meta.onLatest,
@@ -184,6 +229,17 @@ export function EmployerRoster() {
               ))}
             </tbody>
           </table>
+          {/* A silent fallback to slot numbers looks like missing data. It is
+              not — the chain never held a name — but the difference is only
+              visible if the page says which it is. */}
+          {employees.length > 0 && employees.every((e) => !e.named) ? (
+            <p className="note warn">
+              Names are not shown because this browser has not seen your
+              workbook. Open it once on <Link to="/employer">Overview</Link> and
+              these rows will read as people — nothing is sent anywhere, and the
+              chain is unchanged either way.
+            </p>
+          ) : null}
           <p className="note">
             "Wallet / key" is the hash the contract stores, not the key itself. A
             public map of the keys on your payroll would publish the employment
@@ -213,9 +269,10 @@ export function EmployerRoster() {
           ))}
         </ol>
         <p className="note">
-          Generate a starting point with <code>npm run roster:template</code>. The
-          two key columns are left blank on purpose — they are real wallet keys,
-          one employee at a time.
+          A blank template is downloadable from{" "}
+          <Link to="/employer">the month's first step</Link>. The two key columns
+          are left blank on purpose — they are real wallet keys, one employee at
+          a time.
         </p>
       </details>
 
@@ -244,10 +301,18 @@ export function EmployerRoster() {
       <details className="details">
         <summary>Why employee records are not stored</summary>
         <p className="note">
-          Names, employment status and start dates are not held here or anywhere
-          else: they live in your workbook and are read on your machine when you
-          file a period. That is why the table above can show keys but not
-          people, and why "Employee 001" is a slot number rather than a name.
+          Names, employment status and start dates are not on chain and never
+          will be: the ledger holds one hash per slot, which proves a period has
+          a payee without saying who. A name in the table above is therefore not
+          a lookup — it is a <em>recognition</em>. Every employee this browser
+          has seen on a workbook is hashed against each filed period with the
+          contract's own circuit, and a match is a person.
+        </p>
+        <p className="note">
+          So a row reads "Employee 001" until a workbook naming them has been
+          opened here, and reads it again on a machine that has not seen one.
+          Nothing is published, nothing is shared, and the chain is no more
+          revealing either way.
         </p>
         <p className="note">
           Storing them needs a decision this project has not made. An

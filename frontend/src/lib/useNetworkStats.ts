@@ -124,21 +124,14 @@ export function useNetworkStats(networkId: string) {
         const peur = here.find(([, d]) => d.contractName === "peur");
         const fund = here.find(([, d]) => d.contractName === "fund");
 
-        const next: NetworkStats = {
-          ...EMPTY,
-          contracts: payrolls.length,
-          // pEUR first: the settlement asset is read out on its own, and the
-          // payroll contracts are the list a reviewer walks.
-          deployed: [
-            ...(peur ? [{ label: "pEUR issuer", name: peur[0], deployment: peur[1] }] : []),
-            ...(fund ? [{ label: "Unemployment fund", name: fund[0], deployment: fund[1] }] : []),
-            ...payrolls.map(([name, deployment]) => ({
-              label: "Employer payroll",
-              name,
-              deployment,
-            })),
-          ],
-        };
+        const next: NetworkStats = { ...EMPTY };
+
+        // Payroll contracts this build can actually decode, filled in by the
+        // loop below. The listed contracts and the counted ones are the same
+        // set on purpose: listing five addresses beside a count of two was the
+        // page contradicting itself, and a reviewer checking the list against
+        // the totals would have been right to distrust both.
+        const readable: { label: string; name: string; deployment: Deployment }[] = [];
 
         if (peur) {
           const contract = await loadContract("peur");
@@ -178,7 +171,7 @@ export function useNetworkStats(networkId: string) {
 
         if (payrolls.length > 0) {
           const contract = await loadContract("payroll");
-          for (const [, deployment] of payrolls) {
+          for (const [name, deployment] of payrolls) {
             const state = await fetchContractState(networkId, deployment.contractAddress);
             if (!state) continue;
 
@@ -189,6 +182,7 @@ export function useNetworkStats(networkId: string) {
               next.unreadable += 1;
               continue;
             }
+            readable.push({ label: "Employer payroll", name, deployment });
 
             if (ledger.employerAssigned) next.employers += 1;
 
@@ -248,6 +242,16 @@ export function useNetworkStats(networkId: string) {
             }
           }
         }
+
+        // Assembled last, from what decoded. pEUR first: the settlement asset
+        // is read out on its own, and the payroll contracts are the list a
+        // reviewer walks.
+        next.contracts = readable.length;
+        next.deployed = [
+          ...(peur ? [{ label: "pEUR issuer", name: peur[0], deployment: peur[1] }] : []),
+          ...(fund ? [{ label: "Unemployment fund", name: fund[0], deployment: fund[1] }] : []),
+          ...readable,
+        ];
 
         if (!cancelled) setStats(next);
       } catch (cause) {

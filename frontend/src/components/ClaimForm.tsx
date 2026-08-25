@@ -26,7 +26,9 @@ export function ClaimForm() {
   const { api, account, networkId } = useWallet();
 
   const [bundle, setBundle] = useState<ClaimBundle | null>(null);
+  const [bundleName, setBundleName] = useState<string | null>(null);
   const [payslip, setPayslip] = useState<Payslip | null>(null);
+  const [payslipName, setPayslipName] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,8 +36,9 @@ export function ClaimForm() {
 
   const busy = step !== null;
 
-  function readBundle(text: string) {
+  function readBundle(text: string, name: string) {
     setError(null);
+    setBundleName(name);
     try {
       setBundle(parseBundle(text));
     } catch (cause) {
@@ -44,8 +47,9 @@ export function ClaimForm() {
     }
   }
 
-  function readPayslip(text: string) {
+  function readPayslip(text: string, name: string) {
     setError(null);
+    setPayslipName(name);
     try {
       setPayslip(decodePayslip(text));
     } catch (cause) {
@@ -163,9 +167,9 @@ export function ClaimForm() {
           </div>
           <FilePicker
             label="Choose the bundle…"
-            loaded={bundle ? `Loaded — period ${bundle.period}` : null}
+            loaded={bundle ? `${bundleName ?? "Loaded"} — period ${bundle.period}` : null}
             disabled={busy}
-            onFile={async (file) => readBundle(await file.text())}
+            onFile={async (file) => readBundle(await file.text(), file.name)}
           />
           <p className="note">
             Holds the path proving your termination is in that month's tree,
@@ -181,9 +185,9 @@ export function ClaimForm() {
           </div>
           <FilePicker
             label="Choose your payslip…"
-            loaded={payslip ? `Loaded — period ${payslip.period}` : null}
+            loaded={payslip ? `${payslipName ?? "Loaded"} — period ${payslip.period}` : null}
             disabled={busy}
-            onFile={async (file) => readPayslip(await file.text())}
+            onFile={async (file) => readPayslip(await file.text(), file.name)}
           />
           <p className="note">
             For the final period. It carries the figures that open the
@@ -201,7 +205,7 @@ export function ClaimForm() {
             type="password"
             value={passphrase}
             disabled={busy}
-            placeholder="The passphrase you chose on Employee"
+            placeholder="Your claim passphrase"
             autoComplete="off"
             style={{ minWidth: 280 }}
             onChange={(event) => setPassphrase(event.target.value)}
@@ -222,8 +226,15 @@ export function ClaimForm() {
         </p>
       ) : null}
 
-      {step ? <p className="note">{step}</p> : null}
       {error ? <p className="problems">{error}</p> : null}
+
+      {/* The slowest action in the app, and the one where someone is most
+          anxious. Without a number here a wait that is working looks like a
+          wait that has hung. */}
+      <p className="note" style={{ marginTop: 16 }}>
+        Proving takes about a minute — keep this tab open. Nothing is sent
+        anywhere while it runs.
+      </p>
 
       <button
         type="button"
@@ -231,8 +242,10 @@ export function ClaimForm() {
         disabled={busy || !bundle || !payslip || !passphrase}
         onClick={() => void claim()}
       >
-        {busy ? "Working…" : "Claim my benefit"}
+        {busy ? step ?? "Working…" : "Claim my benefit"}
       </button>
+
+      {busy && step ? <p className="status">{step}</p> : null}
     </section>
   );
 }

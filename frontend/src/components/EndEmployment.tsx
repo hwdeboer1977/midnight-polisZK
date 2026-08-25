@@ -5,6 +5,7 @@ import {
   surveyEmployment,
   type TerminationResult,
 } from "../lib/endEmployment";
+import { collectedFor } from "../lib/collected";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
@@ -24,6 +25,7 @@ export function EndEmployment({
   networkId,
   periods,
   delegateProving,
+  roster,
 }: {
   contractAddress: string;
   instance: string;
@@ -31,6 +33,16 @@ export function EndEmployment({
   /** Filed periods, newest first. */
   periods: number[];
   delegateProving: boolean;
+  /**
+   * The workbook loaded on this page, if one has been.
+   *
+   * With it, the employee is chosen from a list of names. Without it, the key
+   * has to be pasted — the chain holds only a hash of it, so there is nowhere
+   * else to read one from. Pasting is the fallback, not the design: this
+   * writes an attestation that cannot be revised, and a mis-pasted key anchors
+   * a termination against the wrong person.
+   */
+  roster?: { rows: { fullName: string; coinPublicKey: string }[] } | null;
 }) {
   const { api } = useWallet();
   const [period, setPeriod] = useState<number | null>(periods[0] ?? null);
@@ -175,23 +187,43 @@ export function EndEmployment({
             </option>
           ))}
         </select>
-        <input
-          value={payee}
-          disabled={busy}
-          placeholder="Employee's coin public key"
-          style={{ minWidth: 320 }}
-          onChange={(event) => {
-            setPayee(event.target.value.trim());
-            setSurvey(null);
-          }}
-        />
+        {roster && roster.rows.length > 0 ? (
+          <select
+            value={payee}
+            disabled={busy}
+            style={{ minWidth: 260 }}
+            onChange={(event) => {
+              setPayee(event.target.value);
+              setSurvey(null);
+            }}
+          >
+            <option value="">Choose an employee…</option>
+            {roster.rows.map((row) => (
+              <option key={row.coinPublicKey} value={row.coinPublicKey}>
+                {row.fullName || row.coinPublicKey.slice(0, 12)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={payee}
+            disabled={busy}
+            placeholder="Employee's coin public key"
+            style={{ minWidth: 320 }}
+            onChange={(event) => {
+              setPayee(event.target.value.trim());
+              setSurvey(null);
+            }}
+          />
+        )}
         <button type="button" className="ghost" disabled={busy || !payee} onClick={() => void look()}>
           Look up
         </button>
       </div>
       <p className="note">
-        From your roster. Only you can turn it into the hash the chain publishes,
-        which is why the months below can be counted here and nowhere else.
+        {roster && roster.rows.length > 0
+          ? "From the workbook you loaded above. Only you can turn a key into the hash the chain publishes, which is why the months below can be counted here and nowhere else."
+          : "Load this contract's workbook above and this becomes a list of names. Until then the key has to be pasted — the chain holds only a hash of it, so there is nowhere else to read one from."}
       </p>
 
       {survey ? (
@@ -206,8 +238,12 @@ export function EndEmployment({
           </p>
 
           <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
+            {/* Prefilled from what was collected for this employee, if
+                anything was — the hash is the same value either way, and
+                retyping it is one more chance to anchor a termination against a
+                key nobody holds. */}
             <input
-              value={claimKeyHash}
+              value={claimKeyHash || collectedFor(contractAddress)[payee]?.claimKeyHash || ""}
               disabled={busy}
               placeholder="Employee's claim key hash"
               style={{ minWidth: 320 }}

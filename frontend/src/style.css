@@ -162,7 +162,27 @@ button {
 }
 @media (prefers-color-scheme: dark) { button { color: #14161a; } }
 button:hover:not(:disabled) { opacity: 0.88; }
-button:disabled { opacity: 0.5; cursor: default; }
+/* Disabled is a different colour, not a faded accent.
+ *
+ * At 50% opacity an accent-filled button becomes a pale lavender that reads as
+ * "maybe pressable" — and because the primary action of a panel is usually
+ * disabled until a passphrase is typed, the most important button on the page
+ * was the one that looked broken. Draining the colour instead makes the
+ * enabled state unmistakably solid. */
+/* Disabled has to be obviously inert, not merely dimmer.
+ *
+ * A faded accent read as "maybe pressable"; a light grey fill still read as a
+ * button waiting to be pressed. This drops the fill entirely and leaves an
+ * outline — the difference between a solid coloured block and a hollow one is
+ * legible at a glance, which "slightly paler purple" never was. */
+button:disabled {
+  background: transparent; color: var(--faint);
+  border: 1px dashed var(--line);
+  opacity: 1; cursor: default; font-weight: 550;
+}
+button.ghost:disabled, button.primary.secondary-action:disabled {
+  background: transparent; border-color: var(--line); color: var(--faint);
+}
 
 button.ghost {
   background: transparent; color: var(--muted);
@@ -175,6 +195,10 @@ button.ghost:hover:not(:disabled) { color: var(--text); opacity: 1; }
 .tiles {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
 }
+/* Two tiles that each answer a whole question, rather than four that each
+   answer a quarter of one — and no odd tile wrapping onto a row of its own,
+   which reads as a layout fault rather than a fourth fact. */
+.tiles.two { grid-template-columns: repeat(2, 1fr); margin-bottom: 18px; }
 .tile {
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 16px 18px;
@@ -224,7 +248,27 @@ button.ghost:hover:not(:disabled) { color: var(--text); opacity: 1; }
 .callout .row { border-top-color: color-mix(in srgb, var(--accent) 18%, transparent); }
 .callout .note { color: var(--muted); }
 
-.note { font-size: 12.5px; color: var(--muted); margin: 14px 0 0; line-height: 1.5; }
+/* Explanatory prose, everywhere.
+ *
+ * A step smaller and lighter than it was. Almost every panel in this app is a
+ * figure or a control followed by two or three paragraphs of reasoning, and at
+ * the old weight the prose outweighed the interface — the page read as a
+ * document rather than a tool. None of it is cut: the argument is worth having,
+ * it just should not be the first thing the eye lands on. Longer stretches sit
+ * behind a `.why` or `.details` disclosure instead. */
+.note {
+  font-size: 12px; color: var(--faint); margin: 12px 0 0; line-height: 1.55;
+  max-width: 68ch;
+}
+/* A note that needs attention. Colour only — `.warn-line` is `display: flex`,
+   built for a single icon-and-text row, and putting it on a paragraph turns
+   every text node and link into its own flex item. */
+.note.warn { color: var(--warn); }
+.warn-inline { color: var(--warn); font-weight: 620; }
+/* Kept legible where a note carries a warning or a result rather than
+   background — those are read, not skimmed past. */
+.note strong, .problems, .ok-line { color: var(--muted); }
+.problems { color: var(--text); }
 
 /* ---------- contracts ---------- */
 
@@ -557,6 +601,128 @@ table.roster .mono {
 .file-picker:focus-within {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
+
+/* "Why" disclosures on the public page. Quiet enough that a skimmer's eye
+   passes over them, obvious enough that a reader who wants the argument finds
+   it. Deliberately lighter than `.details`, which is used for longer technical
+   asides rather than one-click reasoning under a figure. */
+.why { margin: 12px 0 0; }
+.why > summary {
+  cursor: pointer; list-style: none;
+  font-size: 12.5px; font-weight: 600; color: var(--muted);
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.why > summary::-webkit-details-marker { display: none; }
+.why > summary::before {
+  content: "›"; display: inline-block; transition: transform 0.12s ease;
+  font-size: 14px; line-height: 1;
+}
+.why[open] > summary::before { transform: rotate(90deg); }
+.why > summary:hover { color: var(--text); }
+.why .note:first-of-type { margin-top: 8px; }
+
+/* The claim key, before it exists. Amber because the cost of missing it is
+   unrecoverable and the window closes without warning: the employer writes the
+   hash into a write-once termination, so an employee who has not done this by
+   then cannot ever claim. Once done it collapses to a green line and stops
+   competing with the rest of the page. */
+.claim-key-todo { border-color: var(--warn); }
+.claim-key-todo > h2 { color: var(--warn); }
+.claim-key-done { padding-top: 14px; padding-bottom: 14px; }
+
+/* What you need before an action, as items rather than a sentence. Three
+   things from three different people is a checklist, and reading it as prose is
+   how people arrive at the form missing one of them. */
+.needs { margin: 0 0 14px; padding-left: 18px; }
+.needs li { font-size: 13.5px; margin-bottom: 5px; }
+.needs strong { font-weight: 620; }
+
+/* The pilot-figure flag on the claim checklist. The distinction between one
+   month and the scheme's twelve is what the page's credibility rests on, and it
+   was the least prominent of the four rows. */
+.req-pilot {
+  display: inline-block; margin-left: 8px;
+  background: var(--warn); color: #fff;
+  border-radius: 999px; padding: 1px 8px;
+  font-size: 11px; font-weight: 680; letter-spacing: 0.01em;
+  vertical-align: 1px;
+}
+
+/* ---------- the employer's month ---------- */
+
+/* Section labels: "Set up once", "Every month", "Only when it happens". They
+   answer what an employer has to do before a word of the panels is read, which
+   is the reorganisation — the nav used to be named after objects instead. */
+.when-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--faint); margin: 30px 0 10px;
+}
+.when-label:first-of-type { margin-top: 0; }
+
+.prereqs {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding: 12px 0 14px; border-bottom: 1px solid var(--line); margin-bottom: 4px;
+}
+.chip-pre {
+  font-size: 12px; font-weight: 620; border-radius: 999px; padding: 4px 11px;
+}
+.chip-pre.ok { background: var(--accent-soft); color: var(--accent); }
+.chip-pre.no { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+
+.month-steps { list-style: none; margin: 0; padding: 0; }
+.month-step {
+  display: flex; gap: 13px; padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.month-step:last-child { border-bottom: 0; }
+.month-step-n {
+  flex: 0 0 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--card);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: var(--faint); margin-top: 1px;
+}
+.month-step.done .month-step-n {
+  background: var(--accent-soft); color: var(--accent); border-color: transparent;
+}
+.month-step.now .month-step-n {
+  background: var(--accent); color: #fff; border-color: transparent;
+}
+@media (prefers-color-scheme: dark) { .month-step.now .month-step-n { color: #14161a; } }
+.month-step-main { flex: 1; min-width: 0; }
+.month-step-t { font-size: 14px; font-weight: 620; }
+.month-step.todo .month-step-t { color: var(--muted); }
+.month-step-d { font-size: 13px; color: var(--muted); margin-top: 1px; }
+.month-step-result { font-size: 13px; font-weight: 600; color: var(--accent); margin-top: 3px; }
+.month-step-action { margin-top: 10px; }
+/* A step's own button sits inside it, so it must not stretch the way a panel's
+   primary action does. */
+.month-step-action button.primary { width: auto; display: inline-block; margin: 0; }
+.month-step-cost { font-size: 12px; color: var(--faint); margin-top: 8px; }
+/* A finished step is a line, not a panel. */
+.month-step.collapsed { padding: 10px 0; }
+.month-step.collapsed .month-step-t { font-weight: 550; color: var(--muted); }
+.month-step-redo {
+  margin-top: 4px; font-size: 12px; padding: 3px 9px;
+}
+
+/* The rare section. Collapsed until it is needed, and leading with the warning
+   rather than burying it: the irreversible part of a termination is the
+   ordering, not the click. */
+.rare summary {
+  cursor: pointer; list-style: none; font-size: 14px; font-weight: 620;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.rare summary::-webkit-details-marker { display: none; }
+.rare summary::after { content: "▾"; color: var(--faint); font-size: 12px; }
+
+/* Collecting claim-key hashes. One row per employee still to ask, because
+   "1 of 2" without a name is a reminder nobody can act on. */
+.collect { margin: 6px 0 4px; }
+.collect-row {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px;
+}
+.collect-who { font-size: 13.5px; font-weight: 600; min-width: 150px; }
+.collect-row input { flex: 1; min-width: 240px; font-size: 12.5px; }
 
 .flow {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

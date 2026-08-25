@@ -1706,6 +1706,14 @@ so a cached state is always one that reached the tip. Drop it with
 
 ## Finding things on an explorer
 
+Explorer links come from `EXPLORERS` in `frontend/src/lib/chain.ts`, keyed by
+network id. A network with no entry renders addresses as plain text rather than
+as dead links, on both the public page and the employer's setup page — a link
+that goes nowhere in front of a reviewer is worse than no link. This note used
+to live in the employer UI, which is a page no developer opens and every
+employer does.
+
+
 Searchable: **contract addresses** (64 hex chars) and **transaction hashes**
 (64 hex chars). The CLIs print `Tx hash: ...` for exactly this reason — the
 SDK's `txId` is a 66-character midnight-js identifier, *not* the chain hash, and

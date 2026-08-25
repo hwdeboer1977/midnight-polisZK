@@ -64,6 +64,7 @@ const DOMAIN = {
   nonce: "polisZK/nonce/v1",
   seal: "polisZK/seal/v1",
   employee: "polisZK/employee/v1",
+  coin: "polisZK/coin/v1",
   termination: "polisZK/termination/v1",
   claim: "polisZK/claim/v1",
 } as const;
@@ -126,6 +127,23 @@ export function keyFingerprint(employerKey: Buffer): string {
  * by period and index so no two commitments share a nonce — two employees on
  * the same salary must not produce the same commitment.
  */
+/**
+ * The nonces for a period's two withholding coins.
+ *
+ * Byte-identical to `withholdingCoinNonce` in `frontend/src/lib/openings.ts` —
+ * the browser funds these coins and this side spends them when remitting, so a
+ * difference between the two means money the contract holds and neither tool
+ * can describe. `tests/withholding-nonce.test.mjs` checks the two agree.
+ */
+export function withholdingCoinNonce(
+  employerKey: Buffer,
+  period: number,
+  round: number,
+  which: "tax" | "social"
+): Uint8Array {
+  return new Uint8Array(sha256(DOMAIN.coin, employerKey, `${period}:${round}:${which}`));
+}
+
 export function deriveNonce(employerKey: Buffer, period: number, index: number): Uint8Array {
   return new Uint8Array(sha256(DOMAIN.nonce, employerKey, `${period}:${index}`));
 }

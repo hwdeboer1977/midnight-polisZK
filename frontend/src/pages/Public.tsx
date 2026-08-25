@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
 import { EXPLORERS } from "../lib/chain";
-import { formatPeur, group } from "../lib/format";
+import { formatPeur, formatPeurTile, group } from "../lib/format";
 import { useNetworkStats } from "../lib/useNetworkStats";
 import { useWallet } from "../wallet/WalletContext";
 
@@ -36,18 +36,6 @@ export function Public() {
 
       {error ? <p className="status error">Could not read the chain: {error}</p> : null}
 
-      {/* Zeroes that are really "we could not read it" are the worst kind of
-          wrong number on a page whose claim is that its figures are checkable. */}
-      {!loading && stats.unreadable > 0 ? (
-        <p className="status warn-line">
-          ⚠ {stats.unreadable} payroll contract
-          {stats.unreadable === 1 ? " was" : "s were"} deployed from an older
-          version of the contract and cannot be read by this build.{" "}
-          {stats.unreadable === 1 ? "Its figures are" : "Their figures are"} not
-          included in any total below.
-        </p>
-      ) : null}
-
       <h2 className="eyebrow">Network</h2>
       <div className="stats">
         <Stat
@@ -72,18 +60,42 @@ export function Public() {
       </div>
 
       <h2 className="eyebrow">Payroll</h2>
+      {/* One figure, not two identical ones. Filed and settled are genuinely
+          different claims — committed to, versus actually paid — but when they
+          are equal, showing the same number twice reads as a rendering fault
+          and buries the fact that nothing is outstanding. */}
       <div className="stats two">
         <Stat
-          value={loading ? "…" : `€${formatPeur(stats.payrollFiled)}`}
-          label="Gross payroll filed"
+          value={loading ? "…" : `€${formatPeurTile(stats.payrollFiled)}`}
+          exact={loading ? undefined : `€${formatPeur(stats.payrollFiled)}`}
+          label={
+            loading
+              ? "Gross payroll filed"
+              : stats.payrollSettled === stats.payrollFiled
+                ? "Gross payroll filed · fully settled"
+                : "Gross payroll filed"
+          }
           accent
-          note="committed on chain, proved consistent with the rows behind it"
+          note={
+            stats.payrollSettled === stats.payrollFiled
+              ? "committed on chain, and every worker in every period has been paid"
+              : "committed on chain, proved consistent with the rows behind it"
+          }
         />
-        <Stat
-          value={loading ? "…" : `€${formatPeur(stats.payrollSettled)}`}
-          label="Gross payroll settled"
-          note="periods where every worker has actually been paid"
-        />
+        {stats.payrollSettled === stats.payrollFiled ? (
+          <Stat
+            value={loading ? "…" : group(BigInt(stats.commitments))}
+            label="Salary commitments"
+            note="one opaque commitment per worker per period — none of them readable"
+          />
+        ) : (
+          <Stat
+            value={loading ? "…" : `€${formatPeurTile(stats.payrollSettled)}`}
+            exact={loading ? undefined : `€${formatPeur(stats.payrollSettled)}`}
+            label="of which settled"
+            note="periods where every worker has actually been paid"
+          />
+        )}
       </div>
 
       <p className="note">
@@ -107,14 +119,14 @@ export function Public() {
           <span className="op">=</span>
           <div className="term real">
             <span className="term-value">
-              {loading ? "…" : `€${formatPeur(stats.taxFiled)}`}
+              {loading ? "…" : `€${formatPeurTile(stats.taxFiled)}`}
             </span>
             <span className="term-label">Tax withheld</span>
           </div>
           <span className="op">+</span>
           <div className="term real">
             <span className="term-value">
-              {loading ? "…" : `€${formatPeur(stats.socialFiled)}`}
+              {loading ? "…" : `€${formatPeurTile(stats.socialFiled)}`}
             </span>
             <span className="term-label">Social contributions</span>
           </div>
@@ -126,18 +138,20 @@ export function Public() {
             <span className="term-label">Net payroll</span>
           </div>
         </div>
-        <p className="note">
-          Anyone can check that gross equals tax plus contributions plus net,
-          across every employer, without seeing a single worker's figures. The
-          circuit enforces the identity <em>per employee</em>, not only on these
-          totals — balancing an overstatement for one worker against an
-          understatement for another would satisfy the sums and lie about both.
-        </p>
-        <p className="note">
-          The amounts are not filed by employers. They are computed inside the
-          circuit from the gross salary and a published rule set, so an employer
-          can neither choose a rate nor pick a cheaper version of the rules.
-        </p>
+        <Why>
+          <p className="note">
+            Anyone can check that gross equals tax plus contributions plus net,
+            across every employer, without seeing a single worker's figures. The
+            circuit enforces the identity <em>per employee</em>, not only on these
+            totals — balancing an overstatement for one worker against an
+            understatement for another would satisfy the sums and lie about both.
+          </p>
+          <p className="note">
+            The amounts are not filed by employers. They are computed inside the
+            circuit from the gross salary and a published rule set, so an employer
+            can neither choose a rate nor pick a cheaper version of the rules.
+          </p>
+        </Why>
       </section>
 
       {/* One box rather than two cards and two loose paragraphs: here the
@@ -208,18 +222,32 @@ export function Public() {
             <div className="stat-label">Periods claimable</div>
           </div>
           <div className="stat">
-            <div className="stat-value">
+            <div
+              className="stat-value"
+              title={
+                stats.fund
+                  ? `Exactly €${formatPeur(stats.fund.taxHeld + stats.fund.taxRemitted)}`
+                  : undefined
+              }
+            >
               {loading || !stats.fund
                 ? "—"
-                : `€${formatPeur(stats.fund.taxHeld + stats.fund.taxRemitted)}`}
+                : `€${formatPeurTile(stats.fund.taxHeld + stats.fund.taxRemitted)}`}
             </div>
             <div className="stat-label">Tax withheld from benefits</div>
           </div>
           <div className="stat">
-            <div className="stat-value">
+            <div
+              className="stat-value"
+              title={
+                stats.fund
+                  ? `Exactly €${formatPeur(stats.fund.socialHeld + stats.fund.socialRemitted)}`
+                  : undefined
+              }
+            >
               {loading || !stats.fund
                 ? "—"
-                : `€${formatPeur(stats.fund.socialHeld + stats.fund.socialRemitted)}`}
+                : `€${formatPeurTile(stats.fund.socialHeld + stats.fund.socialRemitted)}`}
             </div>
             <div className="stat-label">Contributions withheld</div>
           </div>
@@ -235,15 +263,17 @@ export function Public() {
             ? " The fund holds money and a rule set is published; the count above is zero because nobody has claimed against this contract yet."
             : ""}
         </p>
-        <p className="note">
-          <strong>The fund's balance is not shown because it is not published.</strong>{" "}
-          It is a shielded coin, so this fund is deliberately not publicly
-          solvent — and that cannot be fixed without also revealing what each
-          claimant received, because successive balances would give away the
-          differences between them. The withholding totals above are public for
-          the opposite reason: tax that is never remitted is not tax, and
-          remitting requires the contract to know what it owes.
-        </p>
+        <Why label="Why there is no balance here">
+          <p className="note">
+            <strong>The fund's balance is not published at all.</strong> It is a
+            shielded coin, so this fund is deliberately not publicly solvent — and
+            that cannot be fixed without also revealing what each claimant
+            received, because successive balances would give away the differences
+            between them. The withholding totals above are public for the opposite
+            reason: tax that is never remitted is not tax, and remitting requires
+            the contract to know what it owes.
+          </p>
+        </Why>
       </section>
 
       {/* Separate card, because these two zeroes mean something different from
@@ -253,38 +283,44 @@ export function Public() {
         <div className="stats pending-stats">
           <div className="stat">
             <div className="stat-value">
-              {loading ? "…" : `€${formatPeur(stats.taxFiled)}`}
+              {loading ? "…" : `€${formatPeurTile(stats.taxFiled)}`}
             </div>
             <div className="stat-label">Tax assessed</div>
           </div>
           <div className="stat">
             <div className="stat-value">
-              {loading ? "…" : `€${formatPeur(stats.taxHeld + stats.taxRemitted)}`}
+              {loading ? "…" : `€${formatPeurTile(stats.taxHeld + stats.taxRemitted)}`}
             </div>
             <div className="stat-label">Tax collected</div>
           </div>
           <div className="stat">
             <div className="stat-value">
-              {loading ? "…" : `€${formatPeur(stats.socialFiled)}`}
+              {loading ? "…" : `€${formatPeurTile(stats.socialFiled)}`}
             </div>
             <div className="stat-label">Contributions assessed</div>
           </div>
           <div className="stat">
             <div className="stat-value">
-              {loading ? "…" : `€${formatPeur(stats.socialHeld + stats.socialRemitted)}`}
+              {loading ? "…" : `€${formatPeurTile(stats.socialHeld + stats.socialRemitted)}`}
             </div>
             <div className="stat-label">Contributions collected</div>
           </div>
         </div>
-        <p className="note">
-          Every payroll period computes tax and contributions in circuit and
-          publishes the totals, so the assessed figures are provable per employer
-          without seeing a salary. The collected figures are what has actually
-          moved into the contracts' pools — and they are genuinely zero:{" "}
-          <code>fundWithholding</code> is deployed and nothing calls it yet, so
-          employers keep the withheld money. Showing the assessed figure as
-          though it had been collected is the one thing this page will not do.
+        <p className="note" style={{ marginTop: 12 }}>
+          Assessed is provable per employer. Collected is genuinely zero — the
+          money has not moved.
         </p>
+        <Why label="Why collected is zero">
+          <p className="note">
+            Every payroll period computes tax and contributions in circuit and
+            publishes the totals, so the assessed figures are provable per employer
+            without seeing a salary. The collected figures are what has actually
+            moved into the contracts' pools — and they are genuinely zero:{" "}
+            <code>fundWithholding</code> is deployed and nothing calls it yet, so
+            employers keep the withheld money. Showing the assessed figure as
+            though it had been collected is the one thing this page will not do.
+          </p>
+        </Why>
       </section>
 
       <section className="card">
@@ -385,6 +421,32 @@ export function Public() {
         </details>
       </section>
 
+      {/* Moved here from the top of the page. It is a real caveat and it stays,
+          but it is a note about this build's decoder, not a defect in the
+          figures — and leading with a warning about contracts that contribute
+          nothing to any total told a first-time reader the system was broken
+          before they had seen a single working number. Those contracts are now
+          excluded from the query as well as the totals, so the list and the
+          counts above agree. */}
+      {!loading && stats.unreadable > 0 ? (
+        <section className="card">
+          <h2>Older contracts, not shown</h2>
+          <p className="note" style={{ marginTop: 0 }}>
+            {stats.unreadable} payroll contract
+            {stats.unreadable === 1 ? " was" : "s were"} deployed from an earlier
+            version of <code>payroll.compact</code> and cannot be decoded by this
+            build — the ledger layout changed when terminations were added.
+            {stats.unreadable === 1 ? " It is" : " They are"} excluded from every
+            figure and every list on this page, rather than counted as zero.
+          </p>
+          <p className="note">
+            Nothing is lost on chain: they hold whatever they held, and an older
+            build still reads them. Verifier keys are fixed at deploy, so a
+            contract change always means a redeploy — see the README.
+          </p>
+        </section>
+      ) : null}
+
       <section className="card">
         <h2>Where to go next</h2>
         <div className="next-areas">
@@ -406,20 +468,49 @@ export function Public() {
   );
 }
 
+/**
+ * The reasoning behind a figure, folded away by default.
+ *
+ * Every panel here was a headline number followed by two or three paragraphs,
+ * and the effect was that the argument buried the evidence: someone skimming
+ * met prose before they met a working number. The prose is the best part of
+ * this page and none of it is cut — it is one click away instead, so the
+ * figures carry the page and the reasoning rewards whoever stops.
+ */
+function Why({ label = "Why this is checkable", children }: { label?: string; children: React.ReactNode }) {
+  return (
+    <details className="why">
+      <summary>{label}</summary>
+      {children}
+    </details>
+  );
+}
+
 function Stat({
   value,
   label,
   note,
   accent,
+  exact,
 }: {
   value: string;
   label: string;
   note: string;
   accent?: boolean;
+  /**
+   * The unrounded figure, shown on hover.
+   *
+   * Tiles round to two decimals so they can be compared at a glance; nothing is
+   * lost, because the exact minor-unit value is here. A page whose claim is
+   * that its numbers are checkable should not round without saying so.
+   */
+  exact?: string;
 }) {
   return (
     <div className={accent ? "stat accent" : "stat"}>
-      <div className="stat-value">{value}</div>
+      <div className="stat-value" title={exact && exact !== value ? `Exactly ${exact}` : undefined}>
+        {value}
+      </div>
       <div className="stat-label">{label}</div>
       <div className="stat-note">{note}</div>
     </div>
