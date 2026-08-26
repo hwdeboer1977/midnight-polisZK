@@ -46,7 +46,8 @@
     "test:benefit-tax": "npm run build && node tests/benefit-tax.test.mjs",
     "test:withholding-nonce": "npm run build && node tests/withholding-nonce.test.mjs",
     "test:nullifier": "npm run build && node tests/claim-nullifier.test.mjs",
-    "server": "npm run build && node dist/server/index.js"
+    "server": "npm run build:server && node dist/server/index.js",
+    "build:server": "tsc -p tsconfig.server.json"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-js": "2.5.1",

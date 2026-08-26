@@ -89,7 +89,13 @@ claims.json
 # brute-force the pool balance — so this file is the ONLY copy. Losing it
 # strands the money; committing it puts it somewhere it should not be.
 # Globbed, so a `fund-pool.json.bak` is caught too.
-fund-pool*
+#
+# ANCHORED to the repo root, and that leading slash is load-bearing. Unanchored,
+# `fund-pool*` matches a path segment at ANY depth — which silently swallowed
+# `src/utils/fund-pool.ts`, the SOURCE file that reads and writes this data. It
+# was never committed, and nothing noticed until a build on a machine that had
+# only the repo failed to resolve the import. Data at the root; code under src.
+/fund-pool*
 
 # Compiled ZK assets for the browser prover (~47 MB).
 #
