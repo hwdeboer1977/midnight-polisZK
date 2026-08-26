@@ -45,7 +45,8 @@
     "terminate": "npm run build && node dist/terminate-cli.js",
     "test:benefit-tax": "npm run build && node tests/benefit-tax.test.mjs",
     "test:withholding-nonce": "npm run build && node tests/withholding-nonce.test.mjs",
-    "test:nullifier": "npm run build && node tests/claim-nullifier.test.mjs"
+    "test:nullifier": "npm run build && node tests/claim-nullifier.test.mjs",
+    "server": "npm run build && node dist/server/index.js"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-js": "2.5.1",
@@ -62,14 +63,18 @@
     "@scure/base": "^2.3.0",
     "@scure/bip39": "^2.3.0",
     "chalk": "^5.3.0",
+    "cors": "^2.8.6",
     "dotenv": "^16.3.1",
     "effect": "^3.22.1",
     "exceljs": "^4.4.0",
+    "express": "^5.2.1",
     "pg": "^8.23.0",
     "rxjs": "^7.8.2",
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.23.1",
     "@types/ws": "^8.5.10",

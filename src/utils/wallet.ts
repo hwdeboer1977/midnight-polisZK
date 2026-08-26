@@ -108,6 +108,33 @@ export function getUnshieldedAddress(
   return deriveKeys(secret, networkId).unshieldedKeystore.getBech32Address().toString();
 }
 
+/**
+ * Where the wallet proves. Read here rather than imported from the providers
+ * module, which imports this one — the cycle is avoidable and the value is one
+ * environment variable.
+ */
+function provingMode(): "wasm" | "http" {
+  return process.env.PROVING_MODE === "http" ? "http" : "wasm";
+}
+
+/**
+ * The wallet's in-process prover, built once per wallet.
+ *
+ * Its KeyMaterialProvider only ever answers for the built-in zswap and dust
+ * circuits — a wallet balances transactions, it does not call our contracts —
+ * so the SDK's own S3-backed default is the whole of what it needs. Contract
+ * circuits are the proof PROVIDER's job, and that one reads them from disk.
+ */
+async function walletWasmProvingService(_config: unknown): Promise<any> {
+  const capabilities = "@midnight-ntwrk/wallet-sdk-capabilities/proving";
+  const { makeWasmProvingService } = (await import(capabilities)) as any;
+  const effect = "@midnight-ntwrk/wallet-sdk-prover-client/effect";
+  const { WasmProver } = (await import(effect)) as any;
+  return makeWasmProvingService({
+    keyMaterialProvider: WasmProver.makeDefaultKeyMaterialProvider(),
+  });
+}
+
 export function buildConfiguration(network: NetworkConfig) {
   return {
     networkId: network.networkId,
@@ -166,6 +193,26 @@ export async function buildWallet(
 
   const facade = await WalletFacade.init({
     configuration,
+    /**
+     * Where the WALLET proves, which is a different question from where a
+     * CONTRACT CALL proves and cost an onboarding to learn.
+     *
+     * `providers.proofProvider` covers the contract call. Balancing is separate
+     * and happens inside the wallet: it adds zswap inputs and outputs to cover
+     * the value and the fee, and each of those needs its own proof. That path
+     * reads `provingServerUrl` from the configuration and goes to an HTTP proof
+     * server — so switching only the contract side left every transaction still
+     * requiring one, and the failure surfaced as a bare "Failed to prove
+     * transaction" from a layer that had nothing to do with our change.
+     *
+     * `makeWasmProvingService` is the wallet SDK's own in-process prover. It
+     * takes the same KeyMaterialProvider shape, and the built-in zswap and dust
+     * keys it needs are exactly what that provider's default half fetches.
+     *
+     * Left alone under PROVING_MODE=http, so the escape hatch really is one
+     * variable: both halves switch together or neither does.
+     */
+    provingService: provingMode() === "http" ? undefined : walletWasmProvingService,
     shielded: (config) => {
       const w = ShieldedWallet(config);
       shieldedWallet = cached

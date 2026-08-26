@@ -5,6 +5,8 @@ import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-p
 import { NodeZkConfigProvider } from "@midnight-ntwrk/midnight-js-node-zk-config-provider";
 import { httpClientProofProvider } from "@midnight-ntwrk/midnight-js-http-client-proof-provider";
 import { EnvironmentManager } from "../utils/environment.js";
+import { managedPath } from "../utils/contract.js";
+import { wasmProofProvider } from "../utils/wasm-proving.js";
 
 export interface NetworkConfig {
   /** Network identifier used for address encoding and transaction binding. */
@@ -48,16 +50,58 @@ function privateStatePassword(): string {
   return `Ps1!${digest.slice(0, 28)}`;
 }
 
+/**
+ * Where proofs are generated. `wasm` in this process, `http` at a proof server.
+ *
+ * Defaults to `wasm`, which is the choice that makes this deployable: a proof
+ * server is a separate Rust service needing 4 GB of RAM by its own docs, and
+ * requiring one turned "host the backend" into "host two things, one of them
+ * large". Nothing about the proofs differs — `zkir-v2` is the same prover the
+ * server wraps.
+ *
+ * `http` stays available and is worth keeping. It is the well-trodden path, it
+ * moves the CPU and memory cost off this process, and if in-process proving
+ * ever misbehaves the fix is one environment variable rather than a rollback.
+ */
+export type ProvingMode = "wasm" | "http";
+
+export function provingMode(): ProvingMode {
+  return process.env.PROVING_MODE === "http" ? "http" : "wasm";
+}
+
+/**
+ * Chosen synchronously, resolved lazily.
+ *
+ * `MidnightProviders.create` is synchronous and called from a dozen places,
+ * while building the WASM provider is async — it dynamically imports the prover
+ * and the wallet SDK's key fetcher. Rather than make every caller async, the
+ * returned provider defers construction to its first `proveTx`, which is the
+ * moment something is actually going to be proved. The promise is kept, so the
+ * import and the S3-backed caches happen once per provider rather than per
+ * proof.
+ */
+function chooseProofProvider(config: ProviderConfig, zkConfigProvider: any): any {
+  if (provingMode() === "http") {
+    // The proof provider proves circuit-by-circuit, so it needs the ZK config
+    // to look up keys and zkIR.
+    return httpClientProofProvider(config.networkConfig.proofServer, zkConfigProvider);
+  }
+
+  let pending: Promise<any> | null = null;
+  return {
+    proveTx: async (unprovenTx: any, proveTxConfig?: any) => {
+      pending ??= wasmProofProvider(config.contractName);
+      const provider = await pending;
+      return provider.proveTx(unprovenTx, proveTxConfig);
+    },
+  };
+}
+
 export class MidnightProviders {
   static create(config: ProviderConfig) {
-    const zkConfigPath = path.join(
-      process.cwd(),
-      "contracts",
-      "managed",
-      config.contractName
-    );
-
-    const zkConfigProvider = new NodeZkConfigProvider(zkConfigPath);
+    // Resolved rather than hardcoded, so a checkout without contracts/managed
+    // falls back to the committed copies under frontend/public/zk.
+    const zkConfigProvider = new NodeZkConfigProvider(managedPath(config.contractName));
 
     return {
       privateStateProvider: levelPrivateStateProvider({
@@ -71,12 +115,7 @@ export class MidnightProviders {
         config.networkConfig.indexerWS
       ),
       zkConfigProvider,
-      // The proof provider now proves circuit-by-circuit, so it needs the ZK
-      // config to look up keys and zkIR.
-      proofProvider: httpClientProofProvider(
-        config.networkConfig.proofServer,
-        zkConfigProvider
-      ),
+      proofProvider: chooseProofProvider(config, zkConfigProvider),
       walletProvider: config.walletProvider,
       midnightProvider: config.midnightProvider,
     };

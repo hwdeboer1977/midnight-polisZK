@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "./CopyRow";
 import { FilePicker } from "./FilePicker";
@@ -7,6 +7,7 @@ import { deriveLegacyClaimKey, parseClaimKeyFile } from "../lib/claimKey";
 import { decodePayslip, type Payslip } from "../lib/payslip";
 import { periodName } from "../generated/roster";
 import { formatPeur } from "../lib/format";
+import { walletCanProve } from "../lib/submitPayroll";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
@@ -56,11 +57,29 @@ export function ClaimForm() {
   const [claimKeyHashHex, setClaimKeyHashHex] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
   const [legacy, setLegacy] = useState(false);
+  const [delegateProving, setDelegateProving] = useState(false);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<ClaimResult | null>(null);
 
   const busy = step !== null;
+
+  /**
+   * Whether this wallet can prove for itself.
+   *
+   * Feature-detected, never assumed: 1AM implements `getProvingProvider` and
+   * proves in-tab, Lace does not and needs a proof server on the claimant's own
+   * machine. The same check the employer flows make.
+   */
+  const canDelegate = api ? walletCanProve(api) : false;
+
+  // Preferred when available, matching the employer flows. Unticked, `claim`
+  // proves against 127.0.0.1:6300 — which for someone who has just lost their
+  // job means installing Docker and downloading proving parameters before they
+  // can collect a benefit. That is a wall, not a preference.
+  useEffect(() => {
+    if (canDelegate) setDelegateProving(true);
+  }, [canDelegate]);
 
   function readBundle(text: string, name: string) {
     setError(null);
@@ -138,6 +157,7 @@ export function ClaimForm() {
         payslip,
         claimKey: key,
         coinPublicKey: account.coinPublicKey,
+        provingMode: delegateProving && canDelegate ? "wallet" : "local",
         // The window a benefit is claimed for. Defaulting to the final period
         // keeps the pilot's one claim unambiguous; a real scheme pays monthly
         // and would step this forward, one nullifier per month.
@@ -218,10 +238,14 @@ export function ClaimForm() {
   return (
     <section className="card">
       <h2>Make a claim</h2>
+      {/* "None is uploaded anywhere" was unconditional and is not, once the
+          proof can be delegated to the wallet. The claim about the CHAIN is
+          unchanged and is the one that matters; where the proof is built is now
+          a choice, made below. */}
       <p className="note" style={{ marginTop: 0 }}>
-        Three files, all of them yours already. None is uploaded anywhere: the
-        proof is built here, and what reaches the chain discloses only the period
-        and that a claim was made.
+        Three files, all of them yours already. None is uploaded to any server,
+        and what reaches the chain discloses only the period and that a claim was
+        made — not who you are, not your salary, not the amount.
       </p>
 
       {/* Numbered, because the three inputs come from three different places and
@@ -348,12 +372,55 @@ export function ClaimForm() {
 
       {error ? <p className="problems">{error}</p> : null}
 
+      {/* Where the proof is generated.
+          
+          It matters more here than anywhere else in the app. Unticked, proving
+          runs against a proof server on the claimant's own machine — so a
+          person who has just lost their job has to install Docker and download
+          proving parameters before they can collect a benefit. Ticked, a wallet
+          that can prove does it in-tab and they need nothing.
+          
+          The disclosure is stated rather than glossed: proving consumes the
+          claim key and the final month's figures, so delegating hands both to
+          the wallet. That is a real choice, and the wallet is a party she has
+          already trusted with her spending keys — but it is not the same as
+          nothing leaving the page, and the copy does not pretend it is. */}
+      <label className="prove-here" style={{ marginTop: 16 }}>
+        <input
+          type="checkbox"
+          checked={delegateProving && canDelegate}
+          disabled={busy || !canDelegate}
+          onChange={(event) => setDelegateProving(event.target.checked)}
+        />{" "}
+        Let the wallet generate the proof
+        <span className="muted">
+          {" "}
+          {canDelegate ? (
+            <>
+              — no proof server needed on this machine.{" "}
+              <strong>
+                Proving consumes your claim key and your final month's figures,
+                so this hands both to your wallet.
+              </strong>{" "}
+              <span title="Unticked, proving runs against a proof server on this machine at 127.0.0.1:6300 and reaches nowhere else.">
+                Unticked, they stay on this page.
+              </span>
+            </>
+          ) : (
+            <>
+              — this wallet cannot prove for itself, so proving runs against a
+              proof server on this machine. Nothing leaves the page, but one has
+              to be running before you can claim.
+            </>
+          )}
+        </span>
+      </label>
+
       {/* The slowest action in the app, and the one where someone is most
           anxious. Without a number here a wait that is working looks like a
           wait that has hung. */}
       <p className="note" style={{ marginTop: 16 }}>
-        Proving takes about a minute — keep this tab open. Nothing is sent
-        anywhere while it runs.
+        Proving takes about a minute — keep this tab open.
       </p>
 
       <button

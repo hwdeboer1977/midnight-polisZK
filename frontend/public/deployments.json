@@ -73,5 +73,11 @@
     "contractAddress": "820815a16c4a94ca49d8d2b3f109d094f92b57dd0e487b198b48d1e5744ad1c1",
     "contractName": "fund",
     "networkId": "preview"
+  },
+  "preview/payroll:wasm-proving-test": {
+    "contractAddress": "bf44da77127e62fac8cc5be36225f56f3c21f21c255c91ad649a34b141f60084",
+    "contractName": "payroll",
+    "networkId": "preview",
+    "instance": "wasm-proving-test"
   }
 }

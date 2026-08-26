@@ -1,3 +1,4 @@
+import fs from "fs";
 import path from "path";
 import chalk from "chalk";
 import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
@@ -22,9 +23,58 @@ export interface Connection {
   contractAddress: string;
 }
 
-/** Path to a contract's compiled artifacts. */
+/**
+ * Path to a contract's ZK assets — the `keys/` and `zkir/` a prover needs.
+ *
+ * `contracts/managed` first, because that is what a local `npm run compile`
+ * updates and a developer expects to be reading. It is gitignored, though, so a
+ * fresh clone has none of it and cannot rebuild it without the Compact
+ * compiler.
+ *
+ * `frontend/public/zk` is the fallback and is the reason a server can be
+ * deployed at all: it carries byte-identical copies under the same
+ * `<contract>/{keys,zkir}/` layout, committed on purpose because a Vercel build
+ * cannot produce them either. `frontend-config.ts` keeps the two in step.
+ */
 export function managedPath(contractName: string): string {
-  return path.join(process.cwd(), "contracts", "managed", contractName);
+  const compiled = path.join(process.cwd(), "contracts", "managed", contractName);
+  if (fs.existsSync(path.join(compiled, "keys"))) return compiled;
+
+  const committed = path.join(process.cwd(), "frontend", "public", "zk", contractName);
+  if (fs.existsSync(path.join(committed, "keys"))) return committed;
+
+  // Neither: report the one that a developer is most likely to be missing, and
+  // say how to produce it, rather than failing later on an unreadable key file.
+  throw new Error(
+    `No ZK assets for "${contractName}". Run \`npm run compile\`, or check that ` +
+      `frontend/public/zk/${contractName} shipped with this checkout.`
+  );
+}
+
+/**
+ * Path to a contract's generated JS module.
+ *
+ * Resolved separately from the ZK assets because the two do not travel
+ * together: `contracts/managed/<n>/contract/index.js` is gitignored alongside
+ * the rest of `managed`, while the committed copy lives under
+ * `frontend/src/generated/<n>/index.js` — a different layout, put there for the
+ * browser and equally usable here.
+ */
+export function contractModulePath(contractName: string): string {
+  const compiled = path.join(
+    process.cwd(), "contracts", "managed", contractName, "contract", "index.js"
+  );
+  if (fs.existsSync(compiled)) return compiled;
+
+  const committed = path.join(
+    process.cwd(), "frontend", "src", "generated", contractName, "index.js"
+  );
+  if (fs.existsSync(committed)) return committed;
+
+  throw new Error(
+    `No compiled module for "${contractName}". Run \`npm run compile\`, or check that ` +
+      `frontend/src/generated/${contractName} shipped with this checkout.`
+  );
 }
 
 /**
@@ -33,7 +83,7 @@ export function managedPath(contractName: string): string {
  */
 export async function loadCompiledContract(contractName: string) {
   const dir = managedPath(contractName);
-  const contractModule = await import(path.join(dir, "contract", "index.js"));
+  const contractModule = await import(contractModulePath(contractName));
   const compiledContract = pipe(
     CompiledContract.make(contractName, contractModule.Contract),
     CompiledContract.withVacantWitnesses,

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ServiceUnavailable } from "../components/ServiceUnavailable";
+import { servedLocally } from "../lib/origin";
 import { WalletPicker } from "../components/WalletPicker";
 import { CopyRow } from "../components/CopyRow";
 import { loadDeployments, type Deployments } from "../lib/deployments";
@@ -211,6 +212,40 @@ export function Register() {
               Only your key can set salaries on it — not ours. Go to the{" "}
               <Link to="/employer/payroll">Payroll page</Link>, where it is now the only contract
               you can see.
+            </p>
+          </>
+        ) : !servedLocally ? (
+          /* Said BEFORE the button, not after a failed request.
+             
+             Deploying a contract needs the platform signing key, so it can only
+             happen where that key is — never in a hosted page. The service
+             route already reported this, but only once someone had filled the
+             form, pressed the button and waited: the underlying POST goes to a
+             static host, which answers 405, and a 405 translated into prose is
+             still an answer that arrives too late to be useful.
+             
+             `servedLocally` is known on first render, so the honest thing is to
+             not offer the action at all and say what to do instead. */
+          <>
+            <p className="lead-sm">
+              Creating a payroll contract happens on the platform operator's
+              side, not here.
+            </p>
+            <p className="note" style={{ marginTop: 0 }}>
+              It deploys a contract and locks it to your signing key, which means
+              signing with the <strong>platform's</strong> key — and that key
+              does not belong on a web host, so this hosted app cannot hold it.
+              Nothing about your company is missing: the three values above are
+              everything the operator needs.
+            </p>
+            <button type="button" onClick={() => void copyAll()} disabled={!slug}>
+              {copied ? "Copied" : "Copy registration details"}
+            </button>
+            <p className="note">
+              Send them to the platform operator. They run{" "}
+              <code>npm run onboard</code>, and your contract comes back locked
+              to the key you just showed them — they cannot set your salaries
+              with it, and neither can we.
             </p>
           </>
         ) : (
