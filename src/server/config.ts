@@ -31,7 +31,11 @@ export interface ServerConfig {
 
 export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const host = env.SERVER_HOST?.trim() || "127.0.0.1";
-  const port = Number(env.SERVER_PORT ?? env.DEMO_SERVER_PORT ?? 8787);
+  // PORT is the convention every PaaS assigns; SERVER_PORT wins when both are
+  // set, so a local override still works. Reading only SERVER_PORT would mean
+  // hardcoding whatever Render happened to pick, which breaks the next time it
+  // picks differently.
+  const port = Number(env.SERVER_PORT ?? env.PORT ?? env.DEMO_SERVER_PORT ?? 8787);
   const token = env.PLATFORM_API_TOKEN?.trim() || null;
   const loopbackOnly = LOOPBACK.has(host);
 
