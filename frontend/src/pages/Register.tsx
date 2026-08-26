@@ -211,7 +211,7 @@ export function Register() {
             <CopyRow label="Contract" value={job.result.contractAddress} />
             <p className="note">
               Only your key can set salaries on it — not ours. Go to the{" "}
-              <Link to="/employer/payroll">Payroll page</Link>, where it is now the only contract
+              <Link to="/employer">Overview</Link>, where it is now the only contract
               you can see.
             </p>
           </>
@@ -336,7 +336,7 @@ export function Register() {
           </li>
           <li>
             <strong>You upload your roster</strong> — a spreadsheet of names, addresses
-            and monthly gross salaries — on the <Link to="/employer/payroll">Payroll page</Link>.
+            and monthly gross salaries — on the <Link to="/employer">Overview page</Link>.
             It is read in your browser; names and addresses never leave your machine.
           </li>
         </ol>

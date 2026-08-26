@@ -175,7 +175,12 @@ export function EmployerRoster() {
               </span>
             ) : null}
           </span>
-          <Link className="button" to="/employer/payroll">
+          {/* Overview, not History. Filing moved to Overview when History
+              became the read-only record, and these two buttons kept pointing
+              at the old home — so "Add / import employees" landed on a page
+              whose only message was "No periods filed on this contract yet",
+              with nothing to press. */}
+          <Link className="button" to="/employer">
             Add / import employees
           </Link>
         </div>
@@ -191,7 +196,7 @@ export function EmployerRoster() {
             what to ask for.
           </p>
           <div className="actions">
-            <Link className="button" to="/employer/payroll">
+            <Link className="button" to="/employer">
               Add / import employees
             </Link>
           </div>
