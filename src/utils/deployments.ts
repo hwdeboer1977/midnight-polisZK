@@ -3,6 +3,28 @@ import path from "path";
 
 const FILE = "deployment.json";
 
+/**
+ * The committed copy, and why reading it is not optional.
+ *
+ * `deployment.json` is gitignored — it is a local record written by the deploy
+ * scripts — so a fresh clone has none of it. That is fine for a developer who
+ * deploys their own contracts and fatal for a server that must USE contracts
+ * someone else deployed: onboarding needs the shared `taxparams` registry, and
+ * with no record of it the only honest thing it can say is "deploy it first",
+ * which is wrong. The registry exists; this process simply could not see it.
+ *
+ * `frontend/public/zk` solved the same problem for ZK assets and this is its
+ * twin: `frontend-config.ts` already writes every deployment to
+ * `frontend/public/deployments.json`, that file IS committed (a Vercel build
+ * cannot produce it either), and it carries the addresses in a compatible
+ * shape. So the baseline ships with the repo and nothing new has to.
+ *
+ * Merged rather than chosen between, with the local file winning: a server that
+ * deploys a contract must see its own work immediately, while still knowing
+ * about the shared ones it inherited.
+ */
+const COMMITTED = path.join("frontend", "public", "deployments.json");
+
 export interface DeploymentRecord {
   contractAddress: string;
   deployedAt: string;
@@ -30,6 +52,25 @@ export function deploymentKey(
   return `${networkId}/${contractName}${instance ? `:${instance}` : ""}`;
 }
 
+/**
+ * One file's records, tolerating absence and the older single-record layout.
+ *
+ * A malformed file is skipped rather than thrown on: the committed baseline is
+ * a convenience, and letting a bad copy of it take down every deployment lookup
+ * would trade a missing contract for no contracts at all.
+ */
+function recordsIn(file: string): DeploymentRecord[] {
+  if (!fs.existsSync(file)) return [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    return typeof raw?.contractAddress === "string"
+      ? [raw as DeploymentRecord]
+      : Object.values(raw as DeploymentFile);
+  } catch {
+    return [];
+  }
+}
+
 /** The instance label for this run, from INSTANCE in the environment. */
 export function currentInstance(): string | undefined {
   const value = process.env.INSTANCE?.trim();
@@ -43,13 +84,11 @@ export function currentInstance(): string | undefined {
  * the current shape on the next deploy.
  */
 function read(): DeploymentFile {
-  if (!fs.existsSync(FILE)) return {};
-  const raw = JSON.parse(fs.readFileSync(FILE, "utf8"));
-
-  const records: DeploymentRecord[] =
-    typeof raw?.contractAddress === "string"
-      ? [raw as DeploymentRecord]
-      : Object.values(raw as DeploymentFile);
+  const records: DeploymentRecord[] = [
+    // Baseline first, local second, so the local record overwrites on collision.
+    ...recordsIn(COMMITTED),
+    ...recordsIn(FILE),
+  ];
 
   const out: DeploymentFile = {};
   for (const record of records) {
