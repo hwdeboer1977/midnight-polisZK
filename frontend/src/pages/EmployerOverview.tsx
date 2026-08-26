@@ -243,7 +243,25 @@ export function EmployerOverview() {
 
       {checking && account ? <p className="muted">Reading your contract…</p> : null}
 
-      {ready && latest ? (
+      {/* A CONTRACT, not a filed period.
+          
+          This was `ready && latest`, and `ready` includes
+          `employees: periods.length > 0` — a filed period. So the block
+          containing RosterUpload, the only way to file a period, required a
+          filed period to appear. A newly onboarded employer got a checklist
+          saying "add first employee", a button to Roster, and no upload on
+          either page: you could not file a first period until you had filed a
+          first period.
+          
+          The confusion underneath is that "employees" here never meant
+          employees. Nothing stores an employee record — a filed period is the
+          only on-chain evidence a roster was ever assembled — so the flag is
+          named for the thing it stands in for rather than the thing it checks.
+          That is fine as a CHECKLIST signal and wrong as a gate on the tool.
+          
+          `latest` is no longer required either: every use of it inside is
+          already behind `latestDone`, which is false when there is none. */}
+      {instance ? (
         <>
           {/* ── Set up once ────────────────────────────────────────────────
               Only what the chain can actually answer. Collecting employee keys

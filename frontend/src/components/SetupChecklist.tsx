@@ -50,7 +50,11 @@ const STEPS: { title: string; blurb: string; to: string }[] = [
   {
     title: "Add first employee",
     blurb: "Create or import your private employee roster.",
-    to: "/employer/roster",
+    // Overview, where RosterUpload is. Roster shows who is ON the payroll,
+    // which is assembled from a filed period — so sending someone there to add
+    // their first employee pointed at a page that could only ever say "none
+    // yet", and whose own button pointed back here.
+    to: "/employer",
   },
   {
     title: "Run first payroll",
