@@ -171,6 +171,7 @@ export type PureCircuits = {
                             contribRate: bigint
                           }): Uint8Array;
   claimKeyHash(claimKey_0: Uint8Array): Uint8Array;
+  claimNullifier(claimKey_0: Uint8Array, window_0: bigint, fund_0: Uint8Array): Uint8Array;
 }
 
 export type Circuits<PS> = {
@@ -272,6 +273,10 @@ export type Circuits<PS> = {
                           }): __compactRuntime.CircuitResults<PS, Uint8Array>;
   claimKeyHash(context: __compactRuntime.CircuitContext<PS>,
                claimKey_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
+  claimNullifier(context: __compactRuntime.CircuitContext<PS>,
+                 claimKey_0: Uint8Array,
+                 window_0: bigint,
+                 fund_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
 }
 
 export type Ledger = {

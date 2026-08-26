@@ -6,7 +6,7 @@ import { EmployerRoster } from "./pages/EmployerRoster";
 import { EmployerSetup } from "./pages/EmployerSetup";
 import { Payroll } from "./pages/Payroll";
 import { Employee } from "./pages/Employee";
-import { Claim } from "./pages/Claim";
+import { EmployeeBenefit } from "./pages/EmployeeBenefit";
 import { useEmployerStage } from "./lib/useEmployerStage";
 import { HeaderWallet } from "./components/HeaderWallet";
 import { useWallet } from "./wallet/WalletContext";
@@ -69,14 +69,20 @@ function Header({
 }
 
 /**
- * Four areas, in the order the privacy story reads: the public sees the system,
- * an employer sees its own payroll, an employee sees their own records, and a
- * claim proves something about those records without revealing them.
+ * Three areas, in the order the privacy story reads: the public sees the
+ * system, an employer sees its own payroll, an employee sees their own records.
  *
- * There is no "unemployed" area, and that is a position rather than an
- * omission: a system that has to classify you before it can help you has
- * already published the thing you most wanted kept private. Claiming is
- * something you do, not something you are.
+ * Claim used to be a fourth, and moving it under Employee is a position rather
+ * than tidying. There is no "unemployed" area because a system that has to
+ * classify you before it can help you has already published the thing you most
+ * wanted kept private — and a top-level Claim tab was quietly reintroducing
+ * that role through the navigation. A claimant is an employee: same wallet,
+ * same records, a different question asked of them. Claiming is something you
+ * do, not something you are.
+ *
+ * It also fixes an ordering trap. The claim key must exist before the employer
+ * files a write-once termination, and the page that said so was not the page
+ * anyone opened on the day they were dismissed.
  *
  * pEUR is not here either. A nav item named after a smart-contract module
  * describes the codebase rather than the system; it lives under Employer →
@@ -86,7 +92,20 @@ const AREAS = [
   { to: "/app", label: "Public" },
   { to: "/employer", label: "Employer" },
   { to: "/employee", label: "Employee" },
-  { to: "/claim", label: "Claim" },
+];
+
+/**
+ * The two questions an employee asks of the same records: what was I paid, and
+ * what am I owed now that it has stopped.
+ *
+ * Neither is locked. Unlike the employer tabs, there is no prerequisite to
+ * state — the benefit tab is where the claim key is created, which is precisely
+ * the thing that must happen BEFORE anything else, so gating it on employment
+ * having ended would close the window it exists to keep open.
+ */
+const EMPLOYEE_TABS = [
+  { to: "/employee", label: "Salary", end: true },
+  { to: "/employee/benefit", label: "Unemployment benefit" },
 ];
 
 /**
@@ -140,6 +159,21 @@ function Nav() {
   );
 }
 
+function EmployeeTabs() {
+  const link = ({ isActive }: { isActive: boolean }) =>
+    isActive ? "subnav-link active" : "subnav-link";
+
+  return (
+    <nav className="subnav">
+      {EMPLOYEE_TABS.map((tab) => (
+        <NavLink key={tab.to} to={tab.to} end={tab.end} className={link}>
+          {tab.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
 function EmployerTabs() {
   const stage = useEmployerStage();
   const link = ({ isActive }: { isActive: boolean }) =>
@@ -184,12 +218,16 @@ export function App() {
   // The public page opens with the wordmark as its own heading.
   const isPublic = pathname === "/app";
   const inEmployer = pathname.startsWith("/employer");
+  // Ordered so /employer does not also match the employee prefix — it does not,
+  // but the two reads sit next to each other and the asymmetry is worth naming.
+  const inEmployee = pathname.startsWith("/employee");
 
   return (
     <main className={isLanding ? "wide" : undefined}>
       <Header showWordmark={!isLanding && !isPublic} showNetwork={!isLanding} />
       {isLanding ? null : <Nav />}
       {inEmployer ? <EmployerTabs /> : null}
+      {inEmployee ? <EmployeeTabs /> : null}
       {error ? <p className="status error">{error}</p> : null}
       <Routes>
         <Route path="/" element={<Landing />} />
@@ -201,13 +239,16 @@ export function App() {
         <Route path="/employer/setup" element={<EmployerSetup />} />
 
         <Route path="/employee" element={<Employee />} />
-        <Route path="/claim" element={<Claim />} />
+        <Route path="/employee/benefit" element={<EmployeeBenefit />} />
 
         {/* The old flat routes, kept so a bookmark or a pasted link still lands
             somewhere sensible rather than on "page not found". */}
         <Route path="/payroll" element={<Navigate to="/employer/payroll" replace />} />
         <Route path="/register" element={<Navigate to="/employer/setup" replace />} />
         <Route path="/peur" element={<Navigate to="/employer/setup" replace />} />
+        {/* Claim was a top-level area until it became Employee → Unemployment
+            benefit. Every link written while it was one still lands. */}
+        <Route path="/claim" element={<Navigate to="/employee/benefit" replace />} />
 
         <Route path="*" element={<p className="muted">Page not found.</p>} />
       </Routes>

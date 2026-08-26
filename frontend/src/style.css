@@ -602,6 +602,23 @@ table.roster .mono {
   color: var(--ok, #2E8B6F);
   font-weight: 650;
 }
+/* The confirmation line. Its own row under the button rather than inside it —
+   see FilePicker.tsx for why that changed once a page carried three of them. */
+.file-slot { display: block; }
+.file-loaded {
+  display: flex; gap: 8px; align-items: baseline;
+  margin: 8px 0 0; font-size: 13px; line-height: 1.45;
+  color: var(--ok, #2E8B6F);
+}
+.file-loaded-mark { flex: none; font-weight: 700; }
+.file-loaded-body { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+/* The filename is corroboration, not the headline: what the file WAS is the
+   thing worth reading first, so the name is quieter and can wrap away. */
+.file-loaded-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; opacity: 0.75; word-break: break-all;
+}
+
 /* Focus lands on the hidden input, so the ring has to be drawn on the label. */
 .file-picker:focus-within {
   outline: 2px solid var(--accent); outline-offset: 2px;

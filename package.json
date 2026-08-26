@@ -19,7 +19,7 @@
     "reset": "rm -rf contracts/managed deployment.json dist && npm run compile",
     "validate": "tsc --noEmit && npm run compile",
     "clean": "rm -rf dist contracts/managed deployment.json",
-    "test": "npm run test:bands && npm run test:payslip && npm run test:tree && npm run test:benefit-tax && npm run test:withholding-nonce",
+    "test": "npm run test:bands && npm run test:payslip && npm run test:tree && npm run test:benefit-tax && npm run test:withholding-nonce && npm run test:nullifier",
     "test:bands": "npm run build && node tests/bands.test.mjs",
     "deploy:payroll": "npm run build && CONTRACT_NAME=payroll node dist/deploy.js",
     "deploy:tax": "npm run build && node dist/deploy-tax.js",
@@ -44,7 +44,8 @@
     "fund": "npm run build && node dist/fund-cli.js",
     "terminate": "npm run build && node dist/terminate-cli.js",
     "test:benefit-tax": "npm run build && node tests/benefit-tax.test.mjs",
-    "test:withholding-nonce": "npm run build && node tests/withholding-nonce.test.mjs"
+    "test:withholding-nonce": "npm run build && node tests/withholding-nonce.test.mjs",
+    "test:nullifier": "npm run build && node tests/claim-nullifier.test.mjs"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-js": "2.5.1",

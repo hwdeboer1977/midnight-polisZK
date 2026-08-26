@@ -1,6 +1,5 @@
 import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import { fetchContractState } from "./chain";
-import { deriveClaimKey } from "./claimKey";
 import { decodePayrollLedger, loadContract } from "./contracts";
 import { bytesToHex, keyToHex } from "./keys";
 import { fromHex, type Payslip } from "./payslip";
@@ -27,7 +26,9 @@ import { DUTCH_V1, computeLine } from "../generated/tax-params";
  *   - her PAYSLIP from the employer: the figures that open the commitment. The
  *     nonce in it is derived from the employer's passphrase, so there is no
  *     other route to it;
- *   - her PASSPHRASE, which is the one input nobody else can supply.
+ *   - her CLAIM KEY, the one input nobody else can supply. It arrives here as
+ *     32 bytes; where those bytes came from is the caller's problem, which is
+ *     what lets a file and the legacy passphrase share one code path.
  *
  * Everything else is read from the chain here rather than trusted from a file.
  */
@@ -97,7 +98,16 @@ export async function submitClaim(options: {
   networkId: string;
   bundle: ClaimBundle;
   payslip: Payslip;
-  passphrase: string;
+  /**
+   * The 32-byte nullifier secret, already resolved.
+   *
+   * Taken as bytes rather than as a file or a passphrase so this function has
+   * one input for it. A claimant created under the current scheme loads a file;
+   * one anchored before 2026-08-26 derives it from her passphrase with
+   * `deriveLegacyClaimKey`. Both produce the same thing, the anchor check below
+   * cannot tell them apart, and neither route belongs in here.
+   */
+  claimKey: Uint8Array;
   /** The connected wallet's coin public key, Bech32m or hex. */
   coinPublicKey: string;
   /**
@@ -110,7 +120,7 @@ export async function submitClaim(options: {
   provingMode?: ProvingMode;
   onProgress?: ClaimProgress;
 }): Promise<ClaimResult> {
-  const { api, networkId, bundle, payslip, passphrase, window, coinPublicKey } = options;
+  const { api, networkId, bundle, payslip, claimKey, window, coinPublicKey } = options;
   const onProgress = options.onProgress ?? (() => {});
 
   const leaf = bundle.leaf;
@@ -183,18 +193,17 @@ export async function submitClaim(options: {
     );
   }
 
-  onProgress("Deriving your claim key…");
-  const claimKey = await deriveClaimKey(passphrase, coinPublicKey);
+  onProgress("Checking your claim key…");
   const fundContract = (await loadContract("fund")) as any;
   const derivedAnchor = bytesToHex(fundContract.pureCircuits.claimKeyHash(claimKey));
   if (derivedAnchor !== leaf.claimKeyHash.toLowerCase()) {
     // The single most likely failure in the whole flow, and the one worth
-    // naming precisely: the anchor is write-once, so it is either the wrong
-    // passphrase or a hash derived under a different wallet.
+    // naming precisely: the anchor is write-once, so this is either the wrong
+    // claim key or one made after the termination was already filed.
     throw new Error(
-      "That passphrase does not produce the claim key your employer anchored. It " +
-        "must be the same passphrase, derived with this same wallet connected — " +
-        "the anchor was written once and cannot be changed."
+      "That claim key is not the one your employer anchored. It must be the exact " +
+        "file you had before your employment ended — the anchor was written once " +
+        "and cannot be changed, so a key created afterwards can never match it."
     );
   }
 

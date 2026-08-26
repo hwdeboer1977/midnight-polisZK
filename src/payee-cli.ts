@@ -1,4 +1,6 @@
 import "dotenv/config";
+import fs from "fs";
+import path from "path";
 import { randomBytes } from "crypto";
 import { ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
 import * as fundContract from "../contracts/managed/fund/contract/index.js";
@@ -227,6 +229,9 @@ async function main(): Promise<void> {
     // and a claim later proves knowledge of its preimage — which is what stops a
     // claimant inventing fresh keys and drawing an endless series of benefits
     // that each look unspent.
+    // `coinPublicKey` is already in scope from `keysFor` above — the same hex
+    // this command just printed for the roster, so the file names the wallet by
+    // exactly the value the employer was given.
     const { shieldedSeed } = deriveKeys(secret, network.networkId);
     const claimKey = deriveClaimKey(shieldedSeed);
     const hash = Buffer.from(
@@ -242,6 +247,47 @@ async function main(): Promise<void> {
         "Public, and safe to share: it is a hash. The key itself stays in this\n" +
           "wallet's seed and is what a benefit claim proves knowledge of — never\n" +
           "send that, and never derive it from anything anyone else has seen."
+      )
+    );
+
+    /**
+     * The same key, written as the file the browser reads.
+     *
+     * This is what closes the split that used to make a CLI-onboarded employee
+     * unable to claim in a browser. The two sides derived claim keys
+     * differently — sha256 over the shielded seed here, PBKDF2 over a
+     * passphrase there — so an employee anchored under one could never claim
+     * under the other, and the mismatch surfaced only at her claim, against a
+     * write-once anchor.
+     *
+     * They are not reconciled by making the derivations agree, which they never
+     * could: a browser cannot reach a seed. They are reconciled by the FILE.
+     * A claim key is 32 bytes, and where they came from stops mattering once
+     * both sides load the same file.
+     *
+     * Written with 0600 for the same reason payroll-secrets.json is: it holds a
+     * secret in the clear, and the default umask on a shared machine does not.
+     */
+    const file = {
+      v: 1,
+      kind: "polisZK/claim-key",
+      coinPublicKey,
+      claimKey: Buffer.from(claimKey).toString("hex"),
+      claimKeyHash: hash,
+      created: new Date().toISOString(),
+    };
+    const target = path.join(process.cwd(), `claim-key-${coinPublicKey.slice(0, 8)}.json`);
+    fs.writeFileSync(target, JSON.stringify(file, null, 2), { mode: 0o600 });
+
+    console.log();
+    console.log(chalk.cyan.bold("Claim key file (keep this — it is the secret):"));
+    console.log(chalk.white(`   ${path.relative(process.cwd(), target)}`));
+    console.log();
+    console.log(
+      chalk.gray(
+        "Load this on /claim when the time comes. It holds the key itself, not a\n" +
+          "hash — anyone who reads it can tell which benefit claims were yours,\n" +
+          "though they still cannot make one without this wallet."
       )
     );
     console.log();

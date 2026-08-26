@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { WalletPicker } from "../components/WalletPicker";
 import { findAttestations, type Attestation } from "../lib/attestations";
 import { CopyRow } from "../components/CopyRow";
-import { ClaimKey } from "../components/ClaimKey";
 import { FilePicker } from "../components/FilePicker";
 import { formatPeur, formatPeurTile } from "../lib/format";
 import {
@@ -175,22 +174,16 @@ export function Employee() {
 
       {error ? <p className="status error">{error}</p> : null}
 
-      {/* Ordered by what this wallet needs next.
+      {/* A pointer, not the panel.
           
-          While employed, the claim key comes first: it is the only thing here
-          with a closing window, since the employer writes the hash into a
-          write-once termination and an employee who reaches their last day
-          without one can never claim.
-          
-          Once employment has ended that reverses. The key is already anchored
-          or already lost, and what a claimant needs now is the final payslip —
-          it is a required input to a claim and only their former employer can
-          reissue it. */}
-      {rows.some((row) => row.ended) ? null : (
-        <ClaimKey
-          coinPublicKey={account.coinPublicKey}
-          employerOf={employerOf}
-        />
+          The claim key moved to the Unemployment benefit tab with everything
+          else about claiming — but it is the one thing in this system with a
+          closing window, since the employer writes its hash into a write-once
+          termination and an employee who reaches their last day without one can
+          never claim. A tab someone has not opened is not a place to leave a
+          deadline, so the deadline is named here and the panel lives there. */}
+      {rows.some((row) => row.ended) || employerOf ? null : (
+        <ClaimKeyReminder coinPublicKey={account.coinPublicKey} />
       )}
 
       {/* Outside the wallet-dependent branches, because a payslip is readable in
@@ -206,14 +199,6 @@ export function Employee() {
           setSlipError(null);
         }}
       />
-
-      {rows.some((row) => row.ended) ? (
-        <ClaimKey
-          coinPublicKey={account.coinPublicKey}
-          employerOf={employerOf}
-          ended
-        />
-      ) : null}
 
       {loading ? (
         <p className="muted">Checking payroll contracts for periods that name you…</p>
@@ -300,54 +285,26 @@ export function Employee() {
             </p>
           </section>
 
-          {/* The one moment an employee has something to do. Termination is
-              public per slot, so the page can say this rather than waiting for
-              someone to tell them — and it is also when the claim key they
-              chose earlier stops being hypothetical. */}
+          {/* Termination is public per slot, so this page can say so rather
+              than waiting for someone to be told — but what to DO about it now
+              lives on the benefit tab, along with the claim key, the status
+              check and the form. One link beats a second copy that drifts. */}
           {rows.some((row) => row.ended) ? (
             <section className="callout">
-              <h2>Your employment ended — you can claim</h2>
+              <h2>Your employment ended</h2>
               <p className="lead-sm" style={{ margin: "0 0 12px" }}>
                 {rows
                   .filter((row) => row.ended)
                   .map((row) => periodName(row.period))
                   .join(", ")}{" "}
-                was attested on chain as a final period. You will need three
-                things:
+                was attested on chain as a final period. You may be entitled to
+                an unemployment benefit.
               </p>
-              <ul className="needs">
-                <li>
-                  <strong>Your claim bundle</strong> — from the fund's relay
-                </li>
-                <li>
-                  <strong>Your payslip for that period</strong> — from your
-                  employer
-                </li>
-                <li>
-                  <strong>Your claim passphrase</strong> — the one above, with
-                  this same wallet connected
-                </li>
-              </ul>
               <div className="actions">
-                <Link className="button" to="/claim">
-                  Make a claim
+                <Link className="button" to="/employee/benefit">
+                  Go to unemployment benefit
                 </Link>
               </div>
-              {/* Behind a disclosure: it matters, but it is an explanation of a
-                  limit rather than something needed to act, and it was sitting
-                  between the headline and the button. */}
-              <details className="why">
-                <summary>Can I tell whether I already claimed?</summary>
-                <p className="note">
-                  Not from this page. Each period can be claimed once, and the
-                  record of a claim is a nullifier derived from your secret claim
-                  key — so checking it would mean deriving that key, and nothing
-                  here holds your passphrase. That is exactly what stops anyone
-                  else looking up your claim history, and it blinds this page for
-                  the same reason. If you claim twice, the fund refuses the
-                  second one.
-                </p>
-              </details>
             </section>
           ) : null}
 
@@ -613,6 +570,48 @@ function PayslipCheck({
  * keys they are being shown — the answer is always "the connected wallet's",
  * but a heading in the first person does not say that.
  */
+/**
+ * The one deadline on this page, pointing at the tab that can meet it.
+ *
+ * Deliberately not a copy of the ClaimKey panel. Two panels that both create a
+ * claim key would be two places to press a button that mints 32 fresh bytes,
+ * and the second press is the one that strands someone whose employer has
+ * already anchored the first. One control, one place; this is a signpost.
+ *
+ * It hides itself once localStorage says a key exists for this wallet — the
+ * same record the panel keeps. That can only undercount: a key created in
+ * another browser looks absent here, so the reminder reappears. Nagging someone
+ * who is already done is the safe direction to be wrong in, since the failure
+ * it guards against is unrecoverable.
+ */
+function ClaimKeyReminder({ coinPublicKey }: { coinPublicKey: string }) {
+  let known: string | null = null;
+  try {
+    known = window.localStorage.getItem(`polisZK/claim-key-hash/${coinPublicKey}`);
+  } catch {
+    // Storage refused. Show the reminder; it costs a line, and the alternative
+    // is silently dropping the only warning about a write-once deadline.
+  }
+  if (known) return null;
+
+  return (
+    <section className="callout claim-key-todo">
+      <h2>Set up your claim key — before you need it</h2>
+      <p className="note" style={{ marginTop: 0 }}>
+        If your employment ever ends, an unemployment benefit needs a claim key
+        that <strong>already existed</strong> when your employer filed it. They
+        write its hash into a statement that can only be made once, so a key
+        created afterwards is one no claim can use.
+      </p>
+      <div className="actions">
+        <Link className="button" to="/employee/benefit">
+          Set up my claim key
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 function PayrollKeys({
   account,
   wallet,
@@ -644,8 +643,8 @@ function PayrollKeys({
           employee cannot open. */}
       <p className="note">
         <strong>These are your wallet keys, for the roster.</strong> They are
-        not your claim key — that one is derived from a passphrase further down
-        this page, and it is what a future benefit claim needs.
+        not your claim key — that one is a file you create further down this
+        page, and it is what a future benefit claim needs.
       </p>
     </>
   );

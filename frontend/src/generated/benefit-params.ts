@@ -84,6 +84,57 @@ export function paramsForVersion(version: number): BenefitParams {
 }
 
 /** The shape the generated `claim` binding wants for its `params` argument. */
+/**
+ * How many monthly windows one termination entitles a claimant to.
+ *
+ * ⚠️ PILOT SIMPLIFICATION. Three months for everyone, regardless of how long
+ * they worked. The scheme this models derives duration from employment history
+ * — months accrued per year worked, with a floor and a cap — and `leaf`
+ * already carries the `monthsWorked` such a rule would read. A version 2 should
+ * compute it; this is a placeholder chosen so the pilot has an answer, and it
+ * is deliberately flat rather than a plausible-looking formula nobody sourced.
+ *
+ * ⚠️ NOT PART OF `BenefitParams`, and that is not an oversight.
+ *
+ * `BenefitParams` mirrors the struct in `fund.compact` field for field. The
+ * fund stores `persistentHash<BenefitParams>` in `paramsFor` and `claim`
+ * recomputes it from what the claimant supplies, so adding a field here would
+ * change the hash and every already-published version would stop opening —
+ * v1 is published on chain and cannot be edited.
+ *
+ * ⚠️ NOT ENFORCED. `claim` never constrains `window`: it is an argument, it
+ * appears in the nullifier, and no assertion relates it to `leaf.finalPeriod`
+ * or to any limit. So this figure is what the app SHOWS, not what the contract
+ * ALLOWS — the two agree only because nothing has tried otherwise. Closing that
+ * needs the duration inside `BenefitParams` and an assertion in `claim`, which
+ * means republishing every version and redeploying the fund, since `claim` is
+ * impure and its verifier keys are fixed at deploy.
+ */
+export const PILOT_DURATION_MONTHS = 3;
+
+/**
+ * The windows one termination entitles her to: the final month, then the next.
+ *
+ * Starting AT the final period rather than after it, because that is the month
+ * the relay publishes a tree for and the month her bundle is built against — a
+ * benefit that began the following month would leave her first window with no
+ * published root to prove membership of.
+ */
+export function entitlementWindows(
+  finalPeriod: number,
+  months: number = PILOT_DURATION_MONTHS
+): number[] {
+  const windows: number[] = [];
+  let period = finalPeriod;
+  for (let i = 0; i < months; i += 1) {
+    windows.push(period);
+    const year = Math.floor(period / 100);
+    const month = period % 100;
+    period = month >= 12 ? (year + 1) * 100 + 1 : year * 100 + month + 1;
+  }
+  return windows;
+}
+
 export function toCircuitParams(p: BenefitParams) {
   return {
     version: BigInt(p.version),

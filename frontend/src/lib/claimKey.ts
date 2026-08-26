@@ -2,7 +2,7 @@ import { loadContract } from "./contracts";
 import { bytesToHex, keyToHex } from "./keys";
 
 /**
- * The claimant's claim key, derived in her own browser.
+ * The claimant's claim key: 32 random bytes she keeps in a file.
  *
  * What it is for: `claim` builds its nullifier from this key, so it is the one
  * secret that decides whether two benefit claims can be linked to the same
@@ -11,31 +11,221 @@ import { bytesToHex, keyToHex } from "./keys";
  * and they could then read her entire benefit history off a public Set. Hence a
  * secret, and hence one she alone holds.
  *
- * Why a passphrase, and not her wallet. Exactly the reasoning already recorded
- * in `openings.ts` for the employer's key, and it lands the same way for her:
- * no extension hands a page its seed, the connector signs non-deterministically
- * so a signature cannot be a root, and it exposes no decrypt operation. A
- * passphrase is a secret she must keep. It buys the only property that matters:
- * a key she can reproduce, from any browser, for as long as she remembers it.
+ * ── Why a file, and not a passphrase ────────────────────────────────────────
  *
- * ⚠️ This is NOT the key `npm run payee <seed> -- --claim-key` produces. That
- * one is `sha256("polisZK/claim/v1", shieldedSeed)` and needs a seed, which a
- * browser wallet will never surrender. The two roots are different by
- * necessity, so an employee is anchored under one route or the other and must
- * claim under the same one. Wallet-based employees use this; the seed-based
- * test employees use the CLI.
+ * It was a passphrase until 2026-08-26: PBKDF2-SHA256 at 600,000 iterations,
+ * salted with her coin public key. That had one virtue — nothing to store — and
+ * one flaw that outweighed it.
  *
- * The salt binds the key to her coin public key so two people who choose the
- * same passphrase do not derive the same claim key — which would let either of
- * them spend the other's nullifier window.
+ * `claimKeyHash` is not secret. It travels in clear in her claim bundle and in
+ * the employer's termination opening, and the salt is her coin public key,
+ * which is an address she hands out to be paid. So anyone holding a bundle had
+ * an offline grinding target: guess, PBKDF2, hash, compare. Money was never at
+ * risk — `claim` also asserts `payeeBinding` against `ownPublicKey()`, so a
+ * guessed key spends nothing — but the linkability the passphrase existed to
+ * protect was recoverable at the strength of whatever words she chose. The
+ * property was resting on passphrase entropy, and nothing in the UI ever told
+ * her so.
+ *
+ * Random 32 bytes end that: `claimKeyHash` becomes the image of a uniform
+ * secret and there is nothing to grind at any budget.
+ *
+ * The obvious objection is that she now has a file to lose. Two answers. She
+ * already must keep files to claim at all — the final payslip is required, and
+ * it carries her salary in clear, so the bar for "a file she looks after" was
+ * already set higher than this. And a file can be copied, backed up and put in
+ * a password manager, where a memorised passphrase can only be backed up by
+ * writing it down, which makes it a worse-managed file.
+ *
+ * ── Why not sealed to her wallet, which would need no file at all ───────────
+ *
+ * Because nothing can open it again. The DApp connector exposes no decrypt
+ * operation — verified against 4.0.1 and against the 4.1.0 canary of
+ * 2026-08-19, which adds only proving surface — so a claim key encrypted to her
+ * `shieldedEncryptionPublicKey` is ciphertext with no reader, forever. The same
+ * wall rules out sealing it on chain: a seal needs a holder, her employer must
+ * not be one, her wallet cannot be one, and a password brings back the thing
+ * this change removes.
+ *
+ * Deriving from a wallet signature fails too, and that one was re-measured
+ * rather than inherited: see `frontend/public/signdata-determinism.html` and
+ * the record in README.md. 1AM returns different bytes for the same message.
+ *
+ * ── What did not change ─────────────────────────────────────────────────────
+ *
+ * The anchor is still write-once. Her employer writes `claimKeyHash` into a
+ * termination attestation that can be made once, so a key created AFTER that
+ * point is one no claim can use. Generating a fresh file is now a millisecond's
+ * work rather than a decision, which makes that failure easier to walk into,
+ * not harder — hence the guards in `ClaimKey.tsx`.
  */
 
-const encoder = new TextEncoder();
+/** Bumped only for a breaking layout change, so an old file fails loudly. */
+export const CLAIM_KEY_FILE_VERSION = 1;
 
 /**
- * PBKDF2 work factor. The same figure the employer's key uses, for the same
- * reason: the input is a human-chosen passphrase, and a single hash would let
- * anyone holding the public anchor grind candidates at billions per second.
+ * What the file says it is.
+ *
+ * Present because three JSON files travel between the same people — a payslip,
+ * a termination opening and a claim bundle — and they are told apart by their
+ * fields rather than by their names. A `kind` makes the wrong-file error a
+ * sentence instead of a missing-property failure.
+ */
+export const CLAIM_KEY_FILE_KIND = "polisZK/claim-key";
+
+export interface ClaimKeyFile {
+  v: number;
+  kind: string;
+  /** Hex. Whose wallet this key was made for — checked, never trusted. */
+  coinPublicKey: string;
+  /** Hex, 32 bytes. The nullifier secret. */
+  claimKey: string;
+  /** Hex, 32 bytes. Redundant, and checked against the key on load. */
+  claimKeyHash: string;
+  created: string;
+}
+
+/** 32 bytes from the platform CSPRNG. The whole of the new scheme. */
+export function generateClaimKey(): Uint8Array {
+  const key = new Uint8Array(32);
+  crypto.getRandomValues(key);
+  return key;
+}
+
+/**
+ * The anchor her employer writes into the termination attestation.
+ *
+ * Computed by the fund's own pure circuit rather than reimplemented, because
+ * `claim` asserts `leaf.claimKeyHash == persistentHash<Bytes<32>>(claimKey)` —
+ * a second implementation that disagreed would produce an anchor she could
+ * never open, discovered at the worst possible moment.
+ */
+export async function claimKeyHash(claimKey: Uint8Array): Promise<string> {
+  const fund = (await loadContract("fund")) as any;
+  return bytesToHex(fund.pureCircuits.claimKeyHash(claimKey));
+}
+
+export interface ClaimIdentity {
+  /** Give this to the employer. Public, and useless without the key. */
+  claimKeyHash: string;
+  /** The secret itself. Held only as long as the caller holds it. */
+  claimKey: Uint8Array;
+}
+
+/** A new identity: random key, and the hash to hand over. */
+export async function createClaimIdentity(): Promise<ClaimIdentity> {
+  const claimKey = generateClaimKey();
+  return { claimKey, claimKeyHash: await claimKeyHash(claimKey) };
+}
+
+export async function buildClaimKeyFile(
+  identity: ClaimIdentity,
+  coinPublicKey: string
+): Promise<ClaimKeyFile> {
+  return {
+    v: CLAIM_KEY_FILE_VERSION,
+    kind: CLAIM_KEY_FILE_KIND,
+    coinPublicKey: keyToHex(coinPublicKey),
+    claimKey: bytesToHex(identity.claimKey),
+    claimKeyHash: identity.claimKeyHash,
+    created: new Date().toISOString(),
+  };
+}
+
+/**
+ * Named so it cannot be mistaken for a payslip or a bundle in a downloads
+ * folder, and tagged with the wallet because someone holding keys for two
+ * people needs to tell them apart before opening either.
+ */
+export function claimKeyFilename(coinPublicKey: string): string {
+  return `claim-key-${keyToHex(coinPublicKey).slice(0, 8)}.json`;
+}
+
+const HEX_32 = /^[0-9a-f]{64}$/i;
+
+/**
+ * Reads a claim-key file, and re-derives the hash rather than believing it.
+ *
+ * The stored hash is a convenience for the employer-facing display; the one
+ * that matters is the one the fund's circuit computes from the key. Checking
+ * them against each other catches a truncated download or an edited file here,
+ * where it can be named, instead of at the anchor comparison where it would
+ * read as "wrong claim key".
+ */
+export async function parseClaimKeyFile(text: string): Promise<ClaimIdentity & { coinPublicKey: string }> {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error("Nothing to read");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(
+      "That is not a claim-key file. Open the .json you downloaded when you set " +
+        "up your claim key."
+    );
+  }
+
+  const file = parsed as ClaimKeyFile;
+
+  // Named before the field checks, because the three files that travel between
+  // these people look alike and the useful error is which one this is.
+  if (file?.kind !== CLAIM_KEY_FILE_KIND) {
+    const other = parsed as { leaf?: unknown; nonce?: unknown; gross?: unknown };
+    if (other?.leaf) {
+      throw new Error("That is your claim bundle, not your claim key. Both are needed, in their own slots.");
+    }
+    if (other?.gross && other?.nonce) {
+      throw new Error("That is a payslip, not your claim key. Both are needed, in their own slots.");
+    }
+    throw new Error("That file is not a claim key — it does not say it is one.");
+  }
+
+  if (file.v !== CLAIM_KEY_FILE_VERSION) {
+    throw new Error(
+      `That claim-key file is version ${file.v}, and this page reads version ${CLAIM_KEY_FILE_VERSION}.`
+    );
+  }
+  if (typeof file.claimKey !== "string" || !HEX_32.test(file.claimKey)) {
+    throw new Error("That claim-key file has no usable key in it.");
+  }
+
+  const claimKey = fromHex(file.claimKey);
+  const recomputed = await claimKeyHash(claimKey);
+  if (typeof file.claimKeyHash === "string" && file.claimKeyHash.toLowerCase() !== recomputed) {
+    throw new Error(
+      "That claim-key file is damaged — the key inside it does not produce the hash " +
+        "recorded alongside it. Use another copy if you have one."
+    );
+  }
+
+  return {
+    claimKey,
+    claimKeyHash: recomputed,
+    coinPublicKey: String(file.coinPublicKey ?? ""),
+  };
+}
+
+function fromHex(value: string): Uint8Array {
+  const clean = value.replace(/^0x/, "");
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/**
+ * LEGACY: the passphrase derivation, kept because anchors are write-once.
+ *
+ * Anyone whose employer already wrote a `claimKeyHash` derived this way must
+ * still be able to claim — the attestation cannot be re-pointed at a new key,
+ * so removing this would strand them permanently rather than inconvenience
+ * them. It is offered on the claim form as a fallback and nowhere else: no new
+ * claim key is created this way.
+ *
+ * The salt binds the key to her coin public key so two people who chose the
+ * same passphrase did not derive the same claim key.
  */
 export const KDF_ITERATIONS = 600_000;
 
@@ -43,8 +233,9 @@ export function claimKeySalt(coinPublicKeyHex: string): string {
   return `polisZK/claim-key/v1|${coinPublicKeyHex.toLowerCase()}`;
 }
 
-/** 32 bytes, from her passphrase and her own coin public key. */
-export async function deriveClaimKey(
+const encoder = new TextEncoder();
+
+export async function deriveLegacyClaimKey(
   passphrase: string,
   coinPublicKey: string
 ): Promise<Uint8Array> {
@@ -73,32 +264,4 @@ export async function deriveClaimKey(
     256
   );
   return new Uint8Array(bits);
-}
-
-/**
- * The anchor her employer writes into the termination attestation.
- *
- * Computed by the fund's own pure circuit rather than reimplemented, because
- * `claim` asserts `leaf.claimKeyHash == persistentHash<Bytes<32>>(claimKey)` —
- * a second implementation that disagreed would produce an anchor she could
- * never open, discovered at the worst possible moment.
- */
-export async function claimKeyHash(claimKey: Uint8Array): Promise<string> {
-  const fund = (await loadContract("fund")) as any;
-  return bytesToHex(fund.pureCircuits.claimKeyHash(claimKey));
-}
-
-export interface ClaimIdentity {
-  /** Give this to the employer. Public, and useless without the passphrase. */
-  claimKeyHash: string;
-  /** Kept here only as long as the caller holds it. Never displayed. */
-  claimKey: Uint8Array;
-}
-
-export async function deriveClaimIdentity(
-  passphrase: string,
-  coinPublicKey: string
-): Promise<ClaimIdentity> {
-  const claimKey = await deriveClaimKey(passphrase, coinPublicKey);
-  return { claimKey, claimKeyHash: await claimKeyHash(claimKey) };
 }

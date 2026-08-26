@@ -215,6 +215,37 @@ Two better-looking options were tried first and both fail:
   seed, and it does not work: the connector signs **non-deterministically**, so
   the same message yields a different signature every time and every derived
   nonce would be unreproducible. Worth knowing before reaching for it again.
+
+  Re-measured on **2026-08-26**, because the first probe predated an API change
+  and this claim is repeated in eight places on the strength of it. `signData`
+  now takes an explicit `keyType: 'unshielded'` — a different path from whatever
+  was originally tested — so the finding was worth re-establishing rather than
+  inheriting. It holds:
+
+  | | |
+  | --- | --- |
+  | Wallet | 1AM, `com.midnight.1am` |
+  | `apiVersion` | 4.0.0 (against `dapp-connector-api` 4.0.1) |
+  | Network | preview |
+  | Options | `{ encoding: 'text', keyType: 'unshielded' }` |
+  | Result | the same message signed repeatedly returns **different bytes each time** |
+
+  `frontend/public/signdata-determinism.html` is the probe, kept rather than
+  deleted: this is a fact about one wallet build, not about Midnight, and a
+  wallet could make signing deterministic in a version bump without anyone
+  here noticing. Re-run it before accepting the passphrase as permanent.
+
+  Two things it also established, both worth knowing before reaching for
+  `signData` for any other purpose:
+
+  - 1AM refuses a repeat of a payload it has just handled — *"Duplicate
+    request, a similar request is already pending"* — so any design that
+    re-signs one fixed message needs an alternate payload between calls or a
+    retry.
+  - `keyType` admits only `'unshielded'`, so a signature-derived root would
+    descend from the unshielded key and would **not** reproduce the CLI's
+    `deriveClaimKey(shieldedSeed)`. Even a deterministic signature would have
+    left two incompatible roots, not one.
 - **Encrypting to the employer's own public key.** Elegant, and dead on arrival:
   the connector exposes no decrypt operation, so the ciphertext could never be
   opened again.
@@ -712,7 +743,7 @@ which `payeeFor` binds and no employer holds.
 The claim-key hash goes into the attestation, which only the employer can write.
 So the order is:
 
-> employee derives a claim key → hands the **hash** to her employer → employer
+> employee creates a claim key → hands the **hash** to her employer → employer
 > ends the employment → employee claims
 
 She has to be in the loop at the moment she is being dismissed, holding a secret
@@ -809,23 +840,48 @@ convenience.
 Everything else is read from the chain rather than trusted from a file: the
 employer key and the tax `paramsHash` come from the payroll ledger.
 
-### Her claim key is derived, not stored
+### Her claim key is random, and she keeps the file
 
-On `/employee` → **Your claim key**: a passphrase, PBKDF2-SHA256 at 600,000
-iterations, salted with her own coin public key so two people who choose the same
-words still get different keys. Only the **hash** is displayed; the key itself is
-the nullifier secret and a page that shows it invites it into a screenshot.
+On `/employee` → **Your claim key** → *Create my claim key*: 32 bytes from
+`crypto.getRandomValues`, downloaded as `claim-key-xxxxxxxx.json`. Only the
+**hash** is displayed and only the hash is remembered; the key itself is the
+nullifier secret and a page that shows it invites it into a screenshot.
 
-The route to that choice is the same one the employer's key took: no extension
-hands a page its seed, the connector signs non-deterministically so a signature
-cannot be a root, and it exposes no decrypt operation.
+**It was a passphrase until 2026-08-26** — PBKDF2-SHA256 at 600,000 iterations,
+salted with her coin public key — and the reason it is not one any more is worth
+keeping. `claimKeyHash` is not secret: it travels in clear in her claim bundle
+and in the employer's termination opening, and the salt is her coin public key,
+an address she hands out to be paid. Anyone holding a bundle therefore had an
+offline grinding target. Money was never at risk — `claim` also asserts
+`payeeBinding` against `ownPublicKey()`, so a guessed key spends nothing — but
+the linkability the key exists to protect was recoverable at the strength of
+whatever words she chose, and nothing in the UI said so. Random bytes end that.
 
-⚠️ **This is not the key `npm run payee <seed> -- --claim-key` produces.** That
-one is `sha256("polisZK/claim/v1", shieldedSeed)` and needs a seed no browser
-wallet surrenders. The two roots differ by necessity, so an employee is anchored
-under one route and must claim under the same one — wallet employees in the
-browser, seed-based test employees from the CLI. Nothing enforces it; a mismatch
-surfaces only as an anchor she cannot open.
+The obvious alternative, sealing the key to her wallet so there is nothing to
+keep, is not available. The connector exposes **no decrypt operation** — checked
+against 4.0.1 and against the 4.1.0 canary of 2026-08-19, which adds only
+proving surface — so a key encrypted to her `shieldedEncryptionPublicKey` would
+be ciphertext with no reader, forever. That also rules out sealing it on chain:
+a seal needs a holder, her employer must not be one, her wallet cannot be one,
+and a password reintroduces exactly what this removed.
+
+She now keeps a file. That is a smaller change than it sounds — the final
+payslip is already required to claim, and it carries her salary in clear, so the
+bar for "a file she looks after" was set higher than this already. A file can
+also be backed up, where a memorised passphrase can only be backed up by writing
+it down.
+
+**The CLI and the browser no longer diverge.** `npm run payee <seed> --
+--claim-key` still derives `sha256("polisZK/claim/v1", shieldedSeed)`, because a
+CLI holds a seed and that is high-entropy already — but it now also writes the
+same `claim-key-….json`. The two roots are not reconciled by making the
+derivations agree, which they never could: a browser cannot reach a seed. They
+are reconciled by the file. A claim key is 32 bytes, and where they came from
+stops mattering once both sides load the same file.
+
+⚠️ Anyone whose employer already anchored a passphrase-derived hash still claims
+with that passphrase. `/claim` keeps the route behind a disclosure and it cannot
+be removed: the anchor is write-once, so there is no migration, only a fallback.
 
 ### Every assertion is checked before proving
 
@@ -836,10 +892,51 @@ then reporting `assertion failed`:
 - the payslip is for this contract, this period, this slot;
 - the bundle was filed for the connected wallet (`payeeHash`);
 - the payslip figures open the published commitment (`commitmentFor`);
-- **the passphrase reproduces the anchored claim key** — the likeliest failure in
+- **the claim-key file reproduces the anchored hash** — the likeliest failure in
   the whole flow, and the one worth naming precisely, since the anchor is
-  write-once;
+  write-once. Checked as soon as the bundle and the key are both loaded rather
+  than at submit: `leaf.claimKeyHash` is in the bundle in clear, so it costs a
+  string comparison, and the moment she is still looking at her downloads folder
+  is the only useful one to tell her in;
 - the pool coin covers the benefit.
+
+### She can check what she has already claimed
+
+`/employee` → *Have I already claimed?* → her claim-key file. The page computes
+`claimNullifier(claimKey, window, fund)` for each month of the entitlement and
+looks it up in the public `spent` set, reporting claimed, remaining, and
+anything outside the entitlement.
+
+This was documented as impossible and it was not. The premise — nobody else may
+compute her nullifiers — is exactly why `fund.compact` keys them on her secret
+claim key, and it never implied she could not compute her own. What was missing
+was a pure circuit, because reimplementing a contract hash in TypeScript is what
+`claim-tree.ts` exists to forbid.
+
+**Adding it cost nothing on chain**, which is worth recording generally: pure
+circuits carry no prover or verifier keys. Recompiling `fund.compact` with
+`claimNullifier` left all 12 prover keys, all 12 verifier keys and all 12 zkir
+files byte-identical — only `contract/index.js` and `contract-info.json` moved —
+so the deployed fund was unaffected and `findDeployedContract` still matches.
+The note in `benefit-params.ts` that a pure circuit "needs a redeploy, since
+verifier keys are fixed at deploy" is therefore wrong, and the
+`benefitParamsHash` circuit it wants is free.
+
+The lookup is local: the whole set is read and searched in the page. Querying an
+indexer for one nullifier would hand it the linkage the construction denies,
+even though the answer is public.
+
+⚠️ **Entitlement is three months, flat — a pilot simplification**, and it is
+`PILOT_DURATION_MONTHS` in `benefit-params.ts` rather than a field of
+`BenefitParams`, because that struct is hashed against `paramsFor` and a new
+field would stop v1 from opening. The scheme it models derives duration from
+employment history, and `leaf.monthsWorked` already carries the input.
+
+⚠️ **`claim` does not enforce it, or any limit.** `window` is an argument that
+appears in the nullifier and in no assertion — it is not tied to
+`leaf.finalPeriod` and not bounded, so every distinct window is a fresh
+nullifier. Three months is what the app shows, not what the fund allows. See
+**Where the money could go wrong** for why that is more than a display concern.
 
 ### What a claim discloses
 
@@ -852,6 +949,48 @@ has ever been given her coin public key, which is an address she hands out to be
 paid. They would enumerate windows, test membership of the public `spent` set,
 and read her benefit history. It is the single most sensitive fact in the system
 and it would have been recoverable by every employer she ever had.
+
+### Where the money could go wrong
+
+⚠️ **`claim` does not bound how many windows one claimant may claim.** This is
+a reading of the source, not a demonstrated exploit — nobody has run it — but
+the chain of steps is short enough to state precisely, and it deserves fixing
+before this carries real money.
+
+`window` is a `Uint<32>` argument. It appears in exactly one place: the
+nullifier preimage. Of the nineteen assertions in `claim`, none mentions it. It
+is not tied to `leaf.finalPeriod`, not bounded by any duration, and
+`BenefitParams` has no duration field to bound it with. So a distinct `window`
+is a distinct nullifier, and a distinct nullifier is a fresh payout.
+
+The brake is supply, not rule: `claim` needs an unspent fund coin, and her
+bundle carries exactly one. But the contract's own comment at the change coin
+says:
+
+> The change's ordinal, so the pool can be found again. The nonce is NOT
+> recorded: **it is derivable from the spent coin's**
+
+She knows her input coin's nonce — it is in her bundle. The change's ordinal is
+published as `poolOrdinal`. Its `mtIndex` comes from the indexer by ordinal,
+which is exactly what `relay.ts` already does with `contractLeaves`. Its value
+is her input minus a benefit she computed herself. That appears to be everything
+`claim` needs for a second call at `window + 1`, and the same again after that.
+
+That comment is right about what it addresses — publishing the nonce beside a
+public coin commitment would let anyone grind the pool balance. It was written
+against a different threat, and does not seem to have been weighed against an
+unconstrained `window`.
+
+**The fix is one assertion**, and it is the same one that would make the
+three-month entitlement real rather than advisory: put the duration in
+`BenefitParams` and require `window` to fall inside
+`[finalPeriod, finalPeriod + duration)`. Both halves are load-bearing — the
+duration alone changes a hashed struct, so every published version must be
+republished, and the assertion lives in an impure circuit, so the fund
+redeploys. There is no cheap version of this.
+
+Until then, `/employee` reports any claim it finds outside the entitlement
+rather than assuming there cannot be one.
 
 ### The benefit is derived from the final month alone
 
@@ -1248,7 +1387,7 @@ npm run fund -- deposit --amount 200
 
 Then, in order and each by the party that must do it:
 
-1. **Employee** — `/employee` → **Your claim key** → passphrase → copy the hash.
+1. **Employee** — `/employee` → **Your claim key** → *Create my claim key* → keep the file, copy the hash.
    Also **View my payroll keys**, which is what the roster needs.
 2. **Employer** — `/employer/payroll` → **End employment** → look the employee up
    by coin public key, paste her claim-key hash and the payroll passphrase.
@@ -2107,7 +2246,7 @@ payment was batched would make that 2 regardless of roster size.
 | Ending employment | **working** — from the employer's browser and from the CLI |
 | Claim tree relay | **working** — root published for 202601 |
 | Claims and benefit payment | **working** — €154.00 claimed end to end from the claimant's browser on the pre-withholding fund; see **A benefit claimed** |
-| Claimant's claim key in the browser | **working** — passphrase + PBKDF2, salted with her coin public key |
+| Claimant's claim key in the browser | **working** — 32 random bytes kept in a downloaded file (passphrase route retained for anchors written before 2026-08-26) |
 | Recovering a post-claim change coin | **working** — `fund reconcile`, verified against the on-chain commitment |
 | Anchoring the claim key at hire rather than termination | **not built** — needs a contract change; today she must hand the hash over before being dismissed |
 | Benefit withholding | **working** — tax and contribution withheld under the schedule the final month was filed under, pinned by hash |

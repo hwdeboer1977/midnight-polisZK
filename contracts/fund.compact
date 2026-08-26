@@ -612,3 +612,39 @@ export pure circuit taxParamsHash(params: TaxParams): Bytes<32> {
 export pure circuit claimKeyHash(claimKey: Bytes<32>): Bytes<32> {
   return persistentHash<Bytes<32>>(claimKey);
 }
+
+/**
+ * The nullifier for one claim key in one window, exposed so a claimant can
+ * check the public spent set for herself.
+ *
+ * `claim` builds the identical value and refuses a window already in `spent`.
+ * Until this existed, a claimant had no way to ask "have I already claimed for
+ * that month?" — the set is public, but every entry is an opaque image, and
+ * finding her own means computing it. She could not, so the page told her it
+ * was unanswerable.
+ *
+ * That was the wrong conclusion from the right premise. The premise is that
+ * NOBODY ELSE may compute it, which is why the preimage is keyed on her secret
+ * claim key rather than on her coin public key. Nothing about that stops HER
+ * computing it — she is the one party who holds the key. Exposing it hands the
+ * check to exactly the person the design intends to have it.
+ *
+ * `fund` is a parameter rather than `kernel.self()`, which a pure circuit
+ * cannot call. The caller passes this contract's own address; passing another
+ * yields a nullifier belonging to another fund's set, which is a wrong answer
+ * rather than a leak — the value discloses nothing to anyone lacking the key.
+ *
+ * Checking is a LOCAL act, and it matters that it stays one. The spent set has
+ * to be read whole and searched in the page: asking an indexer whether one
+ * specific nullifier is present would hand that indexer the very linkage this
+ * construction exists to deny it.
+ */
+export pure circuit claimNullifier(
+  claimKey: Bytes<32>,
+  window: Uint<32>,
+  fund: Bytes<32>
+): Bytes<32> {
+  return persistentHash<ClaimNullifier>(
+    ClaimNullifier { claimKey: claimKey, window: window, fund: fund }
+  );
+}

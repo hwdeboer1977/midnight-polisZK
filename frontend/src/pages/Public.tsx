@@ -460,8 +460,8 @@ export function Public() {
             <strong>Employee</strong>
             <span>Your own income record — visible only to you.</span>
           </Link>
-          <Link to="/claim" className="area-link">
-            <strong>Claim</strong>
+          <Link to="/employee/benefit" className="area-link">
+            <strong>Unemployment benefit</strong>
             <span>Prove an entitlement without revealing what it rests on.</span>
           </Link>
         </div>

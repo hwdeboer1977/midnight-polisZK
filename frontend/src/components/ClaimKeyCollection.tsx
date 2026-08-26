@@ -64,7 +64,7 @@ export function ClaimKeyCollection({
         <div className="collect">
           <p className="note" style={{ marginTop: 0 }}>
             <strong>Ask these employees for their claim-key hash.</strong> They
-            derive it on the Employee page and send you the hash — it is public
+            create it on the Employee page and send you the hash — it is public
             and gives you no way to claim anything. You need it{" "}
             <strong>before</strong> you end their employment: the statement you
             sign is write-once and the hash goes inside it.

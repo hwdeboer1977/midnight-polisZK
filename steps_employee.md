@@ -53,19 +53,39 @@ neither lets anyone spend their pay.
 
 ### 1.3 Set up a claim key — long before they need it
 
-`/employee` → *Your claim key* → choose a passphrase (typed twice) → send the
-employer the **hash**.
+`/employee` → *Your claim key* → **Create my claim key** → keep the downloaded
+file, send the employer the **hash**.
 
-The passphrase never leaves the browser. The key is derived from it with
-PBKDF2-SHA256 at 600,000 iterations, salted with their own coin public key, so
-two people who choose the same words still get different keys. Only the hash is
-ever displayed: the key itself is the nullifier secret, and a page that showed it
-would invite it into a screenshot.
+The key is 32 random bytes, generated in their browser and downloaded as
+`claim-key-xxxxxxxx.json`. It is never sent anywhere and never stored on the
+page — only the hash is kept, in `localStorage`, as a reminder. Only the hash is
+ever displayed: the key itself is the nullifier secret, and a page that showed
+it would invite it into a screenshot.
+
+**It was a passphrase until 2026-08-26**, derived with PBKDF2 at 600,000
+iterations and salted with their coin public key. That was replaced because the
+salt is public and the hash is not secret: `claimKeyHash` travels in clear in
+the claim bundle and in the employer's termination opening, and the coin public
+key is an address they hand out to be paid. Anyone holding a bundle could grind
+passphrases offline. Money was never reachable that way — `claim` also checks
+`payeeBinding` against `ownPublicKey()` — but the *linkability* the key exists
+to protect was recoverable at the strength of whatever words they chose, and
+nothing told them that. Random bytes cannot be ground at any budget.
+
+The cost is a file to keep. It is a smaller change than it sounds: they already
+have to keep payslips to claim at all, and a payslip carries their salary in
+clear, so the bar for "a file they look after" was already set higher than this.
+A file can also be backed up, which a memorised passphrase cannot without
+becoming a worse-managed file.
+
+Anyone anchored under the old scheme still claims with their passphrase —
+`/claim` keeps that route behind a disclosure. It cannot be migrated: the anchor
+is write-once.
 
 ⚠️ **This has to be done before they are dismissed, not after.** The hash is
 written into the employer's termination attestation, which is write-once. An
-employee who turns up afterwards with a freshly chosen passphrase has an anchor
-they cannot open, and the only correction is re-filing the period.
+employee who turns up afterwards with a freshly created key has an anchor they
+cannot open, and the only correction is re-filing the period.
 
 That is the wrong way round from how a benefit office works, where you arrive
 afterwards with nothing but your identity. Anchoring the hash at hire — carried
@@ -73,8 +93,11 @@ in the roster, written by `setPayroll` — is the faithful shape; it needs a
 contract change and has not been made.
 
 **Where it comes from:** **contract** (the anchoring, and its ordering);
-*chosen* (the passphrase, for the same reasons as the employer's — no extension
-hands a page a seed, and the connector signs non-deterministically).
+*chosen* (that the key is generated and kept in a file rather than derived from
+anything — no extension hands a page a seed, the connector signs
+non-deterministically, and it exposes no decrypt operation, so there is nothing
+of theirs a page can reproducibly derive from. All three re-verified on
+2026-08-26; see README.md).
 
 ---
 
@@ -146,12 +169,12 @@ once benefits are involved.
 | --- | --- | --- |
 | **Claim bundle** | the fund's relay | It carries the path proving their termination is in that month's tree, alongside everyone else's. They cannot build it — they hold nobody else's leaf, and being unable to is exactly what keeps them anonymous inside it. |
 | **Final payslip** | their employer | The nonce that opens the commitment derives from the *employer's* passphrase. |
-| **Their passphrase** | themselves | The only input nobody else can supply. |
+| **Their claim-key file** | themselves | The only input nobody else can supply. |
 
 ### 4.2 Claim on `/claim`
 
-Load both files, enter the passphrase, submit. The proof is built in the page;
-neither file is uploaded anywhere.
+Load all three files, submit. The proof is built in the page; none of them is
+uploaded anywhere.
 
 Everything the circuit checks is checked here first, so a wrong file names
 itself instead of failing as `assertion failed` after minutes of proving:
@@ -159,8 +182,10 @@ itself instead of failing as `assertion failed` after minutes of proving:
 - the payslip is for this contract, this period, this slot;
 - the bundle was filed for the connected wallet;
 - the payslip figures open the published commitment;
-- **the passphrase reproduces the anchored claim key** — the likeliest failure,
-  and the one worth naming precisely, since the anchor is write-once;
+- **the claim-key file reproduces the anchored hash** — the likeliest failure,
+  and the one worth naming precisely, since the anchor is write-once. Checked
+  the moment both files are loaded rather than at submit, because
+  `leaf.claimKeyHash` is in the bundle in clear and the comparison is free;
 - the pool coin covers the benefit.
 
 ### 4.3 What they receive
@@ -179,7 +204,47 @@ The tax schedule is not chosen by anyone at claim time: the circuit checks it
 hashes to the `paramsHash` bound into their own salary commitment, so the benefit
 is withheld under provably the same rules their final month was.
 
-### 4.4 What claiming discloses
+### 4.4 Checking what they have claimed
+
+`/employee` → *Have I already claimed?* → load the claim-key file.
+
+The page computes `claimNullifier(claimKey, window, fund)` for each month of the
+entitlement and looks each one up in the fund's public spent set. It reports
+months claimed, months remaining, and anything claimed outside the entitlement.
+
+This used to be documented as impossible, on the grounds that the page holds no
+claim key. The premise was right and the conclusion did not follow: *she* holds
+one, and the set is public. What was missing was a pure circuit to compute the
+nullifier with, since a TypeScript reimplementation of a contract hash is the
+thing `claim-tree.ts` exists to forbid. `fund.compact` now exposes
+`claimNullifier`, which cost nothing on chain — pure circuits carry no verifier
+keys, so recompiling left all 24 key and zkir files byte-identical and the
+deployed fund untouched.
+
+It asks for the file rather than working from the connected wallet, and that is
+the whole point. If a wallet alone could answer this, so could anyone holding
+her coin public key — an address she hands out to be paid.
+
+The lookup is local: the whole spent set is read and searched in the page.
+Asking an indexer about one nullifier would disclose the exact linkage the
+construction denies it, even though the answer is public.
+
+⚠️ **The entitlement is three months, flat, for everyone.** A pilot
+simplification — the scheme it models derives duration from employment history,
+and `leaf.monthsWorked` already carries what such a rule would read. It lives in
+`benefit-params.ts` as `PILOT_DURATION_MONTHS`, deliberately outside
+`BenefitParams`: that struct is hashed against `paramsFor`, so adding a field
+would stop every published version from opening.
+
+⚠️ **It is not enforced.** `claim` never constrains `window` — it is an
+argument, it appears in the nullifier, and no assertion ties it to
+`leaf.finalPeriod` or to any limit. So three months is what the app *shows*, not
+what the fund *allows*, and the panel says so rather than implying a limit that
+is not there. Closing the gap means putting the duration inside `BenefitParams`
+and asserting it in `claim`, which republishes every version and redeploys the
+fund.
+
+### 4.5 What claiming discloses
 
 The period, the rule-set version, one nullifier, and that a claim happened.
 **Not** their identity, their employer, their salary, or the benefit paid.
@@ -199,7 +264,7 @@ says nothing about whose entries those are.
 | | If lost |
 | --- | --- |
 | Wallet recovery phrase | Their pay and any benefit are unreachable. Nobody can restore it. |
-| Claim passphrase | They cannot claim. The anchor their employer published is write-once, so it cannot be re-pointed at a new key. |
+| Claim-key file | They cannot claim. The anchor their employer published is write-once, so it cannot be re-pointed at a new key. Back it up: nobody can reissue it. |
 | Payslips | They cannot see what they were paid, and cannot claim. Only their former employer can regenerate one. |
 
 Three unrecoverable things, and the third depends on a person they no longer work
@@ -213,9 +278,9 @@ for.
 | --- | --- |
 | Actions while employed | **0** on chain |
 | Files received per period | 1 payslip |
-| Files needed to claim | 2 (bundle, final payslip) |
-| Passphrases to remember | 1 |
-| On-chain transactions they sign | **1**, ever — the claim |
+| Files needed to claim | 3 (bundle, final payslip, claim key) |
+| Passphrases to remember | **0** |
+| On-chain transactions they sign | **1** per month claimed, up to 3 |
 
 ## Where it looks compressible
 
@@ -231,7 +296,11 @@ Observations, not decisions.
    public payroll state; it is sent as a file only because nothing serves it.
 4. **The claim key must exist before the dismissal.** The one ordering
    requirement that no amount of interface work can hide, and the only item here
-   that needs a contract change.
+   that needs a contract change. Moving to a file made this *easier* to get
+   wrong, not harder — minting 32 fresh bytes is one click where choosing a new
+   passphrase was at least deliberate — so creating a second key is behind a
+   disclosure that says what it costs, and says something stronger once a
+   termination has been attested.
 5. **Payslips are the employee's only record and their only backup is a former
    employer.** Sealing the openings to the *employee's* encryption key was ruled
    out — the connector exposes no decrypt operation — so this is a wall, not an

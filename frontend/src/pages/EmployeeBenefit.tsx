@@ -1,26 +1,30 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { findAttestations, type Attestation } from "../lib/attestations";
 import { periodName } from "../generated/roster";
 import { useWallet } from "../wallet/WalletContext";
 import { ClaimForm } from "../components/ClaimForm";
-import { BENEFIT_V1 } from "../generated/benefit-params";
+import { ClaimKey } from "../components/ClaimKey";
+import { ClaimStatus } from "../components/ClaimStatus";
+import { WalletPicker } from "../components/WalletPicker";
+import { useAttestations } from "../lib/useAttestations";
+import { type Attestation } from "../lib/attestations";
+import { BENEFIT_V1, PILOT_DURATION_MONTHS } from "../generated/benefit-params";
 
 /**
- * Claiming an entitlement without disclosing what it rests on.
+ * Everything about the unemployment benefit, in one place.
  *
- * Note what this area deliberately is not: a role. Nobody is classified as
- * "unemployed" anywhere in this system, because a system that has to label you
- * before it can help you has already published the thing you most wanted kept
- * private. A claimant instead proves statements about records they hold, and
- * the fund learns only that the statements hold.
+ * This was a top-level "Claim" area beside Public, Employer and Employee, and
+ * the claim key lived on Employee while the claim itself lived here. That split
+ * made the one ordering requirement in the whole system easy to miss: the key
+ * has to exist before the employer files a write-once termination, and the page
+ * that told you so was not the page you went to when you were dismissed.
  *
- * Nothing here generates a proof, and the page says so plainly rather than
- * mocking up a "Claim verified ✓". It earns its place regardless: it is what
- * makes payroll the private data layer rather than the product. Someone can
- * later prove social-protection eligibility from an employment history that was
- * never published — which is a good deal more interesting than private payroll
- * on its own.
+ * It is a sub-tab of Employee now for a second reason too. A claimant is an
+ * employee — the same wallet, the same records, a different question asked of
+ * them. A separate top-level area implied a separate role, and the one role
+ * this system refuses to create is "unemployed": nobody is classified anywhere,
+ * because a system that must label you before it can help you has already
+ * published the thing you most wanted kept private. Claiming is something you
+ * do, not something you are, and the navigation should not say otherwise.
  */
 type Check = {
   title: string;
@@ -92,83 +96,95 @@ function requirementsFor(rows: Attestation[] | null): Check[] {
     },
   ];
 }
-export function Claim() {
+export function EmployeeBenefit() {
   const { account, networkId } = useWallet();
-  const [rows, setRows] = useState<Attestation[] | null>(null);
+  const { rows, employerOf, ended, finalPeriod, error } = useAttestations();
 
-  // The same scan the Employee page runs, so the two pages cannot disagree
-  // about which periods name this wallet.
-  useEffect(() => {
-    if (!account) {
-      setRows(null);
-      return;
-    }
-    let cancelled = false;
-    void findAttestations(networkId, account.coinPublicKey)
-      .then((scan) => {
-        if (!cancelled) setRows(scan.rows);
-      })
-      .catch(() => {
-        if (!cancelled) setRows([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [account, networkId]);
+  if (!account) {
+    return (
+      <>
+        <section className="area-head">
+          <h1>Unemployment benefit</h1>
+          <p className="lede">
+            Prove you qualify without revealing your salary history, employer or
+            identity.
+          </p>
+        </section>
+
+        <section className="callout">
+          <h2>Connect your wallet</h2>
+          <p className="note" style={{ marginTop: 0 }}>
+            A claim must be signed by the wallet your employer filed as payee,
+            and everything below is a check against what the chain holds for
+            that wallet rather than a description of the rules.
+          </p>
+          <WalletPicker />
+        </section>
+
+        <Eligibility rows={null} />
+      </>
+    );
+  }
 
   return (
     <>
       <section className="area-head">
-        <h1>Unemployment benefit claim</h1>
+        <h1>Unemployment benefit</h1>
         <p className="lede">
           Prove you qualify without revealing your salary history, employer or
           identity.
         </p>
       </section>
 
-      <section className="card">
-        <h2>{account ? "Your eligibility" : "Eligibility requirements"}</h2>
-        {!account ? (
-          <p className="note" style={{ marginTop: 0 }}>
-            Connect your wallet and these become a check against what the chain
-            actually holds for you, rather than a description of the rules.
+      {error ? <p className="status error">{error}</p> : null}
+
+      {/* Ordered by what this wallet needs next.
+
+          While employed, the claim key comes first: it is the only thing here
+          with a closing window, since the employer writes the hash into a
+          write-once termination and an employee who reaches their last day
+          without one can never claim.
+
+          Once employment has ended that reverses. The key is already anchored
+          or already lost, and what a claimant needs now is to claim. */}
+      {ended ? null : (
+        <ClaimKey coinPublicKey={account.coinPublicKey} employerOf={employerOf} />
+      )}
+
+      {ended ? (
+        <section className="callout">
+          <h2>Your employment ended — you can claim</h2>
+          <p className="lead-sm" style={{ margin: "0 0 12px" }}>
+            {rows
+              .filter((row) => row.ended)
+              .map((row) => periodName(row.period))
+              .join(", ")}{" "}
+            was attested on chain as a final period. You are entitled to{" "}
+            {PILOT_DURATION_MONTHS} monthly payments, and you will need three
+            things for each:
           </p>
-        ) : null}
-        <ul className="reqs">
-          {requirementsFor(account ? rows : null).map((req) => (
-            <li
-              key={req.title}
-              className={req.found ? "req ready" : "req"}
-            >
-              <span className="req-mark">
-                {req.found ? "✓" : req.found === "" ? "○" : "·"}
-              </span>
-              <div>
-                <strong>{req.title}</strong>
-                {/* The pilot figure is the single easiest thing on this page to
-                    misread as the real scheme, and it was the quietest of the
-                    four. It is now the loudest. */}
-                {req.pilot ? <span className="req-pilot">pilot figure — not 12</span> : null}
-                <span className="req-status">
-                  {req.found === null
-                      ? "connect a wallet to check"
-                      : req.found === ""
-                        ? "nothing found for this wallet"
-                        : req.found}
-                </span>
-                <p className="note" style={{ margin: "4px 0 0" }}>
-                  {req.body}
-                </p>
-              </div>
+          <ul className="needs">
+            <li>
+              <strong>Your claim bundle</strong> — from the fund's relay
             </li>
-          ))}
-        </ul>
-        <p className="note">
-          None of the four discloses the figures behind it. That is the point of
-          proving rather than showing: the fund checks the statements, not the
-          history the statements were derived from.
-        </p>
-      </section>
+            <li>
+              <strong>Your payslip for that period</strong> — from your employer
+            </li>
+            <li>
+              <strong>Your claim-key file</strong> — the one you downloaded when
+              you set up your claim key, with this same wallet connected
+            </li>
+          </ul>
+        </section>
+      ) : null}
+
+      {ended ? (
+        <ClaimStatus networkId={networkId} finalPeriod={finalPeriod ?? 0} />
+      ) : null}
+
+      {ended ? <ClaimKey coinPublicKey={account.coinPublicKey} employerOf={employerOf} ended /> : null}
+
+      <Eligibility rows={rows} />
 
       {/* Was a standing note that nothing here ran. The fund is deployed and
           funded, a rule set is published and the relay publishes trees, so the
@@ -176,9 +192,9 @@ export function Claim() {
       <ClaimForm />
 
       <p className="note">
-        No claim yet? The evidence one consumes is already yours —{" "}
-        <Link to="/employee">your employment attestations</Link> — and your
-        claim key is derived on that page too.
+        The evidence a claim consumes is already yours —{" "}
+        <Link to="/employee">your salary records</Link> carry the payslip it
+        opens.
       </p>
 
       <section className="card">
@@ -264,5 +280,51 @@ export function Claim() {
         </p>
       </details>
     </>
+  );
+}
+
+/** The four requirements, as a panel that works with or without a wallet. */
+function Eligibility({ rows }: { rows: Attestation[] | null }) {
+  return (
+    <section className="card">
+      <h2>{rows ? "Your eligibility" : "Eligibility requirements"}</h2>
+      {!rows ? (
+        <p className="note" style={{ marginTop: 0 }}>
+          Connect your wallet and these become a check against what the chain
+          actually holds for you, rather than a description of the rules.
+        </p>
+      ) : null}
+      <ul className="reqs">
+        {requirementsFor(rows).map((req) => (
+          <li key={req.title} className={req.found ? "req ready" : "req"}>
+            <span className="req-mark">
+              {req.found ? "\u2713" : req.found === "" ? "\u25cb" : "\u00b7"}
+            </span>
+            <div>
+              <strong>{req.title}</strong>
+              {/* The pilot figure is the single easiest thing on this page to
+                  misread as the real scheme, and it was the quietest of the
+                  four. It is now the loudest. */}
+              {req.pilot ? <span className="req-pilot">pilot figure — not 12</span> : null}
+              <span className="req-status">
+                {req.found === null
+                  ? "connect a wallet to check"
+                  : req.found === ""
+                    ? "nothing found for this wallet"
+                    : req.found}
+              </span>
+              <p className="note" style={{ margin: "4px 0 0" }}>
+                {req.body}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="note">
+        None of the four discloses the figures behind it. That is the point of
+        proving rather than showing: the fund checks the statements, not the
+        history the statements were derived from.
+      </p>
+    </section>
   );
 }

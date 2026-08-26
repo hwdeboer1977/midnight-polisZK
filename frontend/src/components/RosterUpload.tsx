@@ -439,7 +439,14 @@ export function RosterUpload({
 
       <FilePicker
         label={busy ? "Reading…" : "Choose this period's .xlsx"}
-        loaded={fileName}
+        loaded={
+          fileName
+            ? roster?.period
+              ? `Roster for ${periodName(roster.period)}`
+              : "Roster workbook"
+            : null
+        }
+        filename={fileName}
         accept=".xlsx"
         disabled={busy}
         onFile={onFile}
