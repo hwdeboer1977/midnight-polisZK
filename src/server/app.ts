@@ -16,6 +16,7 @@ import { parsePeurAmount } from "../utils/constructor-args.js";
 import { EnvironmentManager } from "../utils/environment.js";
 import { findRegistration, listRegistrations } from "../utils/registry.js";
 import { listDeployments } from "../utils/deployments.js";
+import { dataDir } from "../utils/data-dir.js";
 
 /**
  * The platform's HTTP surface.
@@ -95,6 +96,19 @@ export function createApp(config: ServerConfig): Express {
       // deserves to know whether it is about to send a token to something that
       // never checks one.
       authenticated: config.token !== null,
+      /**
+       * Whether what this service records survives a redeploy.
+       *
+       * False means DATA_DIR is unset, so `deployment.json` sits in the code
+       * directory — which a managed host replaces on every push. Onboarding
+       * still works and still deploys a real contract; the record of where that
+       * contract IS gets thrown away, and `assignEmployer` cannot be repeated
+       * to make another one.
+       *
+       * A boolean rather than the path: the answer is the useful part and a
+       * filesystem layout is not something a public endpoint should hand out.
+       */
+      durableState: dataDir() !== process.cwd(),
     });
   });
 

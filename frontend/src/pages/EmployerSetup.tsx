@@ -94,7 +94,29 @@ function SetupStatus() {
   }, []);
 
   const here = Object.values(deployments).filter((d) => d.networkId === networkId);
-  const payroll = here.find((d) => d.contractName === "payroll");
+
+  /**
+   * THIS employer's contract, not the first one on the network.
+   *
+   * It used to be `here.find(d => d.contractName === "payroll")`, which is
+   * correct only while exactly one payroll contract exists. On preview there
+   * are six, so this row showed a stranger's contract address under the heading
+   * "your keys and addresses" — beside a panel that named the right one, on the
+   * same screen.
+   *
+   * Ownership is not in the deployment list, and cannot be: that file records
+   * that a contract exists, while `assignEmployer` decides whose it is and the
+   * answer lives on chain. `usePayrollInstances` reads it and reports a role
+   * per instance, which is what the Roster and the Overview checklist already
+   * filter on — this page had the hook imported and was not using it here.
+   */
+  const { instances } = usePayrollInstances(
+    networkId,
+    deployments,
+    account?.coinPublicKey ?? null
+  );
+  const payroll = instances.find((instance) => instance.role === "employer")?.deployment;
+
   const peur = here.find((d) => d.contractName === "peur");
   const explorer = EXPLORERS[networkId] ?? "";
   const link = (address: string) =>
