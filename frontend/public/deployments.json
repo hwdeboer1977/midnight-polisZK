@@ -79,5 +79,11 @@
     "contractName": "payroll",
     "networkId": "preview",
     "instance": "wasm-proving-test"
+  },
+  "preview/payroll:test-company-1": {
+    "contractAddress": "7b2ab465850f12612bf32865de69018d9986fa4ace786c857e874c181c99b556",
+    "contractName": "payroll",
+    "networkId": "preview",
+    "instance": "test-company-1"
   }
 }
