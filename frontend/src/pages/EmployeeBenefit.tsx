@@ -98,7 +98,7 @@ function requirementsFor(rows: Attestation[] | null): Check[] {
 }
 export function EmployeeBenefit() {
   const { account, networkId } = useWallet();
-  const { rows, employerOf, ended, finalPeriod, error } = useAttestations();
+  const { rows, employerOf, ended, finalPeriod, loading, error } = useAttestations();
 
   if (!account) {
     return (
@@ -147,8 +147,15 @@ export function EmployeeBenefit() {
 
           Once employment has ended that reverses. The key is already anchored
           or already lost, and what a claimant needs now is to claim. */}
+      {/* `registered` is optimistic while the scan runs: "not on a payroll yet"
+          is the wrong thing to show someone who is, and it would appear and
+          then correct itself on every visit. Wrong in the harmless direction. */}
       {ended ? null : (
-        <ClaimKey coinPublicKey={account.coinPublicKey} employerOf={employerOf} />
+        <ClaimKey
+          coinPublicKey={account.coinPublicKey}
+          employerOf={employerOf}
+          registered={loading || rows.length > 0}
+        />
       )}
 
       {ended ? (

@@ -13,6 +13,7 @@ import {
 import { periodName } from "../generated/roster";
 import { bytesToHex } from "../lib/keys";
 import { checkPayslip, type CheckedPayslip } from "../lib/checkPayslip";
+import { createClaimIdentity, downloadClaimKeyFile } from "../lib/claimKey";
 import { useWallet } from "../wallet/WalletContext";
 
 
@@ -182,7 +183,23 @@ export function Employee() {
           termination and an employee who reaches their last day without one can
           never claim. A tab someone has not opened is not a place to leave a
           deadline, so the deadline is named here and the panel lives there. */}
-      {rows.some((row) => row.ended) || employerOf ? null : (
+      {/* Only for a wallet a payroll actually names.
+          
+          A benefit key handed to a wallet with no employment is an
+          irreplaceable file for a benefit that cannot be claimed, offered to
+          someone with no reason to keep it — which teaches them to ignore
+          exactly the prompt that matters later.
+          
+          Safe to gate, and the ordering is the reason rather than a guess.
+          `endEmployment` asserts `commitmentsFor.member(p)` and that the slot
+          exists in it, so an employer cannot attest a termination against a
+          wallet no period has ever named. Registration strictly precedes the
+          write-once deadline, so waiting for it cannot miss the window.
+          
+          `loading` is in the condition so the prompt does not appear and then
+          vanish while the scan is still running — a card that offers you a file
+          and takes it back reads as a fault. */}
+      {loading || rows.length === 0 || rows.some((row) => row.ended) || employerOf ? null : (
         <ClaimKeyReminder coinPublicKey={account.coinPublicKey} />
       )}
 
@@ -571,43 +588,99 @@ function PayslipCheck({
  * but a heading in the first person does not say that.
  */
 /**
- * The one deadline on this page, pointing at the tab that can meet it.
+ * The first thing a newly connected employee sees, and the only thing they have
+ * to do.
  *
- * Deliberately not a copy of the ClaimKey panel. Two panels that both create a
- * claim key would be two places to press a button that mints 32 fresh bytes,
- * and the second press is the one that strands someone whose employer has
- * already anchored the first. One control, one place; this is a signpost.
+ * It was a signpost to the benefit tab. Making it the download itself is the
+ * point of the reframe: "keep this file" is a whole instruction, and routing it
+ * through a second tab and a second click turned it back into a task with a
+ * concept attached. Someone who connects a wallet, downloads one file and never
+ * returns has done everything required of them for a benefit they may never
+ * claim.
  *
- * It hides itself once localStorage says a key exists for this wallet — the
- * same record the panel keeps. That can only undercount: a key created in
- * another browser looks absent here, so the reminder reappears. Nagging someone
- * who is already done is the safe direction to be wrong in, since the failure
- * it guards against is unrecoverable.
+ * NOT an automatic download on connect, which is what a literal reading would
+ * ask for. Two reasons, and neither is squeamishness: a programmatic download
+ * not tied to a click is exactly the pattern browsers suppress, so it would
+ * fail silently for some people; and a file that appears unannounced is a file
+ * someone deletes without knowing it was irreplaceable. One button, one
+ * sentence above it.
+ *
+ * Two surfaces can now create a key — this and the panel on the benefit tab —
+ * which was the thing earlier notes warned against. What made that dangerous
+ * was a second press REPLACING an anchored key, and both surfaces disappear the
+ * moment localStorage records a hash for this wallet, so there is still exactly
+ * one moment at which 32 bytes come into existence. Regenerating is still
+ * behind the disclosure on the panel, and only there.
+ *
+ * The localStorage check can only undercount: a key downloaded in another
+ * browser looks absent here, so the prompt reappears. Nagging someone who is
+ * already done is the safe direction to be wrong in, since the failure it
+ * guards against is unrecoverable.
  */
 function ClaimKeyReminder({ coinPublicKey }: { coinPublicKey: string }) {
-  let known: string | null = null;
-  try {
-    known = window.localStorage.getItem(`polisZK/claim-key-hash/${coinPublicKey}`);
-  } catch {
-    // Storage refused. Show the reminder; it costs a line, and the alternative
-    // is silently dropping the only warning about a write-once deadline.
-  }
+  const [known, setKnown] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem(`polisZK/claim-key-hash/${coinPublicKey}`);
+    } catch {
+      // Storage refused. Show the prompt; it costs a card, and the alternative
+      // is silently dropping the only warning about a write-once deadline.
+      return null;
+    }
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   if (known) return null;
+
+  async function download() {
+    setError(null);
+    setBusy(true);
+    try {
+      const identity = await createClaimIdentity();
+      await downloadClaimKeyFile(identity, coinPublicKey);
+      try {
+        window.localStorage.setItem(
+          `polisZK/claim-key-hash/${coinPublicKey}`,
+          identity.claimKeyHash
+        );
+      } catch {
+        // The file is downloaded either way; this only costs the reminder.
+      }
+      setKnown(identity.claimKeyHash);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <section className="callout claim-key-todo">
-      <h2>Set up your claim key — before you need it</h2>
+      <h2>Download your benefit key file</h2>
       <p className="note" style={{ marginTop: 0 }}>
-        If your employment ever ends, an unemployment benefit needs a claim key
-        that <strong>already existed</strong> when your employer filed it. They
-        write its hash into a statement that can only be made once, so a key
-        created afterwards is one no claim can use.
+        One file, once. Keep it wherever you keep your wallet's recovery phrase.
+        You will not need it again unless your employment ends and you claim an
+        unemployment benefit — and at that point nobody, including us, can
+        reissue it.
+      </p>
+      {/* The deadline, stated without the machinery. It has to be here rather
+          than only on the benefit tab: it is the one requirement in this system
+          that cannot be met late, and a tab nobody has opened is a bad place to
+          keep it. */}
+      <p className="note">
+        Do it now rather than later. Your employer records a code from this file
+        when your employment ends, and that record can only be made once — a
+        file made afterwards will not match it.
       </p>
       <div className="actions">
-        <Link className="button" to="/employee/benefit">
-          Set up my claim key
+        <button type="button" className="primary" disabled={busy} onClick={() => void download()}>
+          {busy ? "Preparing…" : "Download my benefit key"}
+        </button>
+        <Link className="button ghost" to="/employee/benefit">
+          What is this?
         </Link>
       </div>
+      {error ? <p className="problems">{error}</p> : null}
     </section>
   );
 }

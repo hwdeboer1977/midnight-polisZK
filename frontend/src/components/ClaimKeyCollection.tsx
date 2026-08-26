@@ -6,7 +6,7 @@ import {
 } from "../lib/collected";
 
 /**
- * Claim-key hashes collected, and from whom.
+ * Benefit key hashes collected, and from whom.
  *
  * This is the outstanding task an employer is least likely to discover on their
  * own and least able to fix late: the hash goes inside a write-once termination
@@ -33,7 +33,7 @@ export function ClaimKeyCollection({
   if (status.total === null) {
     return (
       <div className="row">
-        <div className="k">Claim-key hashes</div>
+        <div className="k">Benefit key hashes</div>
         <div className="v muted">
           {status.withHash > 0
             ? `${status.withHash} recorded — load a workbook to see who is missing`
@@ -48,7 +48,7 @@ export function ClaimKeyCollection({
   return (
     <>
       <div className="row">
-        <div className="k">Claim-key hashes</div>
+        <div className="k">Benefit key hashes</div>
         <div className="v">
           {done ? (
             <span className="ok-line">{status.withHash} of {status.total}</span>

@@ -279,10 +279,9 @@ export function ClaimForm() {
             onFile={async (file) => readClaimKey(await file.text(), file.name)}
           />
           <p className="note">
-            The file you downloaded under{" "}
-            <Link to="/employee">Your claim key</Link>, named something like{" "}
-            <code>claim-key-1a2b3c4d.json</code>. It is not uploaded anywhere —
-            the proof is built here.
+            The file you downloaded when you first connected, named something
+            like <code>incomelayer-benefit-key-1a2b3c4d.json</code>. It is not
+            uploaded anywhere — the proof is built here.
           </p>
 
           {/* Answered as soon as both files are open, because this is the

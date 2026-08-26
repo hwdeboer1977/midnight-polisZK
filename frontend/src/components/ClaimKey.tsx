@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { CopyRow } from "./CopyRow";
 import {
-  buildClaimKeyFile,
   claimKeyFilename,
   createClaimIdentity,
+  downloadClaimKeyFile,
   type ClaimIdentity,
 } from "../lib/claimKey";
 
@@ -60,6 +61,7 @@ export function ClaimKey({
   coinPublicKey,
   bare,
   employerOf,
+  registered = true,
   ended,
 }: {
   coinPublicKey: string;
@@ -72,6 +74,20 @@ export function ClaimKey({
    * testing with one wallet; obviously wrong to anyone reading the page.
    */
   employerOf?: string | null;
+  /**
+   * Whether any filed period names this wallet.
+   *
+   * A benefit key is only meaningful once one does: `endEmployment` cannot
+   * attest a termination for a slot no period has filed, so an unregistered
+   * wallet has nothing that could ever be claimed against. Offering an
+   * irreplaceable file to someone with no employment devalues the one prompt
+   * that has to be taken seriously later.
+   *
+   * Waiting is safe rather than a gamble on ordering: registration is a
+   * precondition of termination in the contract, so the write-once deadline
+   * cannot arrive first.
+   */
+  registered?: boolean;
   /**
    * Whether an employer has already attested a final period for this wallet.
    *
@@ -99,29 +115,41 @@ export function ClaimKey({
     setReopened(false);
   }, [coinPublicKey]);
 
+  if (!registered && !known && !identity && !employerOf) {
+    return (
+      <section className="callout">
+        <h2>Not on a payroll yet</h2>
+        <p className="note" style={{ marginTop: 0 }}>
+          No filed period names this wallet, so there is nothing a benefit could
+          be claimed against and nothing for a key to unlock. Send your employer
+          the two payroll keys from <Link to="/employee">Salary</Link>; once they
+          have filed your first period, come back and download your benefit key.
+        </p>
+        <p className="note">
+          Nothing is lost by waiting. Your employer cannot end an employment that
+          was never filed, so the deadline this file has to beat cannot arrive
+          before you are on a payroll.
+        </p>
+      </section>
+    );
+  }
+
   if (employerOf && !known && !identity) {
     return (
       <section className="callout">
-        <h2>Claim keys are for employees</h2>
+        <h2>Benefit keys are for employees</h2>
         <p className="note" style={{ marginTop: 0 }}>
           This wallet is the employer of <strong>{employerOf}</strong>, so it has
           no benefit to claim — a claim needs the wallet a period was filed
-          <em> for</em>, and yours files them. Your employees each create their
-          own key here and send you the hash.
+          <em> for</em>, and yours files them. Your employees each download
+          their own key file here and send you the hash.
         </p>
       </section>
     );
   }
 
   async function download(current: ClaimIdentity) {
-    const file = await buildClaimKeyFile(current, coinPublicKey);
-    const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = claimKeyFilename(coinPublicKey);
-    anchor.click();
-    URL.revokeObjectURL(url);
+    await downloadClaimKeyFile(current, coinPublicKey);
     setSaved(true);
   }
 
@@ -146,20 +174,25 @@ export function ClaimKey({
 
   const body = (
     <>
+      {/* An instruction, not a concept.
+          
+          This paragraph used to open on nullifiers and unlinkability, which
+          made someone learn what a claim key IS before they could act on it.
+          The cryptography has not changed and has not gone away — it is one
+          disclosure down, for whoever wants it. What is left here is the only
+          sentence that changes what anybody does. */}
       <p className="note" style={{ marginTop: 0 }}>
-        A claim key is what lets you prove a future benefit claim is yours
-        without anyone being able to recognise you — not the fund, not your
-        employer, not an observer reading the chain. It is 32 random bytes. You
-        do not memorise it: you keep the file.
+        <strong>One file to keep.</strong> Download it, store it wherever you
+        keep your wallet's recovery phrase, and you will not need to think about
+        it again unless you ever claim an unemployment benefit — at which point
+        it is the one thing nobody can reissue for you.
       </p>
-      {/* Paired with the same note on the payroll keys above. The two values
-          look alike and go to different places, and each is unusable in the
-          other's slot. */}
+      {/* Kept, and shortened. The two artefacts look alike, go to different
+          places, and neither works in the other's slot — but the reason lives
+          in the disclosure now rather than in the second thing anyone reads. */}
       <p className="note">
-        <strong>This is not one of your wallet keys.</strong> Those identify you
-        for the roster, so your employer can file and pay you. This one is
-        unrelated to them on purpose — precisely so that nobody who has ever
-        paid you can recognise a claim as yours.
+        It is not your wallet, and it does not replace your recovery phrase. If
+        you lose the phrase, this file cannot bring anything back.
       </p>
       {ended ? (
         <p className="note" style={{ marginTop: 0 }}>
@@ -175,8 +208,8 @@ export function ClaimKey({
         <p className="problems" style={{ marginTop: 0 }}>
           Do this while you are still employed. Your employer writes the hash
           into the statement that ends your employment, and that statement can
-          only be made once — so a claim key created afterwards is one no claim
-          can use.
+          only be made once — so a key file made afterwards is one no claim can
+          use.
         </p>
       )}
 
@@ -187,7 +220,7 @@ export function ClaimKey({
           disabled={busy}
           onClick={() => void create()}
         >
-          {busy ? "Creating…" : "Create my claim key"}
+          {busy ? "Preparing…" : "Download my benefit key"}
         </button>
       </div>
 
@@ -214,7 +247,7 @@ export function ClaimKey({
           <p className="ok-line" style={{ marginTop: 16 }}>
             Send the hash below to your employer
           </p>
-          <CopyRow label="Claim key hash" value={identity.claimKeyHash} />
+          <CopyRow label="Benefit key hash" value={identity.claimKeyHash} />
           <p className="note">
             Safe to send: it is a hash, and it gives your employer no way to
             claim anything. They write it into the statement that ends your
@@ -225,7 +258,14 @@ export function ClaimKey({
       ) : null}
 
       <details className="details" style={{ marginTop: 12 }}>
-        <summary>Why a file and not a password?</summary>
+        <summary>What is actually in this file, and why not a password?</summary>
+        <p className="note">
+          Thirty-two random bytes, and the hash of them. The bytes are what a
+          claim proves you know; the hash is what your employer writes down, and
+          it gives them no way to claim anything. They are unrelated to your
+          wallet keys on purpose — precisely so that nobody who has ever paid you
+          can recognise a benefit claim as yours.
+        </p>
         <p className="note">
           It was a password until we looked at what protects it. The hash your
           employer publishes travels in your claim bundle in the clear, and it
@@ -270,19 +310,19 @@ export function ClaimKey({
             a record, so it reads as one. */}
         {employerOf ? (
           <p className="ok-line" style={{ margin: 0 }}>
-            ✓ Claim key set up — for wherever <em>you</em> are an employee
+            ✓ Benefit key downloaded — for wherever <em>you</em> are an employee
           </p>
         ) : ended ? (
           <p className="ok-line" style={{ margin: 0 }}>
-            ✓ Claim key set up — this is the hash your employer anchored
+            ✓ Benefit key downloaded — this is the hash your employer anchored
           </p>
         ) : (
           <p className="ok-line" style={{ margin: 0 }}>
-            ✓ Claim key set up — give your employer this hash before they end your
-            employment
+            ✓ Benefit key downloaded — give your employer this hash before they
+            end your employment
           </p>
         )}
-        <CopyRow label="Claim key hash" value={known} />
+        <CopyRow label="Benefit key hash" value={known} />
         {employerOf ? (
           <p className="note" style={{ marginTop: 8 }}>
             This wallet is the employer of <strong>{employerOf}</strong>, so it
@@ -317,7 +357,7 @@ export function ClaimKey({
             unrecoverable — so the control that does it should take a decision
             to reach, and should say what it costs before it is reached. */}
         <details className="details" style={{ marginTop: 12 }}>
-          <summary>I have lost my claim-key file</summary>
+          <summary>I have lost my benefit key file</summary>
           {ended ? (
             <p className="problems" style={{ marginTop: 8 }}>
               <strong>A new key will not help you.</strong> Your employment has
@@ -338,7 +378,7 @@ export function ClaimKey({
             </p>
           )}
           <button type="button" className="ghost" onClick={() => setReopened(true)}>
-            Create a new claim key anyway
+            Make a new one anyway
           </button>
         </details>
       </section>
@@ -349,10 +389,10 @@ export function ClaimKey({
     <section className={known || identity || ended ? "callout" : "callout claim-key-todo"}>
       <h2>
         {identity || known
-          ? "Your claim key"
+          ? "Your benefit key file"
           : ended
-            ? "Your claim key — needed for the claim below"
-            : "Claim key — not set up yet"}
+            ? "Your benefit key file — needed for the claim below"
+            : "Your benefit key file — not downloaded yet"}
       </h2>
       {body}
     </section>

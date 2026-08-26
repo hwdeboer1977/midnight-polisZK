@@ -133,12 +133,50 @@ export async function buildClaimKeyFile(
 }
 
 /**
- * Named so it cannot be mistaken for a payslip or a bundle in a downloads
- * folder, and tagged with the wallet because someone holding keys for two
- * people needs to tell them apart before opening either.
+ * What the file is called, and why it stopped being called `claim-key-….json`.
+ *
+ * A name is the whole of the explanation for most people. "Claim key" required
+ * knowing what a claim key IS before the file meant anything, which put a
+ * cryptographic concept in front of an instruction that does not need one:
+ * keep this, you will need it if you ever claim, nobody can replace it.
+ *
+ * Not `identity` or `account`, both of which were considered and are wrong in
+ * ways worth recording. There IS no account here — `steps_employee.md` opens on
+ * that — and "account" imports the one promise this file cannot keep, that a
+ * provider can reset it. "Identity" is worse: the WALLET is the identity, since
+ * `claim` rebuilds `payeeBinding` from `ownPublicKey()`, so a file named for
+ * her identity that cannot restore her wallet invites exactly the wrong
+ * conclusion at exactly the wrong moment.
+ *
+ * Still tagged with the wallet. Someone holding files for two people needs to
+ * tell them apart before opening either — and without it a second download
+ * lands as `incomelayer-benefit-key (1).json`, which is indistinguishable from
+ * the first in the place it matters.
  */
 export function claimKeyFilename(coinPublicKey: string): string {
-  return `claim-key-${keyToHex(coinPublicKey).slice(0, 8)}.json`;
+  return `incomelayer-benefit-key-${keyToHex(coinPublicKey).slice(0, 8)}.json`;
+}
+
+/**
+ * Creates the file and hands it to the browser.
+ *
+ * Shared rather than written twice, because it is reachable from two places —
+ * the prompt on Salary and the panel on Unemployment benefit — and those two
+ * must produce a byte-identical file. Both only appear when no key is known, so
+ * there is still exactly one moment at which 32 bytes come into existence.
+ */
+export async function downloadClaimKeyFile(
+  identity: ClaimIdentity,
+  coinPublicKey: string
+): Promise<void> {
+  const file = await buildClaimKeyFile(identity, coinPublicKey);
+  const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = claimKeyFilename(coinPublicKey);
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 const HEX_32 = /^[0-9a-f]{64}$/i;

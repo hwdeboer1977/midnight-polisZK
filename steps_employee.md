@@ -53,11 +53,20 @@ neither lets anyone spend their pay.
 
 ### 1.3 Set up a claim key — long before they need it
 
-`/employee` → *Your claim key* → **Create my claim key** → keep the downloaded
-file, send the employer the **hash**.
+`/employee` → **Download my benefit key** → keep the file, send the employer the
+**hash**.
+
+The prompt is the first thing a newly connected employee sees on the Salary tab,
+and the download is one click from there — the framing is "one file to keep",
+not "set up a claim key", because the second makes someone learn what a claim
+key is before they can act. The same panel, with the full explanation, lives on
+Employee → Unemployment benefit.
 
 The key is 32 random bytes, generated in their browser and downloaded as
-`claim-key-xxxxxxxx.json`. It is never sent anywhere and never stored on the
+`incomelayer-benefit-key-xxxxxxxx.json`. The name is deliberately not
+`identity` or `account`: there is no account here, "account" implies someone can
+reset it, and the WALLET is the identity — a file named for that which cannot
+restore a wallet invites the wrong conclusion at the worst moment. It is never sent anywhere and never stored on the
 page — only the hash is kept, in `localStorage`, as a reminder. Only the hash is
 ever displayed: the key itself is the nullifier secret, and a page that showed
 it would invite it into a screenshot.
