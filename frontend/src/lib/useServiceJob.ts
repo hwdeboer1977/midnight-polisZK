@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { apiUrl } from "./origin";
 
 /**
  * A unit of work on the demo service — onboarding, funding, minting.
@@ -63,7 +64,7 @@ export function useServiceJob<TResult>(path: string) {
   const poll = useCallback((jobId: string) => {
     const tick = async () => {
       try {
-        const response = await fetch(`/api/job/${jobId}`);
+        const response = await fetch(apiUrl(`/api/job/${jobId}`));
         if (!response.ok) throw await failureFor(response);
         const next = (await response.json()) as ServiceJob<TResult>;
         setJob(next);
@@ -95,7 +96,7 @@ export function useServiceJob<TResult>(path: string) {
       setUnavailable(false);
       setJob(null);
       try {
-        const response = await fetch(path, {
+        const response = await fetch(apiUrl(path), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),

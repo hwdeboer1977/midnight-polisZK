@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ServiceUnavailable } from "../components/ServiceUnavailable";
-import { servedLocally } from "../lib/origin";
+import { platformActions } from "../lib/origin";
 import { WalletPicker } from "../components/WalletPicker";
 import { CopyRow } from "../components/CopyRow";
 import { loadDeployments, type Deployments } from "../lib/deployments";
@@ -214,7 +214,7 @@ export function Register() {
               you can see.
             </p>
           </>
-        ) : !servedLocally ? (
+        ) : !platformActions ? (
           /* Said BEFORE the button, not after a failed request.
              
              Deploying a contract needs the platform signing key, so it can only
@@ -224,7 +224,7 @@ export function Register() {
              static host, which answers 405, and a 405 translated into prose is
              still an answer that arrives too late to be useful.
              
-             `servedLocally` is known on first render, so the honest thing is to
+             `platformActions` is known on first render, so the honest thing is to
              not offer the action at all and say what to do instead. */
           <>
             <p className="lead-sm">

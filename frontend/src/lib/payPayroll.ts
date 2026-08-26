@@ -11,6 +11,7 @@ import {
 import { DUTCH_V1, computeLine } from "../generated/tax-params";
 import { submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
 import { connectContract, type ProvingMode } from "./submitPayroll";
+import { apiUrl } from "./origin";
 
 /**
  * Funding and paying a filed period.
@@ -760,7 +761,7 @@ export async function fundAndPayViaService(options: {
   }
 
   onProgress("Handing the run to the local payroll service…");
-  const started = await fetch("/api/payroll/run", {
+  const started = await fetch(apiUrl("/api/payroll/run"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ instance, period, slots }),
@@ -781,7 +782,7 @@ export async function fundAndPayViaService(options: {
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    const poll = await fetch(`/api/job/${jobId}`);
+    const poll = await fetch(apiUrl(`/api/job/${jobId}`));
     if (!poll.ok) throw new Error(`Lost track of the job (${poll.status})`);
     const job = await poll.json();
 

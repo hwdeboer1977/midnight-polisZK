@@ -45,7 +45,14 @@ async function main(): Promise<void> {
       )
     );
     console.log();
-    console.log(chalk.white(`   http://${config.host}:${config.port}`));
+    console.log(
+      chalk.white(`   http://${config.host}:${config.port}`) +
+        // Named, because a bind address nobody typed is otherwise a mystery to
+        // whoever reads this log wondering why it is not on localhost.
+        (config.hostChosenFor
+          ? chalk.gray(`   (bound for ${config.hostChosenFor}; set SERVER_HOST to override)`)
+          : "")
+    );
     console.log(chalk.gray(`   network   ${network.name} (${network.networkId})`));
     console.log(
       chalk.gray("   auth      ") +

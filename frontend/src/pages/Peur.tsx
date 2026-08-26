@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CopyRow } from "../components/CopyRow";
 import { ServiceUnavailable } from "../components/ServiceUnavailable";
+import { platformActions } from "../lib/origin";
 import { Tile } from "../components/Tile";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { PEUR_SCALE, formatPeur, group } from "../lib/format";
@@ -165,7 +166,7 @@ export function Peur() {
             ) : null}
 
             <button
-              disabled={!mintable || minting || mintJob?.status === "running"}
+              disabled={!platformActions || !mintable || minting || mintJob?.status === "running"}
               onClick={() =>
                 // The connector speaks Bech32m; the service speaks hex. Converting
                 // here rather than there keeps the one decoder in the browser,
@@ -202,7 +203,11 @@ export function Peur() {
               <p className="status error">Could not mint: {mintJob.error}</p>
             ) : null}
 
-            {unavailable ? (
+            {/* `unavailable` only becomes true after a request has failed. On a
+                hosted origin the answer is known before anything is sent, so it
+                is said upfront — a button that can only 405 is worse than no
+                button. */}
+            {!platformActions || unavailable ? (
               <ServiceUnavailable what="minting" />
             ) : null}
 

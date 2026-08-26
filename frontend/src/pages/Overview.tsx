@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
 import { ServiceUnavailable } from "../components/ServiceUnavailable";
+import { platformActions } from "../lib/origin";
 import { Tile } from "../components/Tile";
 import { WalletPicker } from "../components/WalletPicker";
 import { FAUCETS } from "../lib/chain";
@@ -242,7 +243,7 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
           ) : (
             <>
               <button
-                disabled={!keys || claiming || claimJob?.status === "running"}
+                disabled={!platformActions || !keys || claiming || claimJob?.status === "running"}
                 onClick={() => keys && void claim(keys.coin, keys.encryption)}
               >
                 {claimJob?.status === "running"
@@ -273,7 +274,11 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
                 <p className="status error">Could not claim: {claimJob.error}</p>
               ) : null}
 
-              {unavailable ? (
+              {/* `unavailable` only becomes true after a request has failed. On a
+                  hosted origin the answer is known before anything is sent, so it
+                  is said upfront — a button that can only 405 is worse than no
+                  button. */}
+              {!platformActions || unavailable ? (
                 <ServiceUnavailable what="pEUR allowance" />
               ) : null}
             </>

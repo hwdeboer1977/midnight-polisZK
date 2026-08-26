@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { DUTCH_V1, computeLine } from "../generated/tax-params";
-import { servedLocally } from "../lib/origin";
+import { platformActions } from "../lib/origin";
 import type { ParsedRoster } from "../generated/roster";
 import { submitPayroll, walletCanProve, type SubmitResult } from "../lib/submitPayroll";
 import {
@@ -131,7 +131,7 @@ export function RosterUpload({
   // a local process holding the platform key, and there is no such process
   // behind a deployed origin. Detected by origin rather than probed, because
   // the answer never changes for a given deployment.
-  const serviceUsable = (target?.operatorIsEmployer ?? false) && servedLocally;
+  const serviceUsable = (target?.operatorIsEmployer ?? false) && platformActions;
   // Not every wallet can prove: 1AM can (in-tab WASM), Lace cannot and needs
   // the local proof server. Offering a toggle that cannot work is worse than
   // not offering it.
