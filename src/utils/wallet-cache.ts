@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
+import { dataPath } from "./data-dir.js";
 
 /**
  * Cached wallet sync state.
@@ -41,11 +42,10 @@ function fingerprint(masterSeedHex: string, networkId: string): string {
 }
 
 function filePath(masterSeedHex: string, networkId: string): string {
-  return path.join(
-    process.cwd(),
-    DIR,
-    `${networkId}-${fingerprint(masterSeedHex, networkId)}.json`
-  );
+  // Through `dataPath`, so a managed host keeps it on a persistent disk. Losing
+  // it is not fatal but is expensive: the next start replays the whole chain
+  // before the wallet can sign anything.
+  return dataPath(DIR, `${networkId}-${fingerprint(masterSeedHex, networkId)}.json`);
 }
 
 export function loadWalletState(

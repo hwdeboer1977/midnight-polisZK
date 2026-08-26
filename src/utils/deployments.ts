@@ -1,7 +1,12 @@
 import fs from "fs";
 import path from "path";
+import { dataPath } from "./data-dir.js";
 
-const FILE = "deployment.json";
+/**
+ * Resolved through `dataDir()`, so a managed host can point it at storage that
+ * survives a deploy. Locally it is `./deployment.json`, exactly as before.
+ */
+const FILE = dataPath("deployment.json");
 
 /**
  * The committed copy, and why reading it is not optional.

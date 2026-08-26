@@ -15,6 +15,7 @@ import {
 import { parsePeurAmount } from "../utils/constructor-args.js";
 import { EnvironmentManager } from "../utils/environment.js";
 import { findRegistration, listRegistrations } from "../utils/registry.js";
+import { listDeployments } from "../utils/deployments.js";
 
 /**
  * The platform's HTTP surface.
@@ -95,6 +96,27 @@ export function createApp(config: ServerConfig): Express {
       // never checks one.
       authenticated: config.token !== null,
     });
+  });
+
+  /**
+   * Every contract this service knows about.
+   *
+   * Public, and it has to be: contract addresses are on-chain data that anyone
+   * with an indexer can enumerate, and the frontend cannot work without them.
+   *
+   * It exists because the frontend's own list is a BUILD-TIME snapshot.
+   * `frontend/public/deployments.json` is written by `frontend-config.ts` and
+   * committed, which is what lets a Vercel build know any addresses at all — but
+   * a contract this server deploys at runtime can never appear in it. Onboarding
+   * would succeed, the employer would reload, and their brand-new contract would
+   * be invisible: "this wallet is not registered as an employer", about a
+   * contract deployed for that wallet a minute earlier.
+   *
+   * The frontend merges this over its static copy, so the committed file remains
+   * the baseline that works with no backend at all.
+   */
+  app.get("/api/deployments", (_req: Request, res: Response) => {
+    res.json(Object.fromEntries(listDeployments()));
   });
 
   app.get("/api/job/:id", (req: Request, res: Response) => {

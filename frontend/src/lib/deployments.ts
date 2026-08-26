@@ -1,3 +1,4 @@
+import { apiBase, apiUrl, servedLocally } from "./origin";
 export interface Deployment {
   contractAddress: string;
   contractName: string;
@@ -10,14 +11,51 @@ export interface Deployment {
 export type Deployments = Record<string, Deployment>;
 
 /**
- * Written by `npm run frontend:config` from deployment.json, with pEUR's token
- * id read off the contract. Optional: the app still connects wallets without it.
+ * Every contract this app knows about, from two sources.
+ *
+ * The STATIC file is written by `npm run frontend:config` from deployment.json,
+ * with pEUR's token id read off the contract, and committed — which is what
+ * lets a hosted build know any addresses at all. It is also a snapshot taken
+ * when the frontend was built.
+ *
+ * The BACKEND knows about anything deployed since, including contracts it
+ * deployed itself a minute ago. Without asking it, a freshly onboarded employer
+ * reloads and is told "this wallet is not registered as an employer" about
+ * their own contract — the snapshot cannot contain something created after it
+ * was taken.
+ *
+ * Static first, backend merged over it: the committed file stays the baseline
+ * that works with no backend reachable, and the live list wins where both have
+ * an entry. Neither source is trusted for anything but addresses; what a
+ * contract actually says about its employer is read from the chain.
  */
 export async function loadDeployments(): Promise<Deployments> {
+  const [stat, live] = await Promise.all([loadStatic(), loadFromApi()]);
+  return { ...stat, ...live };
+}
+
+async function loadStatic(): Promise<Deployments> {
   try {
     const response = await fetch("/deployments.json", { cache: "no-store" });
     return response.ok ? ((await response.json()) as Deployments) : {};
   } catch {
+    return {};
+  }
+}
+
+/**
+ * Skipped entirely when no backend is configured, rather than attempted and
+ * caught: on a hosted build with no VITE_API_BASE the request would go to the
+ * static host and 404 on every page load, which is noise in the console for an
+ * answer we already know.
+ */
+async function loadFromApi(): Promise<Deployments> {
+  if (!apiBase && !servedLocally) return {};
+  try {
+    const response = await fetch(apiUrl("/api/deployments"), { cache: "no-store" });
+    return response.ok ? ((await response.json()) as Deployments) : {};
+  } catch {
+    // The backend being down must not take the static list with it.
     return {};
   }
 }

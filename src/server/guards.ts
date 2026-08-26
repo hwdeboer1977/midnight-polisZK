@@ -1,8 +1,8 @@
 import fs from "fs";
-import path from "path";
 import { timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
 import type { ServerConfig } from "./config.js";
+import { dataPath } from "../utils/data-dir.js";
 
 /**
  * What stands in for a bearer token on the one route that cannot have one.
@@ -120,7 +120,7 @@ export function requireSignupCode(config: ServerConfig) {
  * records what was deployed. This answers one narrow question quickly, and if
  * it is lost the worst case is a duplicate that the operator can see and prune.
  */
-const LEDGER = path.join(process.cwd(), ".onboarded-keys.json");
+const LEDGER = dataPath(".onboarded-keys.json");
 
 type OnboardedKey = { employerKey: string; instance: string; at: string };
 

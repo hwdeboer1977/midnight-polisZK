@@ -30,3 +30,33 @@ relay-only, both reaching for `contracts/managed`), this stops working and the
 fix is to make those two resolve their contract module the way
 `utils/contract.ts` already does: at run time, falling back to the copies
 committed under `frontend/`.
+
+# Run-time state and DATA_DIR
+
+Three files outlive a single request and none of them is source:
+
+    deployment.json          what has been deployed, and where
+    .onboarded-keys.json     which employer keys have already signed up
+    .wallet-state/           the wallet's sync position
+
+All three default to `process.cwd()`. On a developer's machine that is the repo
+and it is durable. On a managed host it is the code directory, which is replaced
+on every deploy — so the default silently loses all three each time you push.
+
+For the sync position that costs a full chain replay on next boot: slow, and
+recoverable. For `deployment.json` it is worse than slow. Onboarding deploys a
+payroll contract and assigns it to an employer's key; `assignEmployer` can only
+be called once, so the binding is permanent. Lose the address and the contract
+is still out there, still theirs, and unreachable by anything that needed to
+know where it was.
+
+`DATA_DIR` points all three at storage that survives a deploy:
+
+    DATA_DIR=/var/data     with a disk mounted there
+
+Unset, everything resolves exactly as it always did — `deployment.json` in the
+repo root, next to the deploy scripts that write it.
+
+`frontend/public/deployments.json` is deliberately NOT moved. It is committed
+source, it ships with the code, and it is the baseline `deployments.ts` merges
+under whatever the live file holds.
