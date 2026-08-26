@@ -52,6 +52,24 @@ export const servedLocally =
  */
 export const platformActions = servedLocally;
 
+/**
+ * Whether self-service signup can be reached from here.
+ *
+ * A different question from `platformActions`, and the distinction is the whole
+ * reason both exist. `/api/onboard` is public — bounded by a rate limit, a
+ * one-per-key rule and an optional signup code rather than by a token — because
+ * the contract it deploys is assigned to the caller's own key, so the worst an
+ * abuser achieves is a contract only they can use, paid for in the platform's
+ * fees. The three routes that create or move pEUR stay operator-only, where no
+ * rate limit would make publishing them safe.
+ *
+ * True wherever a service is actually reachable: locally through the dev proxy,
+ * or on a hosted build once VITE_API_BASE names the backend. Without that the
+ * request would go to the static host and answer 405, so the page says what to
+ * do instead.
+ */
+export const onboardingAvailable = servedLocally || apiBase !== "";
+
 /** Joins a `/api/...` path onto whichever base is in force. */
 export function apiUrl(path: string): string {
   return `${apiBase}${path.startsWith("/") ? path : `/${path}`}`;

@@ -103,3 +103,9 @@ claims.json
 # runner cannot rebuild them. Proving keys are public by construction, so there
 # is nothing here to protect — the cost is repo size, not secrecy.
 # frontend/public/zk/
+
+# Which employer keys have already self-onboarded. Operational state, not
+# source: it answers "you already have a contract" across restarts. The chain
+# and deployment.json remain the source of truth, so losing this costs a
+# duplicate the operator can see and prune.
+/.onboarded-keys.json

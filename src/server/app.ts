@@ -1,6 +1,7 @@
 import express, { type Express, type Request, type Response } from "express";
 import cors from "cors";
 import { requirePlatformToken } from "./auth.js";
+import { alreadyOnboarded, rateLimit, recordOnboarded, requireSignupCode } from "./guards.js";
 import { getJob, startJob } from "./jobs.js";
 import type { ServerConfig } from "./config.js";
 import { fundAndPay } from "../utils/payroll-run.js";
@@ -40,6 +41,17 @@ export function createApp(config: ServerConfig): Express {
 
   // No `x-powered-by`. Free, and there is no reason to advertise the stack.
   app.disable("x-powered-by");
+
+  /**
+   * One hop of proxy is trusted, so `req.ip` reads X-Forwarded-For.
+   *
+   * Required for the signup rate limit to mean anything: behind Render's router
+   * every request otherwise arrives from the same address, and a per-IP limit
+   * would throttle all employers as though they were one. Exactly one hop, not
+   * `true` — trusting the whole chain lets a client forge the header and pick
+   * its own identity, which is a rate limit that anyone can opt out of.
+   */
+  app.set("trust proxy", 1);
 
   /**
    * Small by design. Every body here is a handful of keys and amounts; the
@@ -131,26 +143,59 @@ export function createApp(config: ServerConfig): Express {
 
   // ── Privileged ────────────────────────────────────────────────────────────
 
+  /**
+   * Self-service signup. Public, and bounded rather than authenticated.
+   *
+   * The deploy is signed by the PLATFORM wallet — which is why this server
+   * exists — but the contract it produces is assigned to the CALLER'S key, so
+   * what an abuser gets is a contract only they can use and a bill the platform
+   * pays in fees. Spam and cost, not theft. `guards.ts` sets out why that makes
+   * this route openable when the three below are not.
+   */
+  app.post(
+    "/api/onboard",
+    rateLimit(config.signupLimit),
+    requireSignupCode(config),
+    (req: Request, res: Response) => {
+      const { instance, employerKey, companyName } = req.body ?? {};
+      if (!instance || !employerKey) {
+        res.status(400).json({ error: "instance and employerKey are required" });
+        return;
+      }
+
+      // Refused before three minutes of proving. Note this runs AFTER the rate
+      // limit, so a repeated duplicate still spends the caller's budget — which
+      // is right: it is a request either way, and the alternative would be an
+      // unlimited oracle for "does this key already have a contract".
+      //
+      // The check matters because a second contract for the same employer is
+      // not harmless: their dashboard would find two, and only one of them
+      // holds their filings.
+      const existing = alreadyOnboarded(String(employerKey));
+      if (existing) {
+        res.status(409).json({
+          error:
+            `That signing key already has a payroll contract ("${existing.instance}", ` +
+            `created ${existing.at.slice(0, 10)}). Connect that wallet and use it, or ` +
+            "ask the platform operator if you need a second.",
+        });
+        return;
+      }
+
+      startJob(res, `onboarding "${instance}"`, async (log) => {
+        const result = await onboardEmployer(
+          String(instance), String(employerKey), log, companyName
+        );
+        // Recorded only on success, so a failed deploy does not lock the key
+        // out of trying again.
+        recordOnboarded(String(employerKey), String(instance));
+        return result;
+      });
+    }
+  );
+
   const platform = express.Router();
   platform.use(requirePlatformToken(config));
-
-  /**
-   * Deploys a payroll contract and assigns it to the employer's own key.
-   *
-   * The one operation a hosted frontend cannot do for itself, and the reason
-   * this server has to exist at all: the deploy is signed by the PLATFORM
-   * wallet, which a web page can never hold.
-   */
-  platform.post("/onboard", (req: Request, res: Response) => {
-    const { instance, employerKey, companyName } = req.body ?? {};
-    if (!instance || !employerKey) {
-      res.status(400).json({ error: "instance and employerKey are required" });
-      return;
-    }
-    startJob(res, `onboarding "${instance}"`, (log) =>
-      onboardEmployer(String(instance), String(employerKey), log, companyName)
-    );
-  });
 
   /** The registered employer's once-only starter allowance. */
   platform.post("/claim", (req: Request, res: Response) => {

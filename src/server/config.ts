@@ -53,6 +53,17 @@ export interface ServerConfig {
   loopbackOnly: boolean;
   /** The managed host detected, when the bind address came from it. */
   hostChosenFor: string | null;
+  /**
+   * Optional shared secret for self-service signup, or null for open signup.
+   *
+   * Separate from PLATFORM_API_TOKEN on purpose: that one authenticates the
+   * OPERATOR and must never reach a browser, while this one is handed to
+   * prospective employers and is expected to. They protect different things and
+   * merging them would drag the operator's credential into a public page.
+   */
+  signupCode: string | null;
+  /** How many signups one address may start, and over what window. */
+  signupLimit: { windowMs: number; max: number };
 }
 
 export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -111,5 +122,13 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
       .filter(Boolean),
     loopbackOnly,
     hostChosenFor: explicitHost ? null : managed,
+    signupCode: env.SIGNUP_CODE?.trim() || null,
+    signupLimit: {
+      windowMs: 60 * 60 * 1000,
+      // Three an hour per address. High enough that a person retrying a failed
+      // signup is never blocked, low enough that bulk deployment on the
+      // platform's fees is not worth the wait.
+      max: Number(env.SIGNUP_LIMIT_PER_HOUR ?? 3),
+    },
   };
 }

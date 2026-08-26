@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ServiceUnavailable } from "../components/ServiceUnavailable";
-import { platformActions } from "../lib/origin";
+import { onboardingAvailable } from "../lib/origin";
 import { WalletPicker } from "../components/WalletPicker";
 import { CopyRow } from "../components/CopyRow";
 import { loadDeployments, type Deployments } from "../lib/deployments";
@@ -54,6 +54,7 @@ export function Register() {
   const [deployments, setDeployments] = useState<Deployments>({});
   const [deploymentsRead, setDeploymentsRead] = useState(false);
   const { job, submitting, unavailable, start } = useOnboarding();
+  const [signupCode, setSignupCode] = useState("");
 
   useEffect(() => {
     void loadDeployments().then((loaded) => {
@@ -214,7 +215,7 @@ export function Register() {
               you can see.
             </p>
           </>
-        ) : !platformActions ? (
+        ) : !onboardingAvailable ? (
           /* Said BEFORE the button, not after a failed request.
              
              Deploying a contract needs the platform signing key, so it can only
@@ -224,7 +225,7 @@ export function Register() {
              static host, which answers 405, and a 405 translated into prose is
              still an answer that arrives too late to be useful.
              
-             `platformActions` is known on first render, so the honest thing is to
+             `onboardingAvailable` is known on first render, so the honest thing is to
              not offer the action at all and say what to do instead. */
           <>
             <p className="lead-sm">
@@ -254,11 +255,33 @@ export function Register() {
               This deploys a payroll contract for {company.trim() || "your company"} and
               locks it to your signing key, permanently.
             </p>
+
+            {/* Optional, and shown as such.
+                
+                Whether a code is required is the operator's setting, not
+                something this page can know — so asking for one unconditionally
+                and letting the server ignore it beats guessing. A deployment
+                that requires one answers 403 saying so, which is a better
+                prompt than a field nobody explained. */}
+            <label className="field">
+              <span className="field-label">
+                Signup code <span className="muted">— only if your operator gave you one</span>
+              </span>
+              <input
+                type="text"
+                value={signupCode}
+                autoComplete="off"
+                placeholder="Leave blank if you were not given one"
+                style={{ minWidth: 280 }}
+                onChange={(event) => setSignupCode(event.target.value)}
+              />
+            </label>
+
             <button
               disabled={
                 !slug || !signingKeyHex || submitting || checking || job?.status === "running"
               }
-              onClick={() => void start(slug, signingKeyHex!, company.trim())}
+              onClick={() => void start(slug, signingKeyHex!, company.trim(), signupCode.trim())}
             >
               {job?.status === "running"
                 ? "Creating…"

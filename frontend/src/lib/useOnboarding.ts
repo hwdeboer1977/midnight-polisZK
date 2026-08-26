@@ -15,8 +15,12 @@ export function useOnboarding() {
     useServiceJob<OnboardResult>("/api/onboard");
 
   const begin = useCallback(
-    (instance: string, employerKey: string, companyName?: string) =>
-      start({ instance, employerKey, companyName }),
+    (instance: string, employerKey: string, companyName?: string, signupCode?: string) =>
+      // Sent only when supplied. The server ignores it unless SIGNUP_CODE is
+      // configured, so an open deployment and an invite-only one take the same
+      // request — the difference is one environment variable on the operator's
+      // side, not a different build of this page.
+      start({ instance, employerKey, companyName, ...(signupCode ? { signupCode } : {}) }),
     [start]
   );
 
