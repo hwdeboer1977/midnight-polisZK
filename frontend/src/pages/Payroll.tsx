@@ -9,7 +9,6 @@ import { loadDeployments, type Deployments } from "../lib/deployments";
 import { formatPeur, group } from "../lib/format";
 import type { PayrollLedger } from "../lib/contracts";
 import { usePayrollInstances, type PayrollInstance } from "../lib/usePayrollInstances";
-import { revokeInstance } from "../lib/revoke";
 import { useWallet } from "../wallet/WalletContext";
 
 /** 202603 -> "March 2026". */
@@ -32,40 +31,7 @@ function periodName(period: bigint): string {
  * rather than a stack of cards is what makes it readable at a glance.
  */
 function PeriodHistory({ instance }: { instance: PayrollInstance }) {
-  const { state, blockHeight, role, deployment, name, revoked } = instance;
-  const { api, networkId } = useWallet();
-
-  /**
-   * Revocation, behind a deliberate second click.
-   *
-   * Not a `confirm()` and not a single button. This is one-way, it needs no
-   * consent from the employer whose payroll it ends, and it strands any salary
-   * already funded and not yet paid — so the cost of an accidental click is
-   * someone else's wages. An inline confirm that names what happens is the
-   * least this can carry.
-   */
-  const [confirming, setConfirming] = useState(false);
-  const [revoking, setRevoking] = useState<string | null>(null);
-  const [revokeError, setRevokeError] = useState<string | null>(null);
-
-  async function doRevoke() {
-    if (!api) return;
-    setRevokeError(null);
-    setRevoking("Starting…");
-    try {
-      await revokeInstance({
-        api,
-        networkId,
-        contractAddress: deployment.contractAddress,
-        onProgress: setRevoking,
-      });
-      setConfirming(false);
-    } catch (cause) {
-      setRevokeError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setRevoking(null);
-    }
-  }
+  const { state, blockHeight, role, deployment, name } = instance;
 
   // Newest first: the month someone is looking for is almost always the last
   // one filed, and a correction to an old month should not bury it.
@@ -94,45 +60,7 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
       <h2>
         <span className="badge">{deployment.instance ?? name}</span>
         {role === "platform" ? <span className="tag">you deployed this</span> : null}
-        {revoked ? <span className="tag">revoked</span> : null}
       </h2>
-
-      {/* Platform only, because only the platform's key satisfies the circuit's
-          assert. Hidden once revoked: `revoke` refuses a second call. */}
-      {role === "platform" && !revoked ? (
-        <p className="note">
-          {confirming ? (
-            <>
-              <strong>This cannot be undone.</strong> The employer keeps no way to
-              file, fund, pay or end employment on this contract, and is not asked.
-              Any period already funded and not yet paid can no longer be paid at
-              all — that salary stays in the contract permanently. Withheld tax can
-              still be remitted.{" "}
-              <button
-                type="button"
-                className="linkish"
-                disabled={revoking !== null || !api}
-                onClick={() => void doRevoke()}
-              >
-                {revoking ?? "Yes, revoke it"}
-              </button>{" "}
-              <button
-                type="button"
-                className="linkish"
-                disabled={revoking !== null}
-                onClick={() => setConfirming(false)}
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <button type="button" className="linkish" onClick={() => setConfirming(true)}>
-              Revoke this instance
-            </button>
-          )}
-          {revokeError ? <span className="status error"> {revokeError}</span> : null}
-        </p>
-      ) : null}
 
       {periods.length === 0 ? (
         <p className="muted">No periods filed on this contract yet.</p>

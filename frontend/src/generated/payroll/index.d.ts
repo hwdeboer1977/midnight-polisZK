@@ -9,7 +9,6 @@ export type ImpureCircuits<PS> = {
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
-  revoke(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   transferEmployer(context: __compactRuntime.CircuitContext<PS>,
                    newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
@@ -106,7 +105,6 @@ export type ProvableCircuits<PS> = {
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
-  revoke(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   transferEmployer(context: __compactRuntime.CircuitContext<PS>,
                    newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
@@ -223,7 +221,6 @@ export type Circuits<PS> = {
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
-  revoke(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   transferEmployer(context: __compactRuntime.CircuitContext<PS>,
                    newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
@@ -343,7 +340,6 @@ export type Ledger = {
   readonly socialTreasury: { bytes: Uint8Array };
   readonly employer: { bytes: Uint8Array };
   readonly employerAssigned: boolean;
-  readonly revoked: boolean;
   periods: {
     isEmpty(): boolean;
     size(): bigint;

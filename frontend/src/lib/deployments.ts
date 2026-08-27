@@ -58,7 +58,58 @@ export async function loadDeployments(): Promise<Deployments> {
       merged[key] = { ...merged[key], retired: true };
     }
   }
-  return merged;
+  return pinned(merged);
+}
+
+/**
+ * Narrows the list to the payroll contracts this build is pinned to.
+ *
+ * Why this exists: a payroll contract compiled from different contract source
+ * has different verifier keys, and this frontend can only transact with one it
+ * agrees with. Every older instance stays listed, stays selectable, and fails
+ * at submit with a wall of verifier-key text — which is what an afternoon was
+ * spent chasing. `VITE_PAYROLL_CONTRACTS` names the addresses that belong to
+ * the contract version this bundle was built from, and everything else stops
+ * being offered.
+ *
+ * Applied AFTER the merge rather than to either source, because both can carry
+ * stale instances: the committed baseline has every contract ever deployed, and
+ * the backend keeps its own list of what it onboarded.
+ *
+ * Payroll only. Other contracts are single-deployment and there is nothing to
+ * choose between.
+ *
+ * ── The cost, stated plainly ────────────────────────────────────────────────
+ *
+ * A contract onboarded AFTER this bundle was built is not in the list, so it
+ * will not appear until the variable is updated and the frontend redeployed.
+ * That is the wrong trade for a service onboarding real employers, and the
+ * right one while a contract is changing under you. Unset, nothing is filtered
+ * and behaviour is exactly as before.
+ */
+function pinned(all: Deployments): Deployments {
+  // Cast rather than typed in an ambient declaration: this is the only reader,
+  // and Vite types unknown keys loosely enough that .split() lands on any.
+  const raw = String(import.meta.env.VITE_PAYROLL_CONTRACTS ?? "").trim();
+  if (!raw) return all;
+
+  const allowed = new Set(
+    raw
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (allowed.size === 0) return all;
+
+  const kept: Deployments = {};
+  for (const [key, entry] of Object.entries(all)) {
+    if (entry.contractName !== "payroll") {
+      kept[key] = entry;
+    } else if (allowed.has(entry.contractAddress.toLowerCase())) {
+      kept[key] = entry;
+    }
+  }
+  return kept;
 }
 
 async function loadStatic(): Promise<Deployments> {

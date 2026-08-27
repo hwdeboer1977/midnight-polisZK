@@ -35,8 +35,6 @@ export interface PayrollLedger {
   platform: { bytes: Uint8Array };
   employer: { bytes: Uint8Array };
   employerAssigned: boolean;
-  /** Set by the platform's `revoke`; every employer circuit then refuses. */
-  revoked: boolean;
   /** YYYYMM of the most recent run, 0 before any. */
   latestPeriod: bigint;
   periods: LedgerSet<bigint>;
@@ -133,7 +131,6 @@ export function decodePayrollLedger(
 
   try {
     void ledger.employerAssigned;
-    void ledger.revoked;
     void ledger.taxPool;
     void ledger.latestPeriod;
   } catch {

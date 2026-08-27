@@ -97,5 +97,11 @@
     "contractAddress": "ee86a2e1f869abd68c17fffadf76ee712ae889c8cd01abd516fb17e15e06934f",
     "contractName": "payroll",
     "networkId": "preview"
+  },
+  "preview/payroll:hw-fresh": {
+    "contractAddress": "05e2f57727e77b709d7ee75845ab5648d4d08ece4bdf46cde49db06adf33aaeb",
+    "contractName": "payroll",
+    "networkId": "preview",
+    "instance": "hw-fresh"
   }
 }

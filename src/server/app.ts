@@ -293,10 +293,8 @@ export function createApp(config: ServerConfig): Express {
    *
    * Read what this does NOT do, because the button that calls it is easy to
    * misread. It writes one column in the registry. The contract is untouched:
-   * `assignEmployer` is permanent, and the employer keeps every power they had
-   * a moment ago. Contracts deployed since `revoke` was added can be halted —
-   * but that is a separate, platform-signed transaction, not this column, and
-   * every instance deployed before it has no such circuit at all. `registry.ts` says it plainly —
+   * `assignEmployer` is permanent, there is no revoke circuit, and the employer
+   * keeps every power they had a moment ago. `registry.ts` says it plainly —
    * marking a registration inactive is a statement about the SERVICE, not about
    * the contract.
    *
