@@ -700,6 +700,20 @@ export function RosterUpload({
 
   const payAction = (
     <>
+      {/* Gated on the PASSPHRASE, not on the workbook.
+
+          Step four already carried this block and asked the wrong question:
+          `ready ? null : passphraseBlock` assumes an open workbook means a known
+          passphrase. It does not. Reload, press "Load this month's workbook" and
+          the month is filed and `ready` — so step two collapses, taking the only
+          passphrase field with it, while `passphraseReady` stays false because
+          nothing was ever typed this session.
+
+          The result was a live step with a permanently disabled button and no
+          control anywhere on the page that could enable it. Asking
+          `passphraseReady` instead is the question both steps meant: show the
+          field when the passphrase is unknown, whatever else is open. */}
+      {passphraseReady ? null : passphraseBlock}
       <button
         className="primary"
         onClick={() => void onFundAndPay()}
@@ -737,10 +751,15 @@ export function RosterUpload({
 
   const withholdAction = (
     <>
-      {/* Its own passphrase entry when no workbook is open: the file step
-          collapses once a month is filed, and it was the only place asking for
-          one — leaving the live step with a button it could never enable. */}
-      {ready ? null : passphraseBlock}
+      {/* Its own passphrase entry whenever the passphrase is unknown: the file
+          step collapses once a month is filed, and it was the only place asking
+          for one — leaving the live step with a button it could never enable.
+
+          This said `ready ? null : ...`, which fixed the reload case and missed
+          the one after it: load the workbook again and `ready` goes true while
+          the passphrase is still unknown, so the block vanished and the button
+          stayed disabled. `passphraseReady` is the condition that was meant. */}
+      {passphraseReady ? null : passphraseBlock}
       <button
         className="primary"
         onClick={() => void onWithhold()}
