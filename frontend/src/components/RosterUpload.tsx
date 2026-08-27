@@ -787,6 +787,13 @@ export function RosterUpload({
               ? "Already filed from a workbook — load it again to fund, pay or correct"
               : null,
           action: chooseFile,
+          // Named for what pressing it is FOR, not for the worst thing the step
+          // could do. With a month filed and unpaid, this disclosure is the only
+          // route to steps three through five — funding needs the salaries, and
+          // they live in the workbook, never on chain. Calling that "Correct
+          // this" read as an offer to amend a filing nobody wanted to amend, and
+          // the note that says otherwise is hidden behind it.
+          redoLabel: outstanding && !ready ? "Load this month's workbook" : undefined,
         },
         {
           title: "File the period",
@@ -811,7 +818,13 @@ export function RosterUpload({
             "Tax and contributions leave your wallet for the contract's pools. Until this runs they are assessed, not collected.",
           cost: "1 transaction",
           state: withheldDone ? "done" : paid ? "now" : "todo",
-          action: filed ? withholdAction : null,
+          // `paid`, matching the state above, rather than `filed`. Gated on
+          // filing, this step rendered a live-looking button while it was still
+          // "todo" — the only step in the strip offering an action it was not
+          // yet the turn of, which is exactly the ambiguity a stepper exists to
+          // remove. `withheldDone` is kept in the condition so a finished step
+          // still has something behind "Correct this".
+          action: paid || withheldDone ? withholdAction : null,
         },
         {
           title: "Send payslips",
@@ -831,6 +844,11 @@ export function RosterUpload({
               networkId={networkId}
               periods={openPeriod ? [openPeriod] : []}
               names={roster?.rows.map((row) => row.fullName)}
+              // Only once it is a passphrase and not a half-typed one, and only
+              // while a workbook is open — the same condition step four uses to
+              // drop its own passphrase block. Reload and this is empty, so the
+              // field returns rather than the step becoming unusable.
+              sessionPassphrase={ready && passphraseReady ? passphrase : undefined}
               bare
             />
           ) : null,

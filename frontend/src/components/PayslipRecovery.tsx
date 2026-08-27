@@ -23,6 +23,7 @@ export function PayslipRecovery({
   periods,
   bare,
   names,
+  sessionPassphrase,
 }: {
   contractAddress: string;
   networkId: string;
@@ -47,9 +48,26 @@ export function PayslipRecovery({
    * which is exactly when the employer is about to hand them out.
    */
   names?: (string | undefined)[];
+  /**
+   * The passphrase this session already holds, when it holds one.
+   *
+   * Step four does this by not rendering its passphrase block while a workbook
+   * is open, and step five asking again in the same breath was the seam an
+   * employer walked straight into: file, fund, pay, withhold — all on one
+   * passphrase — then be asked to type it a fourth time to hand out the
+   * payslips the same run just produced.
+   *
+   * Read on every render rather than seeded into state, so a passphrase typed
+   * AFTER this mounts still reaches it. Empty or absent — the reload case — and
+   * the field comes back, because then it genuinely is the only way in.
+   */
+  sessionPassphrase?: string;
 }) {
   const [period, setPeriod] = useState<number | null>(periods[0] ?? null);
-  const [passphrase, setPassphrase] = useState("");
+  const [typed, setTyped] = useState("");
+  const inherited = (sessionPassphrase ?? "").length > 0;
+  const passphrase = inherited ? sessionPassphrase! : typed;
+  const setPassphrase = setTyped;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slips, setSlips] = useState<Payslip[] | null>(null);
@@ -119,17 +137,22 @@ export function PayslipRecovery({
           ))}
         </select>
 
-        <input
-          type="password"
-          value={passphrase}
-          disabled={busy}
-          placeholder="Payroll passphrase"
-          autoComplete="off"
-          onChange={(event) => setPassphrase(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") void run();
-          }}
-        />
+        {/* Hidden, not disabled-and-filled. A password box showing dots the
+            employer did not just type invites them to clear it and start over,
+            which is the opposite of the point. */}
+        {inherited ? null : (
+          <input
+            type="password"
+            value={passphrase}
+            disabled={busy}
+            placeholder="Payroll passphrase"
+            autoComplete="off"
+            onChange={(event) => setPassphrase(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void run();
+            }}
+          />
+        )}
 
         <button
           type="button"
@@ -142,8 +165,9 @@ export function PayslipRecovery({
       </div>
 
       <p className="note">
-        The one you filed that month with. Deriving the key from it is
-        deliberately slow, so this takes a moment.
+        {inherited
+          ? "Rebuilt from the sealed openings on chain, using the passphrase this session already has. Deriving the key from it is deliberately slow, so this takes a moment."
+          : "The one you filed that month with. Deriving the key from it is deliberately slow, so this takes a moment."}
       </p>
 
       {error ? <p className="status error">{error}</p> : null}

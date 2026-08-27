@@ -35,6 +35,18 @@ export interface MonthStep {
    * and cannot do it is a caption, not a step.
    */
   action?: React.ReactNode;
+  /**
+   * What the disclosure on a COMPLETED step is called.
+   *
+   * Defaults to "Correct this", which is right for a step whose action would
+   * redo chain work — re-filing, re-paying — and wrong for step one. Loading the
+   * workbook again is not a correction: it is the PREREQUISITE for funding,
+   * paying and payslips, because salaries live in the file and never on chain.
+   * With one hardcoded label, the only route to funding an unpaid month was a
+   * button named after the most destructive thing any step could do, and the
+   * sentence explaining that was hidden behind it.
+   */
+  redoLabel?: string;
 }
 
 export function MonthSteps({ steps }: { steps: MonthStep[] }) {
@@ -77,7 +89,7 @@ function MonthStepRow({ step, index }: { step: MonthStep; index: number }) {
                 className="ghost month-step-redo"
                 onClick={() => setCorrecting(true)}
               >
-                Correct this
+                {step.redoLabel ?? "Correct this"}
               </button>
             ) : null}
           </>
