@@ -14,7 +14,7 @@ import {
 } from "../utils/funding.js";
 import { parsePeurAmount } from "../utils/constructor-args.js";
 import { EnvironmentManager } from "../utils/environment.js";
-import { findRegistration, listRegistrations } from "../utils/registry.js";
+import { findRegistration, listRegistrations, setStatus } from "../utils/registry.js";
 import { listDeployments } from "../utils/deployments.js";
 import { dataDir } from "../utils/data-dir.js";
 
@@ -285,6 +285,62 @@ export function createApp(config: ServerConfig): Express {
 
   const platform = express.Router();
   platform.use(requirePlatformToken(config));
+
+  /**
+   * Ends — or restores — a company's registration.
+   *
+   * Read what this does NOT do, because the button that calls it is easy to
+   * misread. It writes one column in the registry. The contract is untouched:
+   * `assignEmployer` is permanent, there is no revoke circuit, and the employer
+   * keeps every power they had a moment ago. `registry.ts` says it plainly —
+   * marking a registration inactive is a statement about the SERVICE, not about
+   * the contract.
+   *
+   * The one lever that does bite is elsewhere and is not a button: `setParamsFor`
+   * is platform-only and write-once per period, so an employer whose future
+   * periods are never recorded cannot file them. Revocation by omission.
+   *
+   * Token-gated, and it has to be. A page can check that the connected wallet is
+   * the platform key, and that check is worth exactly nothing to the server —
+   * the coin public key is public, so anyone can claim it, and nothing in a POST
+   * body proves possession. The UI check hides the control; this is what refuses
+   * the request.
+   */
+  platform.post("/registrations/status", async (req: Request, res: Response) => {
+    const { instance, status } = req.body ?? {};
+    const networkId =
+      String(req.body?.networkId ?? "") || EnvironmentManager.getNetworkConfig().networkId;
+
+    if (!instance) {
+      res.status(400).json({ error: "instance is required" });
+      return;
+    }
+    if (status !== "active" && status !== "inactive") {
+      res.status(400).json({ error: 'status must be "active" or "inactive"' });
+      return;
+    }
+
+    try {
+      const updated = await setStatus(networkId, String(instance), status);
+      if (!updated) {
+        // A 404 rather than a silent success: "nothing matched" and "it is now
+        // inactive" look identical from a button, and only one of them means
+        // the operator can stop thinking about it.
+        res.status(404).json({
+          error: `No registration for "${instance}" on ${networkId}.`,
+        });
+        return;
+      }
+      res.json({ registration: updated });
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      console.log(`✘ registration status: ${detail}`);
+      res.status(503).json({
+        error: "The registration database is unavailable — start it with `npm run db:up`",
+        detail,
+      });
+    }
+  });
 
   /**
    * The open faucet: mints pEUR to the caller, any amount, no questions.

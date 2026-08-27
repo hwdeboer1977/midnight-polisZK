@@ -76,7 +76,16 @@ try {
   // Closed, and these are the ones that matter. `/faucet` and `/mint` are the
   // same mint as `/claim` with the ceiling removed and no once-only record;
   // `/payroll/run` moves an employer's money.
-  for (const path of ["/api/faucet", "/api/mint", "/api/payroll/run"]) {
+  // `/api/registrations/status` is the one whose UI implies a different guard:
+  // the card is shown only to the platform key, and a coin public key is public,
+  // so that check hides the control and authorises nothing. The token is what
+  // actually refuses a stranger's POST.
+  for (const path of [
+    "/api/faucet",
+    "/api/mint",
+    "/api/payroll/run",
+    "/api/registrations/status",
+  ]) {
     const status = await post(path, {});
     check(`POST ${path} requires the token`, status === 401, `got ${status}`);
   }

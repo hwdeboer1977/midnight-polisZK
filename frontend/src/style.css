@@ -1105,3 +1105,24 @@ button.primary.secondary-action {
 /* Nested proving option. Indented so it reads as a qualifier on the checkbox
    above it rather than an independent choice. */
 .prove-here.nested { margin-left: 22px; margin-top: 8px; }
+
+/* One registered company, in the deployer's roll. Rows rather than a table:
+   each carries two addresses that need their own copy control, and a table cell
+   is the wrong shape for that. */
+.registry-row { border-top: 1px solid var(--line); padding: 12px 0; }
+.registry-row:first-of-type { border-top: 0; }
+.registry-head { display: flex; align-items: baseline; gap: 10px; }
+.registry-name { font-size: 14px; font-weight: 620; }
+.registry-status {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.registry-status.on { color: var(--ok); background: var(--ok-soft); }
+/* Muted rather than red. An inactive registration is a normal state of the
+   business, not a fault, and colouring it like an error would say the contract
+   is broken — which is the exact misreading this card exists to prevent. */
+.registry-status.off { color: var(--muted); background: var(--line-soft); }
+.registry-row button { margin-top: 8px; }

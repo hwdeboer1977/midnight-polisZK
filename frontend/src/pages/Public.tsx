@@ -1,8 +1,12 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { DeployerRegistry } from "../components/DeployerRegistry";
 import { EXPLORERS } from "../lib/chain";
+import { loadDeployments, type Deployments } from "../lib/deployments";
 import { formatPeur, formatPeurTile, group } from "../lib/format";
 import { useNetworkStats } from "../lib/useNetworkStats";
+import { usePayrollInstances } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
@@ -12,8 +16,26 @@ import { useWallet } from "../wallet/WalletContext";
  * here is anyone's private business.
  */
 export function Public() {
-  const { networkId } = useWallet();
+  const { networkId, account } = useWallet();
   const { stats, loading, error } = useNetworkStats(networkId);
+
+  // Asked of the contracts, not of a config value naming a "the deployer".
+  //
+  // `platform` is written by the constructor and readable on every instance, so
+  // the question "is the connected wallet the one that deployed these" has an
+  // on-chain answer — and using it means a rotated or second platform key needs
+  // no code change to be recognised, while an impostor pasting the key into a
+  // setting recognises nothing.
+  const [deployments, setDeployments] = useState<Deployments>({});
+  useEffect(() => {
+    void loadDeployments().then(setDeployments);
+  }, []);
+  const { instances } = usePayrollInstances(
+    networkId,
+    deployments,
+    account?.coinPublicKey ?? null
+  );
+  const isDeployer = instances.some((instance) => instance.role === "platform");
   const explorer = EXPLORERS[networkId] ?? "";
   const peurContract = stats.deployed.find((d) => d.deployment.contractName === "peur");
   const payrollContracts = stats.deployed.filter(
@@ -352,6 +374,11 @@ export function Public() {
           cannot take it back.
         </p>
       </section>
+
+      {/* Directly under the sentence that explains why it cannot do more.
+          Anywhere else and the card would read as the console that sentence
+          says does not exist. */}
+      {isDeployer ? <DeployerRegistry networkId={networkId} /> : null}
 
       {/* Its own section rather than a row in the contract list: which asset
           salaries settle in is a property of the system, and the caveats that
