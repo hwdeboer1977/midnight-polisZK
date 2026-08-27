@@ -46,7 +46,19 @@ export type Deployments = Record<string, Deployment>;
  */
 export async function loadDeployments(): Promise<Deployments> {
   const [stat, live] = await Promise.all([loadStatic(), loadFromApi()]);
-  return { ...stat, ...live };
+  const merged: Deployments = { ...stat, ...live };
+  // `retired` survives the merge, for the same reason it does on the server.
+  // The backend wins on every other field because it knows about contracts
+  // deployed after this bundle was built — but its own record for a contract IT
+  // onboarded carries no flag, since retirement is written by hand into the
+  // committed file. Letting the API record win wholesale would un-retire
+  // exactly the contracts the static file was edited to retire.
+  for (const [key, entry] of Object.entries(stat)) {
+    if (entry.retired && merged[key] && !merged[key].retired) {
+      merged[key] = { ...merged[key], retired: true };
+    }
+  }
+  return merged;
 }
 
 async function loadStatic(): Promise<Deployments> {

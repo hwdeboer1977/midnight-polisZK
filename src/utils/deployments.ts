@@ -110,9 +110,24 @@ function read(): DeploymentFile {
   const out: DeploymentFile = {};
   for (const record of records) {
     if (!record?.contractAddress || !record.networkId) continue;
-    out[
-      deploymentKey(record.networkId, record.contractName, record.instance)
-    ] = record;
+    const key = deploymentKey(record.networkId, record.contractName, record.instance);
+    // `retired` survives the overwrite, and only `retired`.
+    //
+    // The local file winning is right for every other field — a contract this
+    // process deployed a minute ago must not be shadowed by a stale baseline.
+    // It is wrong for this one, because the two files are written by different
+    // people at different times: retirement is committed to the baseline by
+    // hand, while the local file is appended to by onboarding and never
+    // revisited. A contract onboarded on the server is therefore present in the
+    // local file WITHOUT the flag, and a wholesale overwrite silently
+    // un-retires it — on the deployment where the flag matters most, since the
+    // frontend merges the API over its static copy and the API wins there too.
+    //
+    // Sticky in one direction only. There is no un-retire flow, so a record
+    // that has ever been marked stays marked, and the fix is to edit the
+    // baseline rather than to hope the merge order falls the right way.
+    const retired = out[key]?.retired || record.retired;
+    out[key] = retired ? { ...record, retired: true } : record;
   }
   return out;
 }
