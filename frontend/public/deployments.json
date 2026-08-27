@@ -38,13 +38,15 @@
     "contractAddress": "225836c5205003d1681e7336127675322d352900d415e14835b12dc8cab807e1",
     "contractName": "payroll",
     "networkId": "preview",
-    "instance": "blockstat-solution-3"
+    "instance": "blockstat-solution-3",
+    "retired": true
   },
   "preview/payroll:blockstat-solutions-bv": {
     "contractAddress": "0b46a715adb738cdc749ccc7583ff28019dd788cbb4d210a99a2bfe14b9e6e75",
     "contractName": "payroll",
     "networkId": "preview",
-    "instance": "blockstat-solutions-bv"
+    "instance": "blockstat-solutions-bv",
+    "retired": true
   },
   "preview/taxparams": {
     "contractAddress": "7feb657fb4a0541e3308d8fb14eca4538e6343d16f0a7540b620ed7547492910",
@@ -55,7 +57,8 @@
     "contractAddress": "7fd5cddcef5c8945ce0b563dd6ceff0a71fdaeff9ac59339aec7b3656db89a7f",
     "contractName": "payroll",
     "networkId": "preview",
-    "instance": "blockstat-solutions-v5"
+    "instance": "blockstat-solutions-v5",
+    "retired": true
   },
   "preview/payroll:blockstat-solutions-v6": {
     "contractAddress": "6220bb394fbb3c6c3a08fe85329de1f6bf78d6138781917975f0742c790b7a0a",

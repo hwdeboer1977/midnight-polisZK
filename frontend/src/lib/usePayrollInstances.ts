@@ -37,7 +37,9 @@ export function usePayrollInstances(
 
   useEffect(() => {
     const candidates = forNetwork(deployments, networkId).filter(
-      ([, deployment]) => deployment.contractName === "payroll"
+      // Retired records cannot name anyone as employer that this build could
+      // read, so querying them can only produce the warning they already earned.
+      ([, deployment]) => deployment.contractName === "payroll" && !deployment.retired
     );
 
     if (candidates.length === 0) {

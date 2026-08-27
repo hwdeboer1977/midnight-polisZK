@@ -114,6 +114,8 @@ interface Entry {
   instance?: string;
   /** pEUR only: the token type its coins carry, so the UI can label balances. */
   tokenId?: string;
+  /** Carried through, or a regeneration would silently un-retire them. */
+  retired?: boolean;
 }
 
 async function peurTokenId(
@@ -154,6 +156,7 @@ for (const [key, record] of listDeployments()) {
     contractName: record.contractName,
     networkId: record.networkId,
     ...(record.instance ? { instance: record.instance } : {}),
+    ...(record.retired ? { retired: true } : {}),
   };
 
   if (record.contractName === "peur") {

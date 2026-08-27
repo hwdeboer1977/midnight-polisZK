@@ -94,6 +94,10 @@ export async function findEmployerInstance(
   for (const [key, record] of listDeployments()) {
     if (record.networkId !== network.networkId) continue;
     if (record.contractName !== "payroll") continue;
+    // Known unreadable, so the catch below would take it anyway — skipping here
+    // saves the indexer round trip and keeps it out of the `unreadable` list,
+    // which is for records nobody has classified yet.
+    if (record.retired) continue;
 
     try {
       const state = await provider.queryContractState(record.contractAddress);

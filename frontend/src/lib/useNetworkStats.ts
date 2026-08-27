@@ -120,11 +120,18 @@ export function useNetworkStats(networkId: string) {
       try {
         const deployments = await loadDeployments();
         const here = forNetwork(deployments, networkId);
-        const payrolls = here.filter(([, d]) => d.contractName === "payroll");
+        // Retired records are counted, not queried. The gap has to stay visible —
+        // their figures are missing from every total below, and a quietly
+        // smaller number is worse than a stated one — but the answer is already
+        // known, so paying for the fetch to rediscover it every page load is
+        // pure cost.
+        const allPayrolls = here.filter(([, d]) => d.contractName === "payroll");
+        const payrolls = allPayrolls.filter(([, d]) => !d.retired);
         const peur = here.find(([, d]) => d.contractName === "peur");
         const fund = here.find(([, d]) => d.contractName === "fund");
 
         const next: NetworkStats = { ...EMPTY };
+        next.unreadable = allPayrolls.length - payrolls.length;
 
         // Payroll contracts this build can actually decode, filled in by the
         // loop below. The listed contracts and the counted ones are the same

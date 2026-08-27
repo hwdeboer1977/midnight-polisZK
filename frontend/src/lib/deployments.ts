@@ -6,6 +6,21 @@ export interface Deployment {
   instance?: string;
   /** pEUR only: the token type its coins carry, so balances can be labelled. */
   tokenId?: string;
+  /**
+   * Deployed from a contract version this build can no longer read.
+   *
+   * Not a deletion, and the distinction matters: the contract is still on chain,
+   * still bound to its employer, and `assignEmployer` cannot be repeated — so
+   * the address is the only thing left that can find it, and throwing the record
+   * away would be permanent. This says "do not query it", not "it never existed".
+   *
+   * `decodePayrollLedger` already detects these from their state and drops them,
+   * which is what makes the app correct. What it cannot do is stop the query:
+   * every scan on every page load fetched three dead contracts and logged the
+   * same three warnings, so the console read as broken while the app was fine.
+   * The flag moves that answer from after the request to before it.
+   */
+  retired?: boolean;
 }
 
 export type Deployments = Record<string, Deployment>;

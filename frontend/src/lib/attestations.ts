@@ -66,7 +66,11 @@ export async function findAttestations(
 ): Promise<AttestationScan> {
   const deployments = await loadDeployments();
   const payrolls = forNetwork(deployments, networkId).filter(
-    ([, d]) => d.contractName === "payroll"
+    // `retired` is checked before the fetch; `decodePayrollLedger` below still
+    // checks after it, and both are wanted. The flag saves a round trip for a
+    // contract already known to be unreadable; the decode catches one nobody has
+    // marked yet, which is every one of them until someone does.
+    ([, d]) => d.contractName === "payroll" && !d.retired
   );
   if (payrolls.length === 0) return { rows: [], employerOf: null };
 

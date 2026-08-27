@@ -38,6 +38,18 @@ export interface DeploymentRecord {
   contractName: string;
   /** Which instance of that contract, when one is deployed per tenant. */
   instance?: string;
+  /**
+   * Deployed from a contract version this build can no longer read.
+   *
+   * Kept rather than deleted. The contract is still on chain and still bound to
+   * its employer — `assignEmployer` cannot be repeated — so the address is the
+   * only thing that can still find it, and dropping the record would be
+   * permanent. This marks it unqueryable, not nonexistent.
+   *
+   * Every scan already detects these from their state and skips them; the flag
+   * only moves that answer to before the request instead of after it.
+   */
+  retired?: boolean;
 }
 
 type DeploymentFile = Record<string, DeploymentRecord>;
