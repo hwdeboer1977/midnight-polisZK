@@ -1,4 +1,6 @@
 import express, { type Express, type Request, type Response } from "express";
+import fs from "node:fs";
+import path from "node:path";
 import cors from "cors";
 import { requirePlatformToken } from "./auth.js";
 import { alreadyOnboarded, rateLimit, recordOnboarded, requireSignupCode } from "./guards.js";
@@ -291,8 +293,10 @@ export function createApp(config: ServerConfig): Express {
    *
    * Read what this does NOT do, because the button that calls it is easy to
    * misread. It writes one column in the registry. The contract is untouched:
-   * `assignEmployer` is permanent, there is no revoke circuit, and the employer
-   * keeps every power they had a moment ago. `registry.ts` says it plainly —
+   * `assignEmployer` is permanent, and the employer keeps every power they had
+   * a moment ago. Contracts deployed since `revoke` was added can be halted —
+   * but that is a separate, platform-signed transaction, not this column, and
+   * every instance deployed before it has no such circuit at all. `registry.ts` says it plainly —
    * marking a registration inactive is a statement about the SERVICE, not about
    * the contract.
    *
@@ -363,6 +367,88 @@ export function createApp(config: ServerConfig): Express {
     const amount = readAmount(req, res);
     if (amount === null) return;
     startJob(res, `minting ${amount} minor units`, (log) => mintExtra(amount, log));
+  });
+
+  /**
+   * Forgets what this service has deployed and who has signed up.
+   *
+   * A testing affordance, and the most destructive route here — which is why it
+   * asks for `{"confirm":"reset"}` in the body. The token alone is not enough:
+   * every other privileged route costs money at worst, and money can be minted
+   * again. This one destroys the only record of where contracts live.
+   *
+   * ── What that costs, in full ────────────────────────────────────────────────
+   *
+   * `deployment.json` is the ONLY place an onboarded contract's address is
+   * written. `assignEmployer` can be called exactly once, so a contract already
+   * bound to an employer is theirs permanently — and once its address is gone,
+   * nothing can reach it again. It is not recoverable from this service, from
+   * the employer's browser, or from the chain without the address to look up.
+   * `src/server/README.md` says the same thing at more length and it is not
+   * being softened here: on a service with real employers on it, calling this
+   * strands them.
+   *
+   * ── What it does not touch ─────────────────────────────────────────────────
+   *
+   * `.wallet-state/` stays. It holds a sync position, not a fact — deleting it
+   * costs a full chain replay on next boot and buys nothing, since nothing in
+   * it is what "start fresh" means.
+   *
+   * `frontend/public/deployments.json` also stays, and cannot be reached from
+   * here: it is committed source that ships with the build, and it is the
+   * baseline the frontend merges the live file over. After a reset the list
+   * falls back to it, which is the intended floor rather than an empty page.
+   */
+  platform.post("/reset", (req: Request, res: Response) => {
+    if ((req.body ?? {}).confirm !== "reset") {
+      res.status(400).json({
+        error:
+          'This deletes the record of every contract this service has deployed, ' +
+          'and an onboarded contract cannot be reached again without its address. ' +
+          'Send {"confirm":"reset"} if that is what you mean.',
+      });
+      return;
+    }
+
+    // Removed, not emptied. `readLedger` and the deployment reader both treat an
+    // unreadable file as absent and carry on, so absence is the state they are
+    // already written to handle — where an empty file is one more shape to get
+    // right in two places.
+    const targets = ["deployment.json", ".onboarded-keys.json"];
+    const removed: string[] = [];
+    const failed: { file: string; error: string }[] = [];
+
+    for (const name of targets) {
+      const target = path.join(dataDir(), name);
+      try {
+        if (fs.existsSync(target)) {
+          fs.unlinkSync(target);
+          removed.push(name);
+        }
+      } catch (cause) {
+        failed.push({
+          file: name,
+          error: cause instanceof Error ? cause.message : String(cause),
+        });
+      }
+    }
+
+    // Logged because this leaves no other trace: the evidence it happened is
+    // the files being gone, which looks identical to them never existing.
+    console.warn(
+      `[reset] cleared ${removed.length ? removed.join(", ") : "nothing"} from ${dataDir()}`
+    );
+
+    // 500 on partial failure: reporting success while one file survived would
+    // send someone to retry onboarding that is still going to be refused.
+    res.status(failed.length ? 500 : 200).json({
+      dataDir: dataDir(),
+      removed,
+      ...(failed.length ? { failed } : {}),
+      note:
+        "Deployment records and onboarding history are gone. The frontend now " +
+        "falls back to the committed baseline. Restart is not required.",
+    });
   });
 
   /**

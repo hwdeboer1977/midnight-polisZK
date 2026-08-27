@@ -85,6 +85,10 @@ try {
     "/api/mint",
     "/api/payroll/run",
     "/api/registrations/status",
+    // The most destructive of the set: it deletes the only record of where
+    // onboarded contracts live. An open /reset is worse than an open /mint —
+    // minted supply can be ignored, a lost address cannot be recovered.
+    "/api/reset",
   ]) {
     const status = await post(path, {});
     check(`POST ${path} requires the token`, status === 401, `got ${status}`);
@@ -98,6 +102,24 @@ try {
     body: "{}",
   });
   check("a wrong token is refused", wrong.status === 401, `got ${wrong.status}`);
+
+  // The token opens the door; the confirmation is the second lock. Asserted
+  // because the whole point of that flag is to stop a correctly-authenticated
+  // caller wiping the deployment record by reflex, and a guard nobody tests is
+  // a guard that quietly stops applying. The empty body must NOT delete a file.
+  const unconfirmed = await fetch(`${base}/api/reset`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${config.token}`,
+    },
+    body: "{}",
+  });
+  check(
+    "POST /api/reset refuses a valid token without the confirmation",
+    unconfirmed.status === 400,
+    `got ${unconfirmed.status}`
+  );
 } finally {
   server.close();
 }
