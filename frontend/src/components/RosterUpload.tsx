@@ -700,20 +700,31 @@ export function RosterUpload({
 
   const payAction = (
     <>
-      {/* Gated on the PASSPHRASE, not on the workbook.
+      {/* Unconditional, and it has to be.
 
-          Step four already carried this block and asked the wrong question:
-          `ready ? null : passphraseBlock` assumes an open workbook means a known
-          passphrase. It does not. Reload, press "Load this month's workbook" and
-          the month is filed and `ready` — so step two collapses, taking the only
-          passphrase field with it, while `passphraseReady` stays false because
-          nothing was ever typed this session.
+          Filing clears the passphrase the moment it succeeds, so this step
+          always needs its own. The two conditions tried before both failed, in
+          opposite directions:
 
-          The result was a live step with a permanently disabled button and no
-          control anywhere on the page that could enable it. Asking
-          `passphraseReady` instead is the question both steps meant: show the
-          field when the passphrase is unknown, whatever else is open. */}
-      {passphraseReady ? null : passphraseBlock}
+            `ready ? null : ...`          — assumed an open workbook meant a
+                                            known passphrase. Load the workbook
+                                            against a filed month and the field
+                                            vanished with nothing typed, leaving
+                                            a button that could never enable.
+
+            `passphraseReady ? null : ...` — worse, because it looked correct.
+                                            `passphraseReady` is `length >= 8`,
+                                            so the input UNMOUNTED ON THE EIGHTH
+                                            KEYSTROKE and silently dropped the
+                                            rest. "Kwekebos235!" was stored as
+                                            "Kwekebos": long enough to enable
+                                            the button, wrong enough to fail
+                                            every commitment.
+
+          A control whose visibility depends on its own contents will eat those
+          contents. The field stays mounted for the whole step; `passphraseReady`
+          gates the BUTTON, which is the thing that should react to it. */}
+      {passphraseBlock}
       <button
         className="primary"
         onClick={() => void onFundAndPay()}
@@ -751,15 +762,11 @@ export function RosterUpload({
 
   const withholdAction = (
     <>
-      {/* Its own passphrase entry whenever the passphrase is unknown: the file
-          step collapses once a month is filed, and it was the only place asking
-          for one — leaving the live step with a button it could never enable.
-
-          This said `ready ? null : ...`, which fixed the reload case and missed
-          the one after it: load the workbook again and `ready` goes true while
-          the passphrase is still unknown, so the block vanished and the button
-          stayed disabled. `passphraseReady` is the condition that was meant. */}
-      {passphraseReady ? null : passphraseBlock}
+      {/* Its own passphrase entry, always — same reasoning as step three above.
+          Filing clears it, the file step collapses once a month is filed, and
+          any condition written over the passphrase's own length unmounts the
+          input while it is being typed. `passphraseReady` gates the button. */}
+      {passphraseBlock}
       <button
         className="primary"
         onClick={() => void onWithhold()}
@@ -867,9 +874,11 @@ export function RosterUpload({
               periods={openPeriod ? [openPeriod] : []}
               names={roster?.rows.map((row) => row.fullName)}
               // Only once it is a passphrase and not a half-typed one, and only
-              // while a workbook is open — the same condition step four uses to
-              // drop its own passphrase block. Reload and this is empty, so the
-              // field returns rather than the step becoming unusable.
+              // while a workbook is open. Safe to switch on `passphraseReady`
+              // HERE, unlike in steps three and four: this hides an input whose
+              // own state is separate, so typing into it can never unmount it.
+              // Reload and this is empty, so the field returns rather than the
+              // step becoming unusable.
               sessionPassphrase={ready && passphraseReady ? passphrase : undefined}
               bare
             />

@@ -4,6 +4,7 @@ import { fetchContractState, INDEXERS, INDEXER_WS } from "./chain";
 import {
   deriveEmployerKey,
   deriveNonce,
+  openSealed,
   sealedCoinNonce,
   withholdingCoinNonce,
   type PayrollLine,
@@ -106,15 +107,65 @@ async function checkOpensCommitments(options: {
   // that the circuit would have accepted.
   if (!paramsHash || typeof commitmentFor !== "function") return;
 
-  const mismatched: number[] = [];
   // Only what this run will actually submit. A slot already funded was opened
   // by a previous run and is skipped by `fundPeriod` anyway, so failing on it
   // would block a legitimate resume after a partial failure.
   const pending = slots.filter((slot) => !slot.funded || !slot.paid);
+  const sealed = ledger.sealedFor?.member(p) ? ledger.sealedFor.lookup(p) : null;
+  const money = (v: bigint) => `€${(Number(v) / 1e6).toFixed(2)}`;
 
   for (const slot of pending) {
     const key = BigInt(slot.index);
     if (!commitments.member(key)) continue;
+
+    // The sealed opening first, because it answers the question the commitment
+    // cannot: it is encrypted under a key derived from the same passphrase, so
+    // whether it DECRYPTS separates a wrong passphrase from correct figures,
+    // and once open it hands back the exact numbers that were filed.
+    //
+    // Without this the check could only report "the commitment does not open",
+    // which is true of both causes and blames whichever one the message picked.
+    let filed: (PayrollLine & { nonce: Uint8Array }) | null = null;
+    if (sealed?.member(key)) {
+      try {
+        filed = await openSealed(employerKey, sealed.lookup(key));
+      } catch {
+        throw new Error(
+          "That passphrase cannot open the sealed openings this period was " +
+            "filed with, so it is not the one used to file it. It derives every " +
+            "nonce, and a different one produces figures the contract refuses. " +
+            "Nothing was sent."
+        );
+      }
+    }
+
+    // The passphrase is right. Anything wrong now is in the workbook, and the
+    // filed figures are in hand — so name the field rather than the symptom.
+    if (filed) {
+      const differences = (
+        [
+          ["gross", filed.grossMinor, slot.line.grossMinor],
+          ["tax", filed.taxMinor, slot.line.taxMinor],
+          ["contribution", filed.socialMinor, slot.line.socialMinor],
+          ["net", filed.netMinor, slot.line.netMinor],
+        ] as const
+      )
+        .filter(([, was, now]) => was !== now)
+        .map(([label, was, now]) => `${label} ${money(was)} → ${money(now)}`);
+      if (filed.weeks !== slot.line.weeks) {
+        differences.push(`weeks ${filed.weeks} → ${slot.line.weeks}`);
+      }
+      if (differences.length > 0) {
+        throw new Error(
+          `Employee ${slot.index + 1} was filed with different figures than the ` +
+            `workbook now holds (${differences.join(", ")}). The chain stores a ` +
+            "commitment to what was filed, so only that workbook can fund it. " +
+            "Load the file this period was filed from, or re-file the period. " +
+            "Nothing was sent."
+        );
+      }
+    }
+
     const nonce = await deriveNonce(employerKey, period, slot.index);
     const computed = commitmentFor(
       slot.line.grossMinor,
@@ -127,22 +178,18 @@ async function checkOpensCommitments(options: {
       paramsHash,
       nonce
     );
-    if (toHex(computed) !== toHex(commitments.lookup(key))) mismatched.push(slot.index);
+    if (toHex(computed) !== toHex(commitments.lookup(key))) {
+      // Figures match the seal and the passphrase opened it, yet the hash still
+      // differs — so the disagreement is in something neither of those covers:
+      // the employer key or the params hash the commitment was built over.
+      throw new Error(
+        `Employee ${slot.index + 1}'s commitment does not match, although the ` +
+          "passphrase and the figures are both correct. That points at the " +
+          "contract this month was filed against rather than at anything in " +
+          "the workbook. Nothing was sent."
+      );
+    }
   }
-
-  if (mismatched.length === 0) return;
-
-  throw new Error(
-    mismatched.length === pending.length
-      ? "That passphrase does not open the commitments filed for this period. " +
-        "It has to be the one this month was filed with — it derives every " +
-        "nonce, and a different one produces figures the contract will refuse. " +
-        "Nothing was sent."
-      : `The workbook does not match what was filed for employee ` +
-        `${mismatched.map((i) => i + 1).join(", ")}. Their figures were changed ` +
-        "after this month was filed, so the commitment no longer opens. Load " +
-        "the workbook this period was filed from. Nothing was sent."
-  );
 }
 
 export function slotStates(
