@@ -64,15 +64,13 @@
     "contractAddress": "6220bb394fbb3c6c3a08fe85329de1f6bf78d6138781917975f0742c790b7a0a",
     "contractName": "payroll",
     "networkId": "preview",
-    "instance": "blockstat-solutions-v6",
-    "retired": true
+    "instance": "blockstat-solutions-v6"
   },
   "preview/payroll:blockstat-solutions-v7": {
     "contractAddress": "c0e605456da7fa1a6ebdd402541febd8210e2a5e2b74799120325ce8bce74555",
     "contractName": "payroll",
     "networkId": "preview",
-    "instance": "blockstat-solutions-v7",
-    "retired": true
+    "instance": "blockstat-solutions-v7"
   },
   "preview/fund": {
     "contractAddress": "820815a16c4a94ca49d8d2b3f109d094f92b57dd0e487b198b48d1e5744ad1c1",
@@ -83,8 +81,7 @@
     "contractAddress": "bf44da77127e62fac8cc5be36225f56f3c21f21c255c91ad649a34b141f60084",
     "contractName": "payroll",
     "networkId": "preview",
-    "instance": "wasm-proving-test",
-    "retired": true
+    "instance": "wasm-proving-test"
   },
   "preview/payroll:test-company-1": {
     "contractAddress": "7b2ab465850f12612bf32865de69018d9986fa4ace786c857e874c181c99b556",
