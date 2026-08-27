@@ -87,11 +87,19 @@ export async function loadDeployments(): Promise<Deployments> {
  * right one while a contract is changing under you. Unset, nothing is filtered
  * and behaviour is exactly as before.
  */
-function pinned(all: Deployments): Deployments {
-  // Cast rather than typed in an ambient declaration: this is the only reader,
-  // and Vite types unknown keys loosely enough that .split() lands on any.
+/**
+ * The pinned addresses, or null when nothing is pinned.
+ *
+ * Exported because the deployment list is not the only place a payroll contract
+ * is offered: the deployer's registrations roll comes from the registry service
+ * and knows nothing about this file, so it has to apply the same rule from the
+ * same source or the two views disagree about which contracts exist.
+ */
+export function pinnedContracts(): Set<string> | null {
+  // Cast rather than typed in an ambient declaration: Vite types unknown keys
+  // loosely enough that .split() lands on any.
   const raw = String(import.meta.env.VITE_PAYROLL_CONTRACTS ?? "").trim();
-  if (!raw) return all;
+  if (!raw) return null;
 
   const allowed = new Set(
     raw
@@ -99,7 +107,18 @@ function pinned(all: Deployments): Deployments {
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean)
   );
-  if (allowed.size === 0) return all;
+  return allowed.size > 0 ? allowed : null;
+}
+
+/** Whether a payroll contract belongs to the build. True when nothing is pinned. */
+export function isPinned(contractAddress: string): boolean {
+  const allowed = pinnedContracts();
+  return !allowed || allowed.has(contractAddress.trim().toLowerCase());
+}
+
+function pinned(all: Deployments): Deployments {
+  const allowed = pinnedContracts();
+  if (!allowed) return all;
 
   const kept: Deployments = {};
   for (const [key, entry] of Object.entries(all)) {

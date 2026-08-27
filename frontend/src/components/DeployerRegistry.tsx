@@ -1,6 +1,7 @@
 import { CopyRow } from "./CopyRow";
 import { ServiceUnavailable } from "./ServiceUnavailable";
 import { useRegistrations } from "../lib/useRegistrations";
+import { isPinned } from "../lib/deployments";
 
 /**
  * The companies this deployer has onboarded, and the one thing it can do to
@@ -30,6 +31,20 @@ export function DeployerRegistry({ networkId }: { networkId: string }) {
   const { registrations, loading, error, pending, reachable, canWrite, setStatus } =
     useRegistrations(networkId);
 
+  /**
+   * Hidden rather than shown-and-broken: a registration whose contract was
+   * compiled from other source has verifier keys this build cannot transact
+   * with, so offering it leads to a wall of key-mismatch text at submit. The
+   * registry service keeps every company it ever onboarded and has no idea which
+   * contract version each belongs to, so the filter has to happen here.
+   *
+   * The rows still exist in the registry and this changes nothing about them —
+   * `/api/reset` does not clear registrations either, since they live in the
+   * database rather than in the two files it removes.
+   */
+  const shown = (registrations ?? []).filter((row) => isPinned(row.contractAddress));
+  const hidden = (registrations?.length ?? 0) - shown.length;
+
   return (
     <section className="card">
       <h2>Registered employers</h2>
@@ -46,10 +61,10 @@ export function DeployerRegistry({ networkId }: { networkId: string }) {
         </p>
       ) : loading && !registrations ? (
         <p className="muted">Reading the registry…</p>
-      ) : registrations && registrations.length === 0 ? (
+      ) : registrations && shown.length === 0 ? (
         <p className="muted">No companies registered on {networkId} yet.</p>
       ) : (
-        registrations?.map((row) => {
+        shown.map((row) => {
           const inactive = row.effectiveStatus === "inactive";
           // `status` is what was written; `effectiveStatus` also counts an
           // elapsed term. Distinguished here because "you deactivated them" and
@@ -87,6 +102,15 @@ export function DeployerRegistry({ networkId }: { networkId: string }) {
           );
         })
       )}
+
+      {hidden > 0 ? (
+        <p className="note">
+          {hidden} {hidden === 1 ? "company is" : "companies are"} not shown: their
+          contracts were compiled from different contract source, so this build
+          cannot transact with them. They are still registered — nothing here
+          removed them.
+        </p>
+      ) : null}
 
       {error ? <p className="status error">{error}</p> : null}
 
