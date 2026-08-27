@@ -332,9 +332,24 @@ export function leavesForPeriod(
 }
 
 export function contractLeaves(zswapStateText: string): number[] {
-  return [...zswapStateText.matchAll(/(\d+): \([0-9a-f]{64}, Some\(ContractAddress/g)]
-    .map((m) => Number(m[1]))
-    .sort((a, b) => a - b);
+  return contractLeafEntries(zswapStateText).map((entry) => entry.index);
+}
+
+/**
+ * The same leaves, with the commitment each one holds.
+ *
+ * The commitment is what makes a coin checkable before it is proved: rebuild it
+ * from the fields about to be sent and it either matches the leaf or it does
+ * not. Without this a wrong nonce, colour or value surfaces as
+ * `Public transcript input mismatch` from the proof server — a message that
+ * names none of them, and costs minutes of proving to reach.
+ */
+export function contractLeafEntries(
+  zswapStateText: string
+): { index: number; commitment: string }[] {
+  return [...zswapStateText.matchAll(/(\d+): \(([0-9a-f]{64}), Some\(ContractAddress/g)]
+    .map((m) => ({ index: Number(m[1]), commitment: m[2]!.toLowerCase() }))
+    .sort((a, b) => a.index - b.index);
 }
 
 /**
@@ -502,6 +517,21 @@ export async function fetchContractLeaves(
   if (!result) return [];
   const [zswap] = result;
   return contractLeaves(String((zswap as any).filter(contractAddress).toString(true)));
+}
+
+/** As `fetchContractLeaves`, but keeping each leaf's commitment. */
+export async function fetchContractLeafEntries(
+  networkId: string,
+  contractAddress: string,
+  provider?: { queryZSwapAndContractState: (address: string) => Promise<unknown> }
+): Promise<{ index: number; commitment: string }[]> {
+  const source = provider ?? providerFor(networkId);
+  const result = (await source.queryZSwapAndContractState(contractAddress)) as
+    | [unknown, unknown]
+    | null;
+  if (!result) return [];
+  const [zswap] = result;
+  return contractLeafEntries(String((zswap as any).filter(contractAddress).toString(true)));
 }
 
 export interface RunResult {
@@ -861,22 +891,70 @@ export async function remitWithholding(options: {
   // Read through the provider that will prove, so the leaf position and the tree
   // the proof is built over are the same tree — the mismatch `a07c8bf` chased.
   onProgress("Locating the coin the contract holds…");
-  const leaves = await fetchContractLeaves(
+  const entries = await fetchContractLeafEntries(
     networkId,
     contractAddress,
     (contractProviders as any).publicDataProvider
   );
-  const leaf = leaves[ordinal];
-  if (leaf === undefined) {
+  const entry = entries[ordinal];
+  if (entry === undefined) {
     throw new Error(
       `The contract records coin #${ordinal} for the ${what} withheld, but only ` +
-        `${leaves.length} coins are visible — the indexer may be behind.`
+        `${entries.length} coins are visible — the indexer may be behind.`
     );
   }
+  const leaf = entry.index;
 
   const round = ledger.fileRoundFor?.member(key) ? Number(ledger.fileRoundFor.lookup(key)) : 0;
   const treasury = what === "tax" ? ledger.taxTreasury : ledger.socialTreasury;
   const recipient = bytesToHex(treasury.bytes).toLowerCase();
+
+  // ── Check the coin before proving it ──────────────────────────────────────
+  //
+  // Rebuild the commitment from the fields about to be sent and compare it with
+  // what the contract's leaf actually holds. A wrong nonce, colour or value is
+  // otherwise reported by the proof server as
+  // `Public transcript input mismatch for input N` — which names no field, took
+  // minutes of proving to reach, and cost an afternoon of guessing at exactly
+  // this call.
+  //
+  // Searched across every leaf rather than only the expected one, because
+  // "matches a different coin" and "matches nothing" are different bugs: the
+  // first is the ordinal lookup, the second is the coin's own fields.
+  const coin = {
+    nonce: await withholdingCoinNonce(employerKey, period, round, what),
+    color: toHexBytes(tokenId),
+    value: forPeriod,
+    mt_index: BigInt(leaf),
+  };
+  try {
+    const { runtimeCoinCommitment } = await import("@midnight-ntwrk/compact-runtime");
+    const expected = bytesToHex(
+      (runtimeCoinCommitment as any)(
+        { nonce: coin.nonce, color: coin.color, value: coin.value },
+        { left: { bytes: toHexBytes(contractAddress) }, is_left: false }
+      )
+    ).toLowerCase();
+
+    if (expected !== entry.commitment) {
+      const elsewhere = entries.find((e) => e.commitment === expected);
+      throw new Error(
+        elsewhere
+          ? `The ${what} coin this builds is the contract's coin at leaf ${elsewhere.index}, ` +
+            `but the contract records coin #${ordinal} (leaf ${leaf}) for that period. ` +
+            "The ordinal lookup is wrong, not the coin."
+          : `The ${what} coin this builds does not match anything the contract holds. ` +
+            "The passphrase derives its nonce, so the most likely cause is a different " +
+            "passphrase than the one that moved the withholding in."
+      );
+    }
+  } catch (cause) {
+    // A failure to CHECK must not block the send: this is a guard against a
+    // confusing error, not a consensus rule, and the circuit asserts the same
+    // facts anyway. Only a mismatch it actually proved is rethrown.
+    if (cause instanceof Error && cause.message.startsWith("The ")) throw cause;
+    console.warn("[remit] could not pre-check the coin:", cause);
+  }
 
   onProgress(`Sending the withheld ${what} to its treasury…`);
   // `submitCallTx` rather than the `callTx` shorthand, which cannot carry the
@@ -885,15 +963,7 @@ export async function remitWithholding(options: {
     compiledContract,
     contractAddress,
     circuitId: what === "tax" ? "remitTax" : "remitSocial",
-    args: [
-      key,
-      {
-        nonce: await withholdingCoinNonce(employerKey, period, round, what),
-        color: toHexBytes(tokenId),
-        value: forPeriod,
-        mt_index: BigInt(leaf),
-      },
-    ],
+    args: [key, coin],
     additionalCoinEncPublicKeyMappings: new Map([[recipient, encryptionKey]]),
   } as any);
 
