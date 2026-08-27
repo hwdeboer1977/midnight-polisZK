@@ -6,6 +6,7 @@ import {
   type TerminationResult,
 } from "../lib/endEmployment";
 import { collectedFor } from "../lib/collected";
+import { filenameSlug } from "../lib/payslip";
 import { walletCanProve } from "../lib/submitPayroll";
 import { useWallet } from "../wallet/WalletContext";
 
@@ -132,9 +133,28 @@ export function EndEmployment({
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${result.opening.instance}-${result.opening.finalPeriod}-slot-${
-      result.opening.slot + 1
-    }.json`;
+    // `termination-opening-…`, and the employee's name where there is one.
+    //
+    // This used to be `<instance>-<period>-slot-N.json`, which said neither what
+    // the file was nor who it was about. `relay.ts` had already met the first
+    // half of that problem from the other side — it prefixes the fund's claim
+    // bundles precisely because the two names were one character apart — but the
+    // opening itself was never given a matching prefix, so the pair stayed
+    // confusable in the one folder where both land.
+    //
+    // The name needs the roster, so it is only there when a workbook is loaded.
+    // Falling back to the slot rather than omitting the segment keeps two
+    // openings from the same period distinguishable either way.
+    const fallback = `slot-${result.opening.slot + 1}`;
+    const who =
+      filenameSlug(
+        roster?.rows.find(
+          (row) => row.coinPublicKey.toLowerCase() === payee.toLowerCase()
+        )?.fullName ?? ""
+      ) || fallback;
+    anchor.download =
+      `termination-opening-${result.opening.instance}-` +
+      `${result.opening.finalPeriod}-${who}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   }

@@ -843,9 +843,10 @@ employer key and the tax `paramsHash` come from the payroll ledger.
 ### Her claim key is random, and she keeps the file
 
 On `/employee` → **Your claim key** → *Create my claim key*: 32 bytes from
-`crypto.getRandomValues`, downloaded as `incomelayer-benefit-key-xxxxxxxx.json`
-(named for what it is FOR, not `identity` or `account` — there is no account
-here, and the wallet is the identity). Only the
+`crypto.getRandomValues`, downloaded as `claim-key-xxxxxxxx.json` — the same
+name the CLI writes, so neither half of the system renames the other's file
+(not `identity` or `account` — there is no account here, and the wallet is the
+identity). Only the
 **hash** is displayed and only the hash is remembered; the key itself is the
 nullifier secret and a page that shows it invites it into a screenshot.
 
@@ -876,7 +877,7 @@ it down.
 **The CLI and the browser no longer diverge.** `npm run payee <seed> --
 --claim-key` still derives `sha256("polisZK/claim/v1", shieldedSeed)`, because a
 CLI holds a seed and that is high-entropy already — but it now also writes the
-same `incomelayer-benefit-key-….json`. The two roots are not reconciled by making the
+same `claim-key-….json`. The two roots are not reconciled by making the
 derivations agree, which they never could: a browser cannot reach a seed. They
 are reconciled by the file. A claim key is 32 bytes, and where they came from
 stops mattering once both sides load the same file.

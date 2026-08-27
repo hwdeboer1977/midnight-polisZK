@@ -218,7 +218,12 @@ async function main(): Promise<void> {
   // could never check.
   const dir = path.join(process.cwd(), "terminations");
   fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `${instance}-${period}-slot-${slot + 1}.json`);
+  // Prefixed to match the browser, which writes the same artefact. No name
+  // here: the CLI works from coin public keys and never sees the roster.
+  const file = path.join(
+    dir,
+    `termination-opening-${instance}-${period}-slot-${slot + 1}.json`
+  );
   fs.writeFileSync(
     file,
     JSON.stringify(

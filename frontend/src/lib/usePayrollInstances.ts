@@ -11,6 +11,8 @@ export interface PayrollInstance {
   blockHeight: number | null;
   /** How the connected key relates to this instance. */
   role: "employer" | "platform" | "none";
+  /** Revoked by the platform. Every circuit an employer can call now refuses. */
+  revoked: boolean;
 }
 
 
@@ -96,12 +98,31 @@ export function usePayrollInstances(
               state,
               blockHeight: chainState?.blockHeight ?? null,
               role,
+              revoked: state?.revoked ?? false,
             };
           })
         );
 
         // Undecodable instances drop out rather than appearing half-built.
-        if (!cancelled) setInstances(loaded.filter((i): i is PayrollInstance => i !== null));
+        //
+        // So do revoked ones, but only for the employer: every circuit they
+        // could call now refuses, so the instance is a dead entry that can be
+        // read and not used, and the six pages that filter on
+        // `role === "employer"` would each have to learn about it separately.
+        // Dropping it once here is what keeps them consistent.
+        //
+        // The PLATFORM still sees it, and must: it is the only party that can
+        // observe what it revoked. An employer who wants to know why their
+        // contract vanished has to be told out of band, which is a real cost of
+        // revocation being one-way and not requiring their consent.
+        if (!cancelled) {
+          setInstances(
+            loaded.filter(
+              (i): i is PayrollInstance =>
+                i !== null && !(i.revoked && i.role !== "platform")
+            )
+          );
+        }
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
       } finally {

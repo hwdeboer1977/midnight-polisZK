@@ -286,10 +286,11 @@ async function main(): Promise<void> {
   bundles.forEach((bundle, index) => {
     const claimPath = tree.pathFor(index);
     // Named `claim-bundle-…` rather than `<instance>-slot-N`, because the
-    // employer's termination opening for the same person is
+    // employer's termination opening for the same person was
     // `<instance>-<period>-slot-N.json` and the two were one character apart in
     // practice. They travel in opposite directions and neither is usable in the
-    // other's place.
+    // other's place. The opening now carries a `termination-opening-` prefix of
+    // its own, so both halves say what they are; this prefix stays regardless.
     const file = path.join(
       outDir,
       `claim-bundle-${bundle.instance}-${period}-slot-${bundle.slot + 1}.json`

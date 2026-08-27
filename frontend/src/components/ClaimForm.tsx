@@ -304,7 +304,7 @@ export function ClaimForm() {
           />
           <p className="note">
             The file you downloaded when you first connected, named something
-            like <code>incomelayer-benefit-key-1a2b3c4d.json</code>. It is not
+            like <code>claim-key-1a2b3c4d.json</code>. It is not
             uploaded anywhere — the proof is built here.
           </p>
 

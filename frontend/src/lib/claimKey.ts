@@ -133,12 +133,24 @@ export async function buildClaimKeyFile(
 }
 
 /**
- * What the file is called, and why it stopped being called `claim-key-….json`.
+ * What the file is called.
  *
- * A name is the whole of the explanation for most people. "Claim key" required
- * knowing what a claim key IS before the file meant anything, which put a
- * cryptographic concept in front of an instruction that does not need one:
- * keep this, you will need it if you ever claim, nobody can replace it.
+ * `claim-key-<wallet>.json`, matching `payee-cli.ts` — and that match is the
+ * reason, so the history is worth keeping.
+ *
+ * It was `incomelayer-benefit-key-…` for a while, on the argument that a name
+ * is the whole of the explanation for most people: "claim key" required knowing
+ * what a claim key IS before the file meant anything, when the instruction is
+ * only keep this, you will need it if you ever claim, nobody can replace it.
+ * That argument is still true of the employee reading it cold, and it is why
+ * the surrounding copy goes on calling this a benefit key file.
+ *
+ * What outweighed it: the CLI has always written `claim-key-…`, so the two
+ * halves of one system handed the same 32 bytes to people under two names, and
+ * an employer holding both a payslip and a key file had no word in common
+ * between them. A file that two tools disagree about the name of is worse than
+ * a file named in jargon — the jargon can be explained in the sentence next to
+ * it, the disagreement cannot be explained at all.
  *
  * Not `identity` or `account`, both of which were considered and are wrong in
  * ways worth recording. There IS no account here — `steps_employee.md` opens on
@@ -150,11 +162,13 @@ export async function buildClaimKeyFile(
  *
  * Still tagged with the wallet. Someone holding files for two people needs to
  * tell them apart before opening either — and without it a second download
- * lands as `incomelayer-benefit-key (1).json`, which is indistinguishable from
- * the first in the place it matters.
+ * lands as `claim-key (1).json`, which is indistinguishable from the first in
+ * the place it matters. Not tagged with a NAME, unlike the payslip and the
+ * termination opening: this is written on the employee's own page, from their
+ * wallet key alone, and there is no roster in scope to read a name from.
  */
 export function claimKeyFilename(coinPublicKey: string): string {
-  return `incomelayer-benefit-key-${keyToHex(coinPublicKey).slice(0, 8)}.json`;
+  return `claim-key-${keyToHex(coinPublicKey).slice(0, 8)}.json`;
 }
 
 /**

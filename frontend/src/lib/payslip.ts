@@ -140,12 +140,28 @@ export function decodePayslip(input: string): Payslip {
   return slip;
 }
 
-export function payslipFilename(slip: Payslip): string {
-  const who = (slip.employee ?? `slot-${slip.slot + 1}`)
+/**
+ * A person's name, reduced to something safe in a filename.
+ *
+ * Shared rather than copied: the termination opening names its file the same
+ * way, and two slugs that drift would put the same employee under two different
+ * spellings in the same Downloads folder — which is precisely the confusion
+ * these names exist to prevent.
+ *
+ * Returns "" for a name that is entirely punctuation, so callers keep their own
+ * fallback rather than producing a file called `-.json`.
+ */
+export function filenameSlug(text: string): string {
+  return text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  return `payslip-${slip.period}-${who || `slot-${slip.slot + 1}`}.json`;
+}
+
+export function payslipFilename(slip: Payslip): string {
+  const fallback = `slot-${slip.slot + 1}`;
+  const who = filenameSlug(slip.employee ?? fallback);
+  return `payslip-${slip.period}-${who || fallback}.json`;
 }
 
 /** The pure circuit this module needs, and nothing else. */

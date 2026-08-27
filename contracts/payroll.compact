@@ -120,6 +120,34 @@ export ledger socialTreasury: ZswapCoinPublicKey;
 export ledger employer: ZswapCoinPublicKey;
 export ledger employerAssigned: Boolean;
 
+// Whether the platform has revoked this instance.
+//
+// ⚠️ This flag reverses two properties this contract previously guaranteed, and
+// both reversals were asked for deliberately. They are recorded here because
+// nothing else on chain records them.
+//
+// FIRST: `assignEmployer` used to end the platform's authority for good — its
+// comment still says the platform "cannot revoke", and before this flag that
+// was true. It is not true any more. The platform can now halt any instance it
+// deployed, at any time, without the employer's consent and without a way for
+// the employer to undo it. An employer's control of their own payroll is now
+// conditional on the operator's forbearance.
+//
+// SECOND: revoking blocks `payPeriod` and `payEmployee` along with everything
+// else the employer can call. A period that is FUNDED BUT NOT YET PAID has
+// already had its salary coins moved into this contract, and those coins can
+// only leave through a circuit the employer calls. Revoking such a period
+// strands that money permanently: it is nobody's, it cannot be recovered by the
+// employer, the platform, or the employee, and no circuit here can release it.
+// That is a wage freeze with no appeal, and the amount at risk is exactly one
+// period's net pay per unsettled slot.
+//
+// What is NOT blocked: `remitTax` and `remitSocial` assert no caller at all, so
+// withheld tax and contributions can still reach the fixed treasuries after a
+// revocation. That is the one escape hatch, and it is an accident of those two
+// circuits being unauthenticated rather than a mitigation anyone designed.
+export ledger revoked: Boolean;
+
 // Payroll is recorded per period, not as a single current state.
 //
 // A commitment is only worth having if it can still be opened when someone
@@ -306,6 +334,7 @@ export ledger socialCoinFor: Map<Uint<32>, Uint<32>>;
 constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
   platform = disclose(ownPublicKey());
   employerAssigned = false;
+  revoked = false;
   latestPeriod = 0;
   payTokenSet = false;
   coinsReceived = 0;
@@ -345,11 +374,28 @@ export circuit assignEmployer(newEmployer: ZswapCoinPublicKey): [] {
   employerAssigned = true;
 }
 
+// Halts this instance. Platform only, and one-way.
+//
+// Deliberately reverses `assignEmployer`'s promise that the platform keeps no
+// privileged circuit — see `revoked` for what that costs and who pays it. There
+// is no un-revoke: a reversible halt would need a second platform-only circuit,
+// which widens the same hole rather than closing it, and an instance revoked by
+// mistake can be replaced by deploying another.
+//
+// The employer is not consulted and cannot refuse.
+export circuit revoke(): [] {
+  assert(ownPublicKey() == platform, "only the platform may revoke");
+  assert(!revoked, "already revoked");
+
+  revoked = true;
+}
+
 // Key rotation, controlled by the employer rather than the platform. Without
 // this, a lost employer key would strand the instance; with it, the platform
 // still never regains write access.
 export circuit transferEmployer(newEmployer: ZswapCoinPublicKey): [] {
   assert(employerAssigned, "no employer assigned yet");
+  assert(!revoked, "this instance has been revoked by the platform");
   assert(ownPublicKey() == employer, "only the employer may transfer ownership");
 
   employer = disclose(newEmployer);
@@ -373,6 +419,7 @@ export circuit setPayroll(
   params: TaxParams
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
+  assert(!revoked, "this instance has been revoked by the platform");
   assert(ownPublicKey() == employer, "only the employer may set payroll");
 
   const p = disclose(period);
@@ -567,6 +614,7 @@ export circuit fundEmployee(
   coin: ShieldedCoinInfo
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
+  assert(!revoked, "this instance has been revoked by the platform");
   assert(ownPublicKey() == employer, "only the employer may fund payroll");
 
   const p = disclose(period);
@@ -633,6 +681,7 @@ export circuit payEmployee(
   payee: ZswapCoinPublicKey
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
+  assert(!revoked, "this instance has been revoked by the platform");
   assert(ownPublicKey() == employer, "only the employer may pay");
 
   const p = disclose(period);
@@ -702,6 +751,7 @@ export circuit endEmployment(
   attestation: Bytes<32>
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
+  assert(!revoked, "this instance has been revoked by the platform");
   assert(ownPublicKey() == employer, "only the employer may end employment");
 
   const p = disclose(period);
@@ -738,6 +788,7 @@ export circuit fundWithholding(
   socialCoin: ShieldedCoinInfo
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
+  assert(!revoked, "this instance has been revoked by the platform");
   assert(ownPublicKey() == employer, "only the employer may fund withholding");
 
   const p = disclose(period);
@@ -855,6 +906,7 @@ export circuit payPeriod(
   payees: Vector<2, ZswapCoinPublicKey>
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
+  assert(!revoked, "this instance has been revoked by the platform");
   assert(ownPublicKey() == employer, "only the employer may pay");
 
   const p = disclose(period);

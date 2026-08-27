@@ -63,10 +63,12 @@ key is before they can act. The same panel, with the full explanation, lives on
 Employee → Unemployment benefit.
 
 The key is 32 random bytes, generated in their browser and downloaded as
-`incomelayer-benefit-key-xxxxxxxx.json`. The name is deliberately not
-`identity` or `account`: there is no account here, "account" implies someone can
-reset it, and the WALLET is the identity — a file named for that which cannot
-restore a wallet invites the wrong conclusion at the worst moment. It is never sent anywhere and never stored on the
+`claim-key-xxxxxxxx.json`, the same name `npm run payee -- --claim-key` writes,
+so the CLI and the browser hand out one file under one name. The name is
+deliberately not `identity` or `account`: there is no account here, "account"
+implies someone can reset it, and the WALLET is the identity — a file named for
+that which cannot restore a wallet invites the wrong conclusion at the worst
+moment. It is never sent anywhere and never stored on the
 page — only the hash is kept, in `localStorage`, as a reminder. Only the hash is
 ever displayed: the key itself is the nullifier secret, and a page that showed
 it would invite it into a screenshot.
