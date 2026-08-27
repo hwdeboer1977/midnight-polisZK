@@ -13,6 +13,7 @@ import { bytesToHex as hex } from "../lib/keys";
 import { formatPeur, formatPeurTile, group } from "../lib/format";
 import { DUTCH_V1, computeLine } from "../generated/tax-params";
 import { usePayrollInstances } from "../lib/usePayrollInstances";
+import { RelayPanel } from "../components/RelayPanel";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
@@ -401,6 +402,11 @@ export function EmployerOverview() {
               roster={roster}
             />
           </details>
+
+          {/* Immediately after ending employment, because that is the moment
+              the opening exists and the only moment the employer has it: the
+              file is not stored anywhere, and without it nobody can claim. */}
+          <RelayPanel period={latest ? Number(latest) : (periods[0] ? Number(periods[0]) : null)} />
         </>
       ) : null}
 

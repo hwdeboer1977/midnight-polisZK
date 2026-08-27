@@ -73,6 +73,14 @@ try {
   const onboard = await post("/api/onboard", {});
   check("POST /api/onboard is not token-gated", onboard !== 401, `got ${onboard}`);
 
+  // The employer drives the relay from their own browser and holds no platform
+  // token, so this must stay open — but it spends the platform's fees, so it is
+  // asserted deliberately rather than left to drift either way. A 400 is the
+  // pass: the guard let it through and the handler rejected an empty body.
+  const relay = await post("/api/relay", {});
+  check("POST /api/relay is not token-gated", relay !== 401, `got ${relay}`);
+  check("POST /api/relay still validates its body", relay === 400, `got ${relay}`);
+
   // Closed, and these are the ones that matter. `/faucet` and `/mint` are the
   // same mint as `/claim` with the ceiling removed and no once-only record;
   // `/payroll/run` moves an employer's money.

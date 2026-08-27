@@ -7,6 +7,7 @@ import { alreadyOnboarded, rateLimit, recordOnboarded, requireSignupCode } from 
 import { getJob, startJob } from "./jobs.js";
 import type { ServerConfig } from "./config.js";
 import { fundAndPay } from "../utils/payroll-run.js";
+import { runRelay, type TerminationOpening } from "../utils/relay-run.js";
 import { onboardEmployer } from "../utils/onboarding.js";
 import {
   EMPLOYER_ALLOWANCE,
@@ -196,6 +197,72 @@ export function createApp(config: ServerConfig): Express {
    * this route openable, and why `/api/claim` below is openable for a different
    * reason, when the three behind the token are not.
    */
+  /**
+   * Builds a period's claim bundles, and optionally publishes the root.
+   *
+   * Driven by the EMPLOYER, from the browser, which is why it is not behind the
+   * platform token. Read what that opens before judging it: the caller supplies
+   * termination openings, and `runRelay` refuses any whose commitment does not
+   * reproduce the attestation already on chain — so an opening cannot be
+   * invented, only supplied. Every other input is public payroll state.
+   *
+   * What it does cost, and the reason for the rate limit: publishing spends the
+   * platform's fees, and `publishRoot` is permissionless anyway, so the worst a
+   * stranger achieves by calling this is making the operator pay to publish a
+   * root that anybody could already have published themselves. Spam and cost,
+   * not theft — the same shape as `/api/onboard`, and openable for the same
+   * reason.
+   *
+   * Bundles are returned rather than written: the browser is the caller, it has
+   * no filesystem here, and the employer hands each file to its claimant. The
+   * CLI writes the identical objects under `claims/<period>/`.
+   */
+  app.post(
+    "/api/relay",
+    rateLimit({ ...config.signupLimit, bucket: "relay", noun: "relay runs" }),
+    (req: Request, res: Response) => {
+      const body = req.body ?? {};
+      const period = Number(body.period);
+      if (!Number.isInteger(period) || period < 200001 || period > 299912) {
+        res.status(400).json({ error: "period must be YYYYMM, e.g. 202609" });
+        return;
+      }
+
+      const openings: TerminationOpening[] = Array.isArray(body.openings) ? body.openings : [];
+      if (openings.length === 0) {
+        res.status(400).json({
+          error:
+            "openings is required — the termination opening files the employer downloaded. " +
+            "Without them the attestation on chain is an opaque hash and no leaf can be built.",
+        });
+        return;
+      }
+
+      // Shape-checked here rather than inside `runRelay`, so a malformed upload
+      // fails as a 400 naming the field instead of as a job that dies minutes
+      // later during proving.
+      for (const [i, opening] of openings.entries()) {
+        for (const field of ["instance", "claimKeyHash", "nonce"] as const) {
+          if (typeof opening?.[field] !== "string" || !opening[field]) {
+            res.status(400).json({ error: `openings[${i}].${field} is required` });
+            return;
+          }
+        }
+        for (const field of ["slot", "finalPeriod", "monthsWorked"] as const) {
+          if (!Number.isInteger(Number(opening?.[field]))) {
+            res.status(400).json({ error: `openings[${i}].${field} must be a number` });
+            return;
+          }
+        }
+      }
+
+      const publish = body.publish !== false;
+      startJob(res, `relay ${period}${publish ? " + publish" : ""}`, (log) =>
+        runRelay({ period, openings, publish, log })
+      );
+    }
+  );
+
   app.post(
     "/api/onboard",
     rateLimit({ ...config.signupLimit, bucket: "onboard", noun: "signups" }),
