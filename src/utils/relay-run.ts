@@ -2,7 +2,20 @@ import { ContractState } from "@midnight-ntwrk/compact-runtime";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
-import * as payrollContract from "../../contracts/managed/payroll/contract/index.js";
+// Imported from the COMMITTED copy under `frontend/`, not `contracts/managed/`.
+//
+// `contracts/managed/` is gitignored build output, so it does not exist on a
+// managed host — and once the server started importing this module, `tsc -p
+// tsconfig.server.json` failed the deploy with TS2307 on a path that is only
+// ever present on a developer's machine. `src/server/README.md` names this
+// exact trap and prescribes this fix: resolve the contract module the way
+// `utils/contract.ts` does, falling back to the copies that ship with the code.
+//
+// The two files are the same build — `frontend:config` copies managed into
+// generated — so this changes nothing at runtime. It does mean a recompile that
+// is not followed by `npm run frontend:config` leaves this reading the previous
+// module, which is the one way the two can disagree.
+import * as payrollContract from "../../frontend/src/generated/payroll/index.js";
 import { EnvironmentManager } from "./environment.js";
 import { getDeployment, listDeployments } from "./deployments.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./wallet.js";

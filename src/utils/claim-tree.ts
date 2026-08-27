@@ -1,4 +1,17 @@
-import * as fund from "../../contracts/managed/fund/contract/index.js";
+// Imported from the COMMITTED copy under `frontend/`, not `contracts/managed/`.
+//
+// `contracts/managed/` is gitignored build output, so it does not exist on a
+// managed host — and once the server started importing this module, `tsc -p
+// tsconfig.server.json` failed the deploy with TS2307 on a path that is only
+// ever present on a developer's machine. `src/server/README.md` names this
+// exact trap and prescribes this fix: resolve the contract module the way
+// `utils/contract.ts` does, falling back to the copies that ship with the code.
+//
+// The two files are the same build — `frontend:config` copies managed into
+// generated — so this changes nothing at runtime. It does mean a recompile that
+// is not followed by `npm run frontend:config` leaves this reading the previous
+// module, which is the one way the two can disagree.
+import * as fund from "../../frontend/src/generated/fund/index.js";
 
 /**
  * The period claim tree, built off chain exactly as the circuit reads it.
