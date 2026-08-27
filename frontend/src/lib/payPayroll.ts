@@ -63,6 +63,88 @@ export interface PayeeKeys {
   encryptionPublicKey: string;
 }
 
+/**
+ * Refuses a run that cannot open the commitments, before anything is proved.
+ *
+ * `fundEmployee` recomputes the commitment from the figures and the nonce and
+ * asserts it matches what was filed. That check is the right one and it is in
+ * the right place — but it runs inside the circuit, so reaching it costs a full
+ * proving cycle, and what it reports is `failed assert: the figures and nonce
+ * do not open the commitment for that employee`, which names neither of the two
+ * things actually capable of being wrong.
+ *
+ * They are: a different workbook than the one filed, or a different passphrase.
+ * The passphrase is the likelier by far, because the file step collapses once a
+ * month is filed and a later session has to type it again from memory with
+ * nothing to check it against — while filing itself refuses a wrong one up
+ * front (`deriveKeyAndVerify` in `submitPayroll`). Funding had no equivalent,
+ * so the same mistake cost thirty seconds and an unreadable error instead of
+ * being named immediately.
+ *
+ * The same arithmetic as the circuit, run locally: hash each unfunded slot's
+ * figures with its derived nonce and compare against `commitmentsFor`. Nothing
+ * is sent, nothing is signed, and the two causes are distinguishable — every
+ * slot failing means the passphrase, some slots failing means the workbook.
+ */
+async function checkOpensCommitments(options: {
+  contractModule: any;
+  ledger: any;
+  period: number;
+  slots: SlotState[];
+  employerKey: Uint8Array;
+}): Promise<void> {
+  const { contractModule, ledger, period, slots, employerKey } = options;
+  const p = BigInt(period);
+
+  if (!ledger.commitmentsFor?.member(p)) return; // nothing filed; the circuit will say so
+  const commitments = ledger.commitmentsFor.lookup(p);
+  const paramsHash = ledger.paramsHashFor?.member(p)
+    ? ledger.paramsHashFor.lookup(p)
+    : null;
+  const commitmentFor = contractModule?.pureCircuits?.commitmentFor;
+  // Older builds may not expose it. A missing pre-check must not stop a run
+  // that the circuit would have accepted.
+  if (!paramsHash || typeof commitmentFor !== "function") return;
+
+  const mismatched: number[] = [];
+  // Only what this run will actually submit. A slot already funded was opened
+  // by a previous run and is skipped by `fundPeriod` anyway, so failing on it
+  // would block a legitimate resume after a partial failure.
+  const pending = slots.filter((slot) => !slot.funded || !slot.paid);
+
+  for (const slot of pending) {
+    const key = BigInt(slot.index);
+    if (!commitments.member(key)) continue;
+    const nonce = await deriveNonce(employerKey, period, slot.index);
+    const computed = commitmentFor(
+      slot.line.grossMinor,
+      slot.line.taxMinor,
+      slot.line.socialMinor,
+      slot.line.netMinor,
+      BigInt(slot.line.weeks),
+      p,
+      { bytes: ledger.employer.bytes },
+      paramsHash,
+      nonce
+    );
+    if (toHex(computed) !== toHex(commitments.lookup(key))) mismatched.push(slot.index);
+  }
+
+  if (mismatched.length === 0) return;
+
+  throw new Error(
+    mismatched.length === pending.length
+      ? "That passphrase does not open the commitments filed for this period. " +
+        "It has to be the one this month was filed with — it derives every " +
+        "nonce, and a different one produces figures the contract will refuse. " +
+        "Nothing was sent."
+      : `The workbook does not match what was filed for employee ` +
+        `${mismatched.map((i) => i + 1).join(", ")}. Their figures were changed ` +
+        "after this month was filed, so the commitment no longer opens. Load " +
+        "the workbook this period was filed from. Nothing was sent."
+  );
+}
+
 export function slotStates(
   ledger: any,
   period: number,
@@ -418,6 +500,14 @@ export async function fundAndPayPeriod(options: {
     await currentLedgerState(networkId, contractAddress)
   );
   const slots = slotStates(ledger, period, salaries, weeks);
+
+  await checkOpensCommitments({
+    contractModule,
+    ledger,
+    period,
+    slots,
+    employerKey,
+  });
 
   // Which filing round this is. Re-filing a period bumps it, so its coins get
   // fresh nonces instead of colliding with the previous round's.
