@@ -11,6 +11,7 @@ import { createProofProvider, ZKConfigProvider } from "@midnight-ntwrk/midnight-
 import { pipe } from "effect";
 import { fetchContractState, INDEXERS, INDEXER_WS, PROOF_SERVERS } from "./chain";
 import { loadContract } from "./contracts";
+import { describeSubmitError } from "./nodeErrors";
 import { buildPayslip, type Payslip } from "./payslip";
 import {
   deriveEmployerKey,
@@ -369,7 +370,17 @@ export async function connectContract(options: {
   const midnightProvider = {
     submitTx: async (tx: any) => {
       onProgress("Submitting to the network…");
-      await api.submitTransaction(toHex(tx.serialize()));
+      try {
+        await api.submitTransaction(toHex(tx.serialize()));
+      } catch (cause) {
+        // The one place every submission passes through, which is why the
+        // translation lives here rather than at the three call sites. A node
+        // rejection arrives as a number wrapped in a JSON-RPC envelope; the
+        // components downstream print `cause.message` and would otherwise show
+        // it verbatim. `describeSubmitError` falls back to that same message
+        // when it recognises nothing, so this can only add detail.
+        throw new Error(describeSubmitError(cause), { cause });
+      }
       const identifiers: string[] = tx.identifiers?.() ?? [];
       if (identifiers.length === 0) {
         throw new Error(
