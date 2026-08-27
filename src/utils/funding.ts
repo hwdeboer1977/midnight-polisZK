@@ -1,10 +1,9 @@
-import path from "path";
 import { findDeployedContract, submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { MidnightProviders } from "../providers/midnight-providers.js";
 import { MAX_PEUR_AMOUNT, PEUR_SCALE, formatPeur } from "./constructor-args.js";
-import { loadCompiledContract, managedPath } from "./contract.js";
+import { contractModulePath, loadCompiledContract } from "./contract.js";
 import { getClaim, saveClaim } from "./claims.js";
 import { deploymentKey, getDeployment, listDeployments } from "./deployments.js";
 import { EnvironmentManager } from "./environment.js";
@@ -67,9 +66,15 @@ export async function findEmployerInstance(
   setNetworkId(network.networkId);
 
   const provider = indexerPublicDataProvider(network.indexer, network.indexerWS);
-  const payroll = await import(
-    path.join(managedPath("payroll"), "contract", "index.js")
-  );
+  // `contractModulePath`, NOT `managedPath` + "contract/index.js". The two
+  // resolve differently on a checkout with no `contracts/managed`: the ZK assets
+  // fall back to `frontend/public/zk/<n>/{keys,zkir}`, which has no `contract/`
+  // in it, while the module falls back to `frontend/src/generated/<n>/index.js`.
+  // Joining the first path to the second's filename works on a machine that has
+  // compiled the contracts and cannot work anywhere else — so it passed locally
+  // and broke the moment this ran on a deploy target, on the one route an
+  // employer needs.
+  const payroll = await import(contractModulePath("payroll"));
 
   for (const [key, record] of listDeployments()) {
     if (record.networkId !== network.networkId) continue;
