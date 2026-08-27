@@ -715,6 +715,25 @@ table.roster .mono {
 .month-step.todo .month-step-t { color: var(--muted); }
 .month-step-d { font-size: 13px; color: var(--muted); margin-top: 1px; }
 .month-step-result { font-size: 13px; font-weight: 600; color: var(--accent); margin-top: 3px; }
+/* Who each row pays, under the summary that follows a loaded workbook.
+   Quieter than the summary itself — this is for checking, not for reading every
+   month — but present without a click, because the cost of not looking is a
+   month's net in a wallet nobody holds. */
+.payee-preview { list-style: none; margin: 6px 0 0; padding: 0; font-weight: 400; }
+.payee-preview li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 1px 0;
+}
+.payee-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.payee-gross { color: var(--faint); font-variant-numeric: tabular-nums; }
+/* The one field worth comparing character by character, so it gets the
+   monospace and the full value on hover. */
+.payee-key { font-size: 11px; color: var(--faint); white-space: nowrap; }
+
 .month-step-action { margin-top: 10px; }
 /* A step's own button sits inside it, so it must not stretch the way a panel's
    primary action does. */

@@ -781,11 +781,14 @@ export function RosterUpload({
           // was both done and not started, which is the one thing a stepper
           // exists to prevent.
           state: ready || filed ? "done" : "now",
-          result: ready
-            ? `${roster!.rows.length} employees · €${formatPeur(roster!.totalMinor)} gross${roster!.period ? ` · ${periodName(roster!.period)}` : ""}`
-            : filed
-              ? "Already filed from a workbook — load it again to fund, pay or correct"
-              : null,
+          result: ready ? (
+            <>
+              {`${roster!.rows.length} employees · €${formatPeur(roster!.totalMinor)} gross${roster!.period ? ` · ${periodName(roster!.period)}` : ""}`}
+              <PayeePreview rows={roster!.rows} />
+            </>
+          ) : filed ? (
+            "Already filed from a workbook — load it again to fund, pay or correct"
+          ) : null,
           action: chooseFile,
           // Named for what pressing it is FOR, not for the worst thing the step
           // could do. With a month filed and unpaid, this disclosure is the only
@@ -855,5 +858,38 @@ export function RosterUpload({
         },
       ]}
     />
+  );
+}
+
+/**
+ * Which wallet each row will actually be paid at.
+ *
+ * Step one collapses to a summary the moment a workbook loads, and until now
+ * that summary was headcount, gross and period — everything except the one
+ * thing a workbook can be wrong about in a way nothing downstream will catch.
+ * A stale file names stale keys; the chain then funds and pays them exactly as
+ * asked, the contract marks every slot settled, and the money is in wallets
+ * nobody involved still holds. That is not recoverable: a shielded coin belongs
+ * to whoever holds the secret key behind its coin public key, and re-filing the
+ * period mints a second payment rather than retrieving the first.
+ *
+ * So the keys are shown BEFORE the button that commits them, at the only moment
+ * where reading them costs nothing. Truncated because nobody verifies 64 hex
+ * characters by eye — the ends are what differ between two wallets a person
+ * actually has, and the full value is in the title for a copy-and-compare.
+ */
+function PayeePreview({ rows }: { rows: ParsedRoster["rows"] }) {
+  return (
+    <ul className="payee-preview">
+      {rows.map((row) => (
+        <li key={row.index}>
+          <span className="payee-name">{row.fullName}</span>
+          <span className="payee-gross">€{formatPeur(row.salaryMinor)}</span>
+          <code className="payee-key" title={row.coinPublicKey}>
+            {row.coinPublicKey.slice(0, 8)}…{row.coinPublicKey.slice(-8)}
+          </code>
+        </li>
+      ))}
+    </ul>
   );
 }

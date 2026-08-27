@@ -24,8 +24,16 @@ export interface MonthStep {
   /** What it costs, shown before the spinner rather than after. */
   cost: string;
   state: StepState;
-  /** Shown under a completed step — the filename, the totals. */
-  result?: string | null;
+  /**
+   * Shown under a completed step — the filename, the totals, who gets paid.
+   *
+   * A node rather than a string because step one collapses the moment a
+   * workbook is loaded, so this line is the ONLY thing visible between loading
+   * and filing. A summary that can only be prose cannot name the wallets, and
+   * naming them is the difference between finding a wrong payee now and finding
+   * it after payday, when the coins are already spent.
+   */
+  result?: React.ReactNode;
   /**
    * The control for this step, rendered inside it.
    *
