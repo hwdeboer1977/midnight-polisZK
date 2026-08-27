@@ -473,9 +473,31 @@ function providerFor(networkId: string) {
  */
 export async function fetchContractLeaves(
   networkId: string,
-  contractAddress: string
+  contractAddress: string,
+  /**
+   * The provider that will BUILD the transaction, when there is one.
+   *
+   * These indices become `mt_index` on the coins being spent, and a merkle
+   * position only means something relative to the tree it was read from. Read
+   * them through one connection and prove against another and the two can sit
+   * at different heights — the proof then references a root that does not
+   * contain the position, which the node rejects as `Zswap` (custom error 103),
+   * with nothing in the message to say the two views disagreed.
+   *
+   * It survived a long time because funding and paying usually happen in one
+   * run: the coins are created through the connect provider moments earlier, so
+   * that view already knows them whatever the other one thinks. Funding in an
+   * earlier session removes that coincidence and the mismatch becomes visible.
+   *
+   * Optional so the standalone callers keep working; passed wherever the result
+   * is about to be spent.
+   */
+  provider?: { queryZSwapAndContractState: (address: string) => Promise<unknown> }
 ): Promise<number[]> {
-  const result = await providerFor(networkId).queryZSwapAndContractState(contractAddress);
+  const source = provider ?? providerFor(networkId);
+  const result = (await source.queryZSwapAndContractState(contractAddress)) as
+    | [unknown, unknown]
+    | null;
   if (!result) return [];
   const [zswap] = result;
   return contractLeaves(String((zswap as any).filter(contractAddress).toString(true)));
@@ -576,7 +598,13 @@ export async function fundAndPayPeriod(options: {
   // Re-read after funding: the coins that were just created are the ones the
   // payment step has to spend, and they did not exist a moment ago.
   onProgress("Waiting for the new coins to be indexed…");
-  const allLeaves = await fetchContractLeaves(networkId, contractAddress);
+  // Through the provider that will prove and submit, so the positions below and
+  // the tree the proof is built over are the same tree. See `fetchContractLeaves`.
+  const allLeaves = await fetchContractLeaves(
+    networkId,
+    contractAddress,
+    (contractProviders as any).publicDataProvider
+  );
 
   // Which coin funds which slot, straight from the contract. It records the
   // ordinal when the coin is received, so there is nothing to infer: the n-th
