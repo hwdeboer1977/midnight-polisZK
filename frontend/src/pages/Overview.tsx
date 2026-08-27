@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
 import { ServiceUnavailable } from "../components/ServiceUnavailable";
-import { platformActions } from "../lib/origin";
+import { claimAvailable } from "../lib/origin";
 import { Tile } from "../components/Tile";
 import { WalletPicker } from "../components/WalletPicker";
 import { FAUCETS } from "../lib/chain";
@@ -242,8 +242,13 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
             </>
           ) : (
             <>
+              {/* `claimAvailable`, not `platformActions`. Drawing the starter
+                  allowance is a thing an EMPLOYER does, not a thing the operator
+                  does for them: `/api/claim` is bounded by the chain and a
+                  once-per-key record rather than by the bearer token, so it is
+                  offered wherever a service can be reached. See `origin.ts`. */}
               <button
-                disabled={!platformActions || !keys || claiming || claimJob?.status === "running"}
+                disabled={!claimAvailable || !keys || claiming || claimJob?.status === "running"}
                 onClick={() => keys && void claim(keys.coin, keys.encryption)}
               >
                 {claimJob?.status === "running"
@@ -274,12 +279,12 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
                 <p className="status error">Could not claim: {claimJob.error}</p>
               ) : null}
 
-              {/* `unavailable` only becomes true after a request has failed. On a
-                  hosted origin the answer is known before anything is sent, so it
-                  is said upfront — a button that can only 405 is worse than no
-                  button. */}
-              {!platformActions || unavailable ? (
-                <ServiceUnavailable what="pEUR allowance" />
+              {/* `unavailable` only becomes true after a request has failed. When
+                  no backend is configured the answer is known before anything is
+                  sent, so it is said upfront — a button that can only 405 is
+                  worse than no button. */}
+              {!claimAvailable || unavailable ? (
+                <ServiceUnavailable what="pEUR allowance" operatorOnly={false} />
               ) : null}
             </>
           )}

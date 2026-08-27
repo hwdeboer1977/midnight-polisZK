@@ -1,6 +1,26 @@
 import fs from "fs";
+import { dataPath } from "./data-dir.js";
 
-const FILE = "claims.json";
+/**
+ * Where the allowance ledger lives.
+ *
+ * Resolved through DATA_DIR rather than sitting in the working directory, and
+ * this is not tidiness. `/api/claim` is public — bounded by "this key has not
+ * claimed before" rather than by a token — and THIS FILE is where that bound is
+ * remembered. On a managed host the code directory is replaced on every push,
+ * so a cwd-relative ledger means every deploy silently re-opens the allowance
+ * to everyone who already drew it.
+ *
+ * Deliberately not the `claims/` directory next door: that belongs to the
+ * employee claim CLIs, which run on an operator's own machine where cwd is
+ * already durable. Same word, different thing.
+ *
+ * Resolved per call rather than at import, so the directory is only created by
+ * a process that actually issues or checks an allowance.
+ */
+function file(): string {
+  return dataPath("claims.json");
+}
 
 export interface ClaimRecord {
   networkId: string;
@@ -29,13 +49,14 @@ export function claimKey(networkId: string, coinPublicKey: string): string {
 }
 
 function read(): ClaimFile {
-  if (!fs.existsSync(FILE)) return {};
+  const path = file();
+  if (!fs.existsSync(path)) return {};
   try {
-    return JSON.parse(fs.readFileSync(FILE, "utf8")) as ClaimFile;
+    return JSON.parse(fs.readFileSync(path, "utf8")) as ClaimFile;
   } catch {
     // Losing the ledger of who has claimed would silently re-open the allowance
     // to everyone, so a damaged file is a hard stop rather than an empty object.
-    throw new Error(`${FILE} is not readable JSON — refusing to issue against it`);
+    throw new Error(`${path} is not readable JSON — refusing to issue against it`);
   }
 }
 
@@ -49,5 +70,5 @@ export function getClaim(
 export function saveClaim(record: ClaimRecord): void {
   const all = read();
   all[claimKey(record.networkId, record.coinPublicKey)] = record;
-  fs.writeFileSync(FILE, JSON.stringify(all, null, 2) + "\n");
+  fs.writeFileSync(file(), JSON.stringify(all, null, 2) + "\n");
 }

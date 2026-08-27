@@ -21,10 +21,16 @@ import path from "path";
  * the working directory and every local workflow behaves exactly as before —
  * `deployment.json` stays where the deploy scripts have always put it.
  *
- * NOT for `fund-pool.json`, `claims/` or `terminations/`. Those belong to
- * operator CLIs that run on a person's own machine, where cwd is already
- * durable; moving them would relocate files someone has on disk today for no
- * gain.
+ * `claims.json` is here too, and for a sharper reason than the other three: it
+ * is the only bound on a PUBLIC route. `/api/claim` issues the starter
+ * allowance to any registered employer who has not drawn it, and that "has not"
+ * is read out of this file — so losing it on a push does not cost a record, it
+ * re-opens the allowance.
+ *
+ * NOT for `fund-pool.json`, the `claims/` DIRECTORY or `terminations/`. Those
+ * belong to operator CLIs that run on a person's own machine, where cwd is
+ * already durable; moving them would relocate files someone has on disk today
+ * for no gain. `claims/` and `claims.json` share a word and nothing else.
  */
 export function dataDir(): string {
   return process.env.DATA_DIR?.trim() || process.cwd();

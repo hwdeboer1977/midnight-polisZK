@@ -5,32 +5,47 @@ import type { ServerConfig } from "./config.js";
 import { dataPath } from "../utils/data-dir.js";
 
 /**
- * What stands in for a bearer token on the one route that cannot have one.
+ * What stands in for a bearer token on the routes that cannot have one.
  *
- * `/api/onboard` has to be callable by a stranger — that is the entire point of
- * self-service signup — and a token shipped in a browser bundle is a published
- * token. So it is bounded rather than authenticated, and the bound is chosen
- * against what the route can actually cost.
+ * `/api/onboard` and `/api/claim` have to be callable by a stranger — that is
+ * the entire point of self-service signup, and an employer who cannot draw the
+ * asset salaries settle in has signed up for nothing — and a token shipped in a
+ * browser bundle is a published token. So both are bounded rather than
+ * authenticated, and each bound is chosen against what its route can cost.
  *
- * What it CAN cost: transaction fees, and a contract on chain that nobody
- * wanted. What it cannot: money. `onboardEmployer` deploys a payroll contract
- * and assigns it to the CALLER'S signing key, so an abuser ends up with a
- * contract only they can use, paid for with the platform's fees. That is spam
- * and a bill, not theft — which is why this route can be opened while
- * `/api/faucet`, `/api/mint` and `/api/payroll/run` stay behind the token. Those
- * three create or move pEUR, and no rate limit makes that safe to publish.
+ * What `/api/onboard` CAN cost: transaction fees, and a contract on chain that
+ * nobody wanted. What it cannot: money. `onboardEmployer` deploys a payroll
+ * contract and assigns it to the CALLER'S signing key, so an abuser ends up with
+ * a contract only they can use, paid for with the platform's fees. Spam and a
+ * bill, not theft.
+ *
+ * `/api/claim` does create pEUR, so its bound has to be tighter, and it is:
+ * `fundEmployer` refuses a key that is not already the employer of a payroll
+ * contract on this network, and refuses a key that has claimed before — a
+ * once-only record kept on disk. The amount is fixed by the server and never
+ * read from the request. So the supply it can issue is capped at one allowance
+ * per registered employer, forever, which is a bound a token would not improve.
+ *
+ * `/api/faucet`, `/api/mint` and `/api/payroll/run` stay behind the token, and
+ * the difference is exactly this: the first two mint an amount the CALLER
+ * chooses with no ceiling and no once-only record, and the third moves an
+ * employer's money. No rate limit makes those safe to publish.
  *
  * Three guards, weakest to strongest:
  *
- *   1. one contract per employer key — stops double-submits and makes repeat
- *      abuse need fresh keys;
+ *   1. one contract per employer key, one allowance per employer key — stops
+ *      double-submits and makes repeat abuse need fresh keys;
  *   2. a per-IP rate limit — makes fresh keys cost time;
  *   3. an optional signup code — makes it cost knowing something, and is the
  *      lever to reach for if the first two are ever not enough.
+ *
+ * The signup code guards only signup. It would be redundant on `/api/claim`,
+ * which can only pay a key that already holds a contract — and so has already
+ * passed whatever gate was in force when that contract was created.
  */
 
 /**
- * Requests seen per client, newest last.
+ * Requests seen per bucket and client, newest last.
  *
  * In memory, so a restart forgives everyone. That is the right trade for a
  * limit whose job is to slow down bulk abuse rather than to be an accounting
@@ -39,14 +54,29 @@ import { dataPath } from "../utils/data-dir.js";
  */
 const hits = new Map<string, number[]>();
 
-export function rateLimit(options: { windowMs: number; max: number }) {
+/**
+ * `bucket` keeps routes from spending each other's budget.
+ *
+ * Without it the map is keyed on the address alone, so onboarding and claiming
+ * share one allowance — and the sequence every real employer performs is sign
+ * up, then immediately claim. Two of three spent by doing the intended thing
+ * once, with a single retry of either enough to lock the other out. `noun` is
+ * what the 429 calls them, since "too many signups" is a confusing thing to
+ * hear after pressing Claim.
+ */
+export function rateLimit(options: {
+  windowMs: number;
+  max: number;
+  bucket: string;
+  noun: string;
+}) {
   return (req: Request, res: Response, next: NextFunction): void => {
     // `req.ip` reads X-Forwarded-For only when Express is told to trust the
     // proxy — see `trust proxy` in app.ts. Without it every request behind
     // Render's router shares one address and the limit applies to everybody at
     // once, which looks like a working limit right up until it locks out real
     // users.
-    const key = req.ip ?? "unknown";
+    const key = `${options.bucket}:${req.ip ?? "unknown"}`;
     const now = Date.now();
     const since = now - options.windowMs;
 
@@ -56,8 +86,9 @@ export function rateLimit(options: { windowMs: number; max: number }) {
       res.setHeader("Retry-After", String(retryAfter));
       res.status(429).json({
         error:
-          `Too many signups from this address. Try again in ${Math.ceil(retryAfter / 60)} ` +
-          "minute(s), or ask the platform operator to onboard you directly.",
+          `Too many ${options.noun} from this address. Try again in ` +
+          `${Math.ceil(retryAfter / 60)} minute(s), or ask the platform operator ` +
+          "to do it for you directly.",
       });
       return;
     }

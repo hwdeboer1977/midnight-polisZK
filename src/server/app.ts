@@ -24,9 +24,14 @@ import { dataDir } from "../utils/data-dir.js";
  * Two route groups with deliberately different postures, and the separation is
  * the point of this file rather than an organising convenience:
  *
- *   PUBLIC     — reads that disclose nothing not already on chain. No token.
- *   PRIVILEGED — deploys contracts and mints pEUR with the platform wallet.
- *                Token required whenever the server is reachable off-machine.
+ *   PUBLIC     — reads that disclose nothing not already on chain, plus the two
+ *                writes a stranger has to be able to make: signing up, and
+ *                drawing the starter allowance that signing up is for. Both are
+ *                bounded rather than authenticated; `guards.ts` sets out what
+ *                each one can cost and why the bound is enough.
+ *   PRIVILEGED — mints an amount the caller chooses, or moves an employer's
+ *                money, with the platform wallet. Token required whenever the
+ *                server is reachable off-machine.
  *
  * `config.ts` makes the second half impossible to expose by accident: the
  * process will not bind to a non-loopback host without a token.
@@ -186,11 +191,12 @@ export function createApp(config: ServerConfig): Express {
    * exists — but the contract it produces is assigned to the CALLER'S key, so
    * what an abuser gets is a contract only they can use and a bill the platform
    * pays in fees. Spam and cost, not theft. `guards.ts` sets out why that makes
-   * this route openable when the three below are not.
+   * this route openable, and why `/api/claim` below is openable for a different
+   * reason, when the three behind the token are not.
    */
   app.post(
     "/api/onboard",
-    rateLimit(config.signupLimit),
+    rateLimit({ ...config.signupLimit, bucket: "onboard", noun: "signups" }),
     requireSignupCode(config),
     (req: Request, res: Response) => {
       const { instance, employerKey, companyName } = req.body ?? {};
@@ -230,17 +236,55 @@ export function createApp(config: ServerConfig): Express {
     }
   );
 
+  /**
+   * The registered employer's once-only starter allowance.
+   *
+   * PUBLIC, and it has to be. This is the money salaries settle in, so an
+   * employer who signs up through the hosted page and then cannot draw it has
+   * completed a signup that leads nowhere. It sat behind the token for a while
+   * and the cost was exactly that: a page telling someone whose contract had
+   * just been deployed for them to go and run the project locally.
+   *
+   * It mints, so it is bounded harder than `/api/onboard` is — and the bounds
+   * live in `fundEmployer` rather than here, which is the right place for them
+   * since `fund-cli` reaches the same code:
+   *
+   *   · the caller's key must already be the employer of a payroll contract on
+   *     this network, checked against the chain rather than against a list;
+   *   · that key must not have claimed before, recorded in `claims.json` — which
+   *     is why that file follows DATA_DIR now, since a redeploy that forgot it
+   *     would forgive everyone at once;
+   *   · the amount is EMPLOYER_ALLOWANCE, fixed here and never read from the
+   *     body — unlike `/faucet` below, which is this same mint with the ceiling
+   *     taken off, and is why that one keeps the token.
+   *
+   * Total issuable supply is therefore one allowance per registered employer,
+   * forever, which a bearer token would not reduce. The rate limit is only so
+   * that the chain reads behind a rejected claim cannot be spammed.
+   *
+   * What an abuser CAN still do: claim against somebody else's registered key,
+   * since a coin public key is public and nothing here proves possession of it.
+   * The coin belongs to whoever holds the secret key behind it, so that mints
+   * the allowance to its rightful owner — it does not steal, it spends their
+   * once-only claim early, and only the operator can undo it. Named here rather
+   * than left for someone to find.
+   */
+  app.post(
+    "/api/claim",
+    rateLimit({ ...config.signupLimit, bucket: "claim", noun: "claim attempts" }),
+    (req: Request, res: Response) => {
+      const keys = readRecipient(req, res);
+      if (!keys) return;
+      startJob(res, `funding ${keys.coinPublicKey.slice(0, 16)}…`, (log) =>
+        fundEmployer(keys.coinPublicKey, keys.encryptionPublicKey, EMPLOYER_ALLOWANCE, log)
+      );
+    }
+  );
+
+  // ── Privileged ────────────────────────────────────────────────────────────
+
   const platform = express.Router();
   platform.use(requirePlatformToken(config));
-
-  /** The registered employer's once-only starter allowance. */
-  platform.post("/claim", (req: Request, res: Response) => {
-    const keys = readRecipient(req, res);
-    if (!keys) return;
-    startJob(res, `funding ${keys.coinPublicKey.slice(0, 16)}…`, (log) =>
-      fundEmployer(keys.coinPublicKey, keys.encryptionPublicKey, EMPLOYER_ALLOWANCE, log)
-    );
-  });
 
   /**
    * The open faucet: mints pEUR to the caller, any amount, no questions.
