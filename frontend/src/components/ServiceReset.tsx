@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { ServiceUnavailable } from "./ServiceUnavailable";
-import { apiUrl, platformActions } from "../lib/origin";
+import { apiUrl } from "../lib/origin";
 
 /**
  * Makes the service forget what it has deployed and who has signed up.
@@ -9,15 +8,25 @@ import { apiUrl, platformActions } from "../lib/origin";
  * app — which is why it is two clicks and says what it costs on the second one
  * rather than in a note underneath.
  *
- * ── Why this cannot work on the hosted page ─────────────────────────────────
+ * ── Why this one is NOT gated on `platformActions` ─────────────────────────
  *
- * Gated on `platformActions`, exactly like the faucet and the mint button, and
- * for the same reason `origin.ts` sets out at length: `/api/reset` sits behind
- * the platform bearer token, and a token shipped in a Vite bundle is a token
- * published. So this is an operator action available where the operator is — on
- * their own machine, through the dev proxy. On a hosted build the control still
- * renders and explains itself, because a button that silently vanishes teaches
- * nobody where it went.
+ * The faucet and the mint button are, and the difference is who they are for.
+ * Those are offered to EMPLOYERS on a hosted page, and an employer holds no
+ * platform token — so the only way to authorise them from a browser would be to
+ * ship one in the bundle, which `origin.ts` rightly refuses.
+ *
+ * This is for the operator, who does hold the token. It is typed in at the
+ * moment of use, so nothing is published: the bundle carries no secret, and the
+ * token lives in this component's state until the tab is closed. That makes the
+ * control work wherever the operator happens to be, hosted or local, which is
+ * the whole point of it.
+ *
+ * Deliberately not `localStorage`. A platform token written to disk on whatever
+ * machine last touched the admin page is a worse trade than retyping it, and
+ * this is a button pressed rarely by one person.
+ *
+ * Left blank it sends no header at all, which is right for a local service: with
+ * no token configured `requirePlatformToken` passes everything through.
  *
  * ── What it destroys ────────────────────────────────────────────────────────
  *
@@ -28,6 +37,7 @@ import { apiUrl, platformActions } from "../lib/origin";
  * confirmation says that in those words rather than asking "are you sure?".
  */
 export function ServiceReset() {
+  const [token, setToken] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +49,13 @@ export function ServiceReset() {
     try {
       const response = await fetch(apiUrl("/api/reset"), {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          // Omitted entirely when blank rather than sent empty: an empty bearer
+          // is a wrong token, and a local service with no token configured
+          // should not be made to refuse one.
+          ...(token.trim() ? { authorization: `Bearer ${token.trim()}` } : {}),
+        },
         // The same confirmation the route demands. Sent from here rather than
         // made a field the operator types: the second click IS the confirmation,
         // and asking them to spell a word only trains them to spell it.
@@ -83,11 +99,26 @@ export function ServiceReset() {
             reach it again. Safe on a test deployment; on a real one it strands
             every employer on it.
           </p>
-          <div className="actions">
+          <p className="note">
+            The token is the one this service was started with
+            (<code>PLATFORM_TOKEN</code>). It is sent with this request and kept
+            nowhere — closing the tab forgets it. Leave it empty against a local
+            service started without one.
+          </p>
+          <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
+            <input
+              type="password"
+              value={token}
+              disabled={busy}
+              placeholder="Platform token"
+              autoComplete="off"
+              style={{ minWidth: 280 }}
+              onChange={(event) => setToken(event.target.value)}
+            />
             <button
               type="button"
               className="primary"
-              disabled={busy || !platformActions}
+              disabled={busy}
               onClick={() => void reset()}
             >
               {busy ? "Clearing…" : "Yes, forget everything"}
@@ -103,18 +134,12 @@ export function ServiceReset() {
           </div>
         </>
       ) : (
-        <button
-          type="button"
-          className="ghost"
-          disabled={!platformActions}
-          onClick={() => setConfirming(true)}
-        >
+        <button type="button" className="ghost" onClick={() => setConfirming(true)}>
           Reset the service
         </button>
       )}
 
       {error ? <p className="status error">{error}</p> : null}
-      {!platformActions ? <ServiceUnavailable what="service reset" /> : null}
     </section>
   );
 }
