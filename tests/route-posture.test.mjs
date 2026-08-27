@@ -97,6 +97,10 @@ try {
     // onboarded contracts live. An open /reset is worse than an open /mint —
     // minted supply can be ignored, a lost address cannot be recovered.
     "/api/reset",
+    // Spends a treasury wallet whose seed is in this service's environment.
+    // Token-gated where /api/relay is not, and the difference is exactly that:
+    // the relay sends a transaction anyone could send, this one spends a key.
+    "/api/fund/deposit",
   ]) {
     const status = await post(path, {});
     check(`POST ${path} requires the token`, status === 401, `got ${status}`);

@@ -8,6 +8,7 @@ import { getJob, startJob } from "./jobs.js";
 import type { ServerConfig } from "./config.js";
 import { fundAndPay } from "../utils/payroll-run.js";
 import { runRelay, type TerminationOpening } from "../utils/relay-run.js";
+import { depositToFund } from "../utils/fund-deposit.js";
 import { onboardEmployer } from "../utils/onboarding.js";
 import {
   EMPLOYER_ALLOWANCE,
@@ -425,6 +426,52 @@ export function createApp(config: ServerConfig): Express {
     if (amount === null) return;
     startJob(res, `minting to ${keys.coinPublicKey.slice(0, 16)}…`, (log) =>
       mintToRecipient(keys.coinPublicKey, keys.encryptionPublicKey, amount, log)
+    );
+  });
+
+  /**
+   * Moves a treasury's pEUR into the benefit fund.
+   *
+   * Behind the platform token, unlike `/api/relay`, and the difference is what
+   * signs. The relay submits a permissionless transaction anyone could send;
+   * this one SPENDS a treasury wallet, whose seed lives in this service's
+   * environment. A route that spends a key on request is an operator action
+   * however carefully it is bounded.
+   *
+   * `from` names which environment secret to use — it never carries one. A
+   * request can choose the social treasury or the platform; it cannot supply a
+   * wallet, and nothing here reads a key out of the body.
+   *
+   * Why the social treasury is the default: `remitSocial` sends every period's
+   * contributions there, and the fund pays benefits out of contributions. The
+   * platform option stays because that is where every existing deposit came
+   * from, and topping up from it is still legitimate — it is just not the same
+   * thing as contributions arriving.
+   */
+  platform.post("/fund/deposit", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const from = String(body.from ?? "social-treasury");
+    if (!["social-treasury", "tax-treasury", "platform"].includes(from)) {
+      res.status(400).json({
+        error: 'from must be "social-treasury", "tax-treasury" or "platform"',
+      });
+      return;
+    }
+
+    let amountMinor: bigint;
+    try {
+      // Parsed the same way `/api/mint` parses its amount, so a euro figure and
+      // a minor-unit figure cannot be confused between the two routes.
+      amountMinor = parsePeurAmount(String(body.amount ?? ""));
+    } catch (cause) {
+      res.status(400).json({
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
+      return;
+    }
+
+    startJob(res, `depositing €${body.amount} from ${from}`, (log) =>
+      depositToFund({ amountMinor, from: from as any, log })
     );
   });
 

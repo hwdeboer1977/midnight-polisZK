@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { FundDeposit } from "../components/FundDeposit";
 import { ServiceReset } from "../components/ServiceReset";
 import { DeployerRegistry } from "../components/DeployerRegistry";
 import { EXPLORERS } from "../lib/chain";
@@ -383,6 +384,7 @@ export function Public() {
           onboarded company and grows without bound, so anything after it is
           off-screen on a service with any history — which is exactly the
           service most likely to want a reset. */}
+      {isDeployer ? <FundDeposit /> : null}
       {isDeployer ? <ServiceReset /> : null}
       {isDeployer ? <DeployerRegistry networkId={networkId} /> : null}
 

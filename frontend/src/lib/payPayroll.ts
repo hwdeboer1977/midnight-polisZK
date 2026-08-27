@@ -13,6 +13,7 @@ import { DUTCH_V1, computeLine } from "../generated/tax-params";
 import { submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
 import { connectContract, type ProvingMode } from "./submitPayroll";
 import { apiUrl } from "./origin";
+import { bytesToHex } from "./keys";
 
 /**
  * Funding and paying a filed period.
@@ -761,6 +762,142 @@ export async function fundWithholding(options: {
   );
 
   return { taxMinor, socialMinor, alreadyDone: false };
+}
+
+/**
+ * Sends a period's withheld tax and contribution on to the treasuries.
+ *
+ * The step after `fundWithholding`, and for a long time the one that could only
+ * run from the CLI. The obstacle was never authority — `remitTax` accepts the
+ * employer or the platform — but addressing: a shielded coin can only be found
+ * by someone whose ENCRYPTION public key the transaction was built with, the
+ * contract stores only the coin key it pays to, and a browser had nowhere to
+ * read the other one from. `VITE_*_TREASURY_ENC_KEY` is that missing half, and
+ * it is a public key: it addresses a coin and cannot spend one.
+ *
+ * Both destinations were frozen in the constructor, so nothing here chooses
+ * where the money goes — this cannot be redirected, only performed or not.
+ *
+ * The coin being spent is the one `fundWithholding` created, so its nonce is
+ * derived the same way, from the employer's passphrase and the filing round.
+ * Which is why this belongs in the browser: the passphrase is the one input the
+ * server does not have and should not.
+ */
+export async function remitWithholding(options: {
+  api: ConnectedAPI;
+  networkId: string;
+  contractAddress: string;
+  passphrase: string;
+  tokenId: string;
+  period: number;
+  /** Which pool to send. Two calls, because they are two coins and two keys. */
+  what: "tax" | "social";
+  provingMode?: ProvingMode;
+  onProgress?: StepProgress;
+}): Promise<{ sentMinor: bigint; alreadyDone: boolean }> {
+  const { api, networkId, contractAddress, passphrase, tokenId, period, what } = options;
+  const onProgress = options.onProgress ?? (() => {});
+
+  const encryptionKey = String(
+    what === "tax"
+      ? import.meta.env.VITE_TAX_TREASURY_ENC_KEY ?? ""
+      : import.meta.env.VITE_SOCIAL_TREASURY_ENC_KEY ?? ""
+  ).trim();
+  if (!encryptionKey) {
+    throw new Error(
+      `No ${what} treasury encryption key is configured for this build, so the ` +
+        "coin would be sent somewhere the treasury could never find it. Set " +
+        `VITE_${what.toUpperCase()}_TREASURY_ENC_KEY and rebuild.`
+    );
+  }
+
+  onProgress("Deriving your key (PBKDF2, deliberately slow)…");
+  const employerKey = await deriveEmployerKey(passphrase, contractAddress);
+
+  const { contractModule, providers: contractProviders, compiledContract } =
+    await connectContract({
+      api,
+      networkId,
+      contractAddress,
+      provingMode: options.provingMode ?? "local",
+      onProgress,
+    });
+
+  const ledger = (contractModule as any).ledger(
+    await currentLedgerState(networkId, contractAddress)
+  );
+  const key = BigInt(period);
+
+  if (!ledger.withheldFor?.member(key) || !ledger.withheldFor.lookup(key)) {
+    throw new Error(
+      `Period ${period} has not had its withholding moved into the contract yet. ` +
+        "Do that step first — there is nothing here to send on."
+    );
+  }
+
+  const owed: bigint = what === "tax" ? ledger.taxPool : ledger.socialPool;
+  const remitted: bigint = what === "tax" ? ledger.taxRemitted : ledger.socialRemitted;
+  const forPeriod: bigint =
+    what === "tax"
+      ? ledger.totalTaxFor.member(key)
+        ? ledger.totalTaxFor.lookup(key)
+        : 0n
+      : ledger.totalSocialFor.member(key)
+        ? ledger.totalSocialFor.lookup(key)
+        : 0n;
+
+  // Nothing in the pool means it has already gone. Reported rather than thrown,
+  // for the same reason `fundWithholding` reports `alreadyDone`: re-running a
+  // completed step is a no-op, not a failure, and an error here reads as money
+  // lost.
+  if (owed <= 0n) return { sentMinor: remitted, alreadyDone: true };
+
+  const coinMap = what === "tax" ? ledger.taxCoinFor : ledger.socialCoinFor;
+  if (!coinMap?.member(key)) {
+    throw new Error(`No ${what} coin is recorded for period ${period}.`);
+  }
+  const ordinal = Number(coinMap.lookup(key));
+
+  // Read through the provider that will prove, so the leaf position and the tree
+  // the proof is built over are the same tree — the mismatch `a07c8bf` chased.
+  onProgress("Locating the coin the contract holds…");
+  const leaves = await fetchContractLeaves(
+    networkId,
+    contractAddress,
+    (contractProviders as any).publicDataProvider
+  );
+  const leaf = leaves[ordinal];
+  if (leaf === undefined) {
+    throw new Error(
+      `The contract records coin #${ordinal} for the ${what} withheld, but only ` +
+        `${leaves.length} coins are visible — the indexer may be behind.`
+    );
+  }
+
+  const round = ledger.fileRoundFor?.member(key) ? Number(ledger.fileRoundFor.lookup(key)) : 0;
+  const treasury = what === "tax" ? ledger.taxTreasury : ledger.socialTreasury;
+  const recipient = bytesToHex(treasury.bytes).toLowerCase();
+
+  onProgress(`Sending the withheld ${what} to its treasury…`);
+  // `submitCallTx` rather than the `callTx` shorthand, which cannot carry the
+  // encryption mapping — the same reason `payPeriod` uses it.
+  await submitCallTx(contractProviders, {
+    compiledContract,
+    contractAddress,
+    circuitId: what === "tax" ? "remitTax" : "remitSocial",
+    args: [
+      key,
+      {
+        nonce: await withholdingCoinNonce(employerKey, period, round, what),
+        color: toHexBytes(tokenId),
+        value: forPeriod,
+        mt_index: BigInt(leaf),
+      },
+    ],
+    additionalCoinEncPublicKeyMappings: new Map([[recipient, encryptionKey]]),
+  } as any);
+
+  return { sentMinor: forPeriod, alreadyDone: false };
 }
 
 /**

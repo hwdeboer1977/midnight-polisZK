@@ -8,6 +8,7 @@ import {
   fundAndPayPeriod,
   fundAndPayViaService,
   fundWithholding,
+  remitWithholding,
   periodStatus,
   type RunResult,
 } from "../lib/payPayroll";
@@ -112,6 +113,9 @@ export function RosterUpload({
   /** Null until the chain has been asked whether this contract has been filed before. */
   const [firstFiling, setFirstFiling] = useState<boolean | null>(null);
   const [payStep, setPayStep] = useState<string | null>(null);
+  const [remitted, setRemitted] = useState<
+    { taxMinor: bigint; socialMinor: bigint } | null
+  >(null);
   const [withheld, setWithheld] = useState<
     { taxMinor: bigint; socialMinor: bigint; alreadyDone: boolean } | null
   >(null);
@@ -383,6 +387,54 @@ export function RosterUpload({
         onProgress: setPayStep,
       });
       setWithheld(result);
+      onSubmitted?.();
+    } catch (cause) {
+      setPayError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPayStep(null);
+    }
+  }
+
+  /**
+   * Sends this period's pools on to the two treasuries.
+   *
+   * Two transactions, because the money is owed to two destinations and each is
+   * a separate coin encrypted to a separate key. Run in sequence rather than in
+   * parallel: they spend different coins but share a wallet, and two proofs
+   * balanced at once against one wallet is how `170 InvalidDustSpendProof`
+   * arrives.
+   *
+   * Both destinations were frozen in the contract's constructor, so nothing
+   * here chooses where anything goes.
+   */
+  async function onRemit() {
+    const period = roster?.period ?? openPeriod ?? null;
+    if (period === null || !target || !api) return;
+
+    setPayError(null);
+    setPayStep("Starting…");
+    try {
+      const deployments = await loadDeployments();
+      const peur = Object.values(deployments).find(
+        (d) => d.contractName === "peur" && d.networkId === networkId
+      );
+      if (!peur?.tokenId) {
+        throw new Error(`No pEUR token id for ${networkId} — run \`npm run frontend:config\`.`);
+      }
+
+      const common = {
+        api,
+        networkId,
+        contractAddress: target.contractAddress,
+        passphrase,
+        tokenId: peur.tokenId,
+        period,
+        provingMode: delegateProving ? ("wallet" as const) : ("local" as const),
+        onProgress: setPayStep,
+      };
+      const tax = await remitWithholding({ ...common, what: "tax" });
+      const social = await remitWithholding({ ...common, what: "social" });
+      setRemitted({ taxMinor: tax.sentMinor, socialMinor: social.sentMinor });
       onSubmitted?.();
     } catch (cause) {
       setPayError(cause instanceof Error ? cause.message : String(cause));
@@ -760,6 +812,36 @@ export function RosterUpload({
     </>
   );
 
+  const remitAction = (
+    <>
+      {passphraseBlock}
+      <button
+        className="primary"
+        onClick={() => void onRemit()}
+        disabled={
+          (roster?.period ?? openPeriod ?? null) === null ||
+          !api ||
+          !passphraseReady ||
+          submitting ||
+          payStep !== null
+        }
+      >
+        {payStep !== null ? "Working…" : "Send withholding to the treasuries"}
+      </button>
+      <p className="note">
+        Two transactions, one per treasury. Both destinations were frozen when
+        this contract was deployed and cannot be redirected — this step performs
+        the transfer or it does not happen, and nobody here chooses where.
+      </p>
+      {remitted ? (
+        <p className="ok-line">
+          ✓ €{formatPeur(remitted.taxMinor)} tax and €{formatPeur(remitted.socialMinor)}{" "}
+          contribution sent on
+        </p>
+      ) : null}
+    </>
+  );
+
   const withholdAction = (
     <>
       {/* Its own passphrase entry, always — same reasoning as step three above.
@@ -781,9 +863,8 @@ export function RosterUpload({
         {payStep !== null ? "Working…" : "Move withholding into the contract"}
       </button>
       <p className="note">
-        Two coins carrying the published totals; the circuit refuses any other figure.
-        Sending them onward to the treasuries runs from the CLI, which holds their
-        encryption keys.
+        Two coins carrying the published totals; the circuit refuses any other
+        figure. Sending them onward to the treasuries is the next step.
       </p>
       {withheld ? (
         <p className="ok-line">
@@ -854,6 +935,14 @@ export function RosterUpload({
           // remove. `withheldDone` is kept in the condition so a finished step
           // still has something behind "Correct this".
           action: paid || withheldDone ? withholdAction : null,
+        },
+        {
+          title: "Send withholding to the treasuries",
+          detail:
+            "The pools leave the contract for the tax and social treasuries. Until this runs the money is collected but has not moved on — and the benefit fund is fed from the contributions, so nothing can be claimed against it yet.",
+          cost: "2 transactions",
+          state: remitted ? "done" : withheldDone ? "now" : "todo",
+          action: withheldDone || remitted ? remitAction : null,
         },
         {
           title: "Send payslips",
