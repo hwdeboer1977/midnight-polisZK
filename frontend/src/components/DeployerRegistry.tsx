@@ -15,9 +15,11 @@ import { useRegistrations } from "../lib/useRegistrations";
  * ── What "deactivate" is, and is not ────────────────────────────────────────
  *
  * It writes one column in the registry. It does NOT touch the contract, and
- * cannot: `assignEmployer` is permanent, there is no revoke circuit, and the
- * employer keeps every power they had a second earlier — filing, funding,
- * paying, remitting. The card says so next to the button rather than in a
+ * cannot: `assignEmployer` is permanent and the employer keeps every power they
+ * had a second earlier — filing, funding, paying, remitting. Contracts deployed
+ * since `revoke` was added CAN be halted, but by a platform-signed transaction
+ * from the payroll page, not by this column; instances older than that circuit
+ * have no such lever at all. The card says so next to the button rather than in a
  * tooltip, because an operator who believes they have cut someone off when they
  * have not is worse off than one who was never offered the button.
  *

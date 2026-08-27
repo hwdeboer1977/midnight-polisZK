@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { ServiceReset } from "../components/ServiceReset";
 import { DeployerRegistry } from "../components/DeployerRegistry";
 import { EXPLORERS } from "../lib/chain";
 import { loadDeployments, type Deployments } from "../lib/deployments";
@@ -379,6 +380,7 @@ export function Public() {
           Anywhere else and the card would read as the console that sentence
           says does not exist. */}
       {isDeployer ? <DeployerRegistry networkId={networkId} /> : null}
+      {isDeployer ? <ServiceReset /> : null}
 
       {/* Its own section rather than a row in the contract list: which asset
           salaries settle in is a property of the system, and the caveats that
