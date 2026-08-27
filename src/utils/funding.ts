@@ -58,9 +58,22 @@ function checkAmount(amount: bigint): void {
  *
  * Needs no wallet — reading public state is an indexer query — so it runs before
  * the multi-minute wallet sync and rejects an unregistered key immediately.
+ *
+ * Every record is tried even when an earlier one cannot be read, and that is the
+ * whole design of the loop rather than defensive habit. `deployment.json`
+ * accumulates: it holds contracts from every version of `payroll.compact` this
+ * project has ever deployed, and an older layout decoded with today's module
+ * throws `expected a cell, received map`. Unhandled, the FIRST such record ended
+ * the scan — so three contracts from a build nobody uses hid four live ones, and
+ * the employer was told the claim failed rather than that their own contract was
+ * never looked at.
+ *
+ * Skipping is also the right answer on the merits, not just the pragmatic one: a
+ * contract this build cannot read is not one it could pay against either.
  */
 export async function findEmployerInstance(
-  coinPublicKey: string
+  coinPublicKey: string,
+  log: Log = () => {}
 ): Promise<string | null> {
   const network = EnvironmentManager.getNetworkConfig();
   setNetworkId(network.networkId);
@@ -76,17 +89,36 @@ export async function findEmployerInstance(
   // employer needs.
   const payroll = await import(contractModulePath("payroll"));
 
+  const unreadable: string[] = [];
+
   for (const [key, record] of listDeployments()) {
     if (record.networkId !== network.networkId) continue;
     if (record.contractName !== "payroll") continue;
 
-    const state = await provider.queryContractState(record.contractAddress);
-    if (!state) continue;
+    try {
+      const state = await provider.queryContractState(record.contractAddress);
+      if (!state) continue;
 
-    const ledger = payroll.ledger(state.data);
-    if (ledger.employerAssigned && hex(ledger.employer.bytes) === coinPublicKey) {
-      return record.instance ?? key;
+      const ledger = payroll.ledger(state.data);
+      if (ledger.employerAssigned && hex(ledger.employer.bytes) === coinPublicKey) {
+        return record.instance ?? key;
+      }
+    } catch {
+      // The address, not the reason. A decode failure means an older contract
+      // layout and an indexer failure means a bad address or a pruned one, and
+      // neither is actionable per-record — what the operator needs is the list,
+      // so `deployment.json` can be pruned once instead of read as noise here.
+      unreadable.push(record.instance ?? key);
     }
+  }
+
+  // After the loop, so a skipped record never looks like the reason a claim was
+  // refused — by this point the answer is already known to be no.
+  if (unreadable.length > 0) {
+    log(
+      `Skipped ${unreadable.length} payroll contract(s) this build cannot read ` +
+        `(older layout, or no longer on the indexer): ${unreadable.join(", ")}`
+    );
   }
   return null;
 }
@@ -197,7 +229,7 @@ export async function fundEmployer(
   const network = EnvironmentManager.getNetworkConfig();
 
   log("Checking this key owns a payroll contract…");
-  const instance = await findEmployerInstance(cpk);
+  const instance = await findEmployerInstance(cpk, log);
   if (!instance) {
     throw new Error(
       `This signing key is not the employer of any payroll contract on ${network.networkId} — register first`
