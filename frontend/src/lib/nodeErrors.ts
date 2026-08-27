@@ -112,6 +112,35 @@ const LEDGER_ERRORS: Record<number, NodeErrorExplanation> = {
       "different providers — `fetchContractLeaves` takes the proving provider " +
       "precisely so they cannot be.",
   },
+  // The two pool-level codes below are not ledger codes at all — they come from
+  // substrate's transaction pool, before the ledger sees anything. They are in
+  // the same table because they reach the user through the same catch, and
+  // because 1012 in particular is the most misleading message in the set: it
+  // describes the retry, not the failure, and the failure it is hiding is the
+  // one worth knowing about.
+  1012: {
+    code: 1012,
+    name: "POOL_TEMPORARILY_BANNED",
+    what:
+      "The network is refusing this exact transaction because it was already " +
+      "rejected once, and the pool bans a rejected transaction for a while " +
+      "rather than re-checking it. The message describes the ban, not the " +
+      "original problem — which is still unknown at this point.",
+    fix:
+      "Look further back in the browser console for the FIRST failure of this " +
+      "run: that one names the real cause. Note that coin nonces here are " +
+      "derived from (employer key, period, slot), so retrying the same period " +
+      "rebuilds a byte-identical transaction with the same hash, and it stays " +
+      "banned until the window expires — retrying sooner cannot succeed.",
+  },
+  1013: {
+    code: 1013,
+    name: "POOL_ALREADY_IMPORTED",
+    what:
+      "This transaction is already sitting in the pool waiting to be included. " +
+      "The resubmission did nothing; the original is still on its way.",
+    fix: "Wait for the original to be included rather than sending it again.",
+  },
   250: {
     code: 250,
     name: "Zswap.Invalid.MerkleTreeError",
@@ -136,6 +165,12 @@ const CODE_PATTERNS: RegExp[] = [
  * so a caller that forwards the text rather than the code still lands here.
  */
 const NAME_PATTERNS: Array<[RegExp, number]> = [
+  // Pool codes first: when the pool bans a transaction the envelope can still
+  // carry the earlier ledger detail, and the ban is the thing that actually
+  // stopped this attempt. Reporting the stale inner code instead would send
+  // someone chasing a cause that is no longer what is blocking them.
+  [/temporarily\s+banned|POOL_TEMPORARILY_BANNED/i, 1012],
+  [/already\s+imported|POOL_ALREADY_IMPORTED/i, 1013],
   [/NullifierAlreadyPresent/i, 239],
   [/CommitmentAlreadyPresent/i, 240],
   [/UnknownMerkleRoot/i, 241],
@@ -187,6 +222,12 @@ function errorText(cause: unknown, seen = new Set<unknown>(), depth = 0): string
  */
 export function nodeErrorCode(cause: unknown): number | null {
   const texts = errorText(cause);
+  // Pool rejections outrank ledger codes — see NAME_PATTERNS.
+  for (const text of texts) {
+    for (const [pattern, code] of NAME_PATTERNS) {
+      if (code >= 1000 && pattern.test(text)) return code;
+    }
+  }
   for (const text of texts) {
     for (const pattern of CODE_PATTERNS) {
       const found = text.match(pattern);

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { periodName } from "../generated/roster";
 import {
   endEmployment,
@@ -6,6 +6,7 @@ import {
   type TerminationResult,
 } from "../lib/endEmployment";
 import { collectedFor } from "../lib/collected";
+import { walletCanProve } from "../lib/submitPayroll";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
@@ -24,7 +25,6 @@ export function EndEmployment({
   instance,
   networkId,
   periods,
-  delegateProving,
   roster,
 }: {
   contractAddress: string;
@@ -32,7 +32,6 @@ export function EndEmployment({
   networkId: string;
   /** Filed periods, newest first. */
   periods: number[];
-  delegateProving: boolean;
   /**
    * The workbook loaded on this page, if one has been.
    *
@@ -57,6 +56,28 @@ export function EndEmployment({
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<TerminationResult | null>(null);
+
+  /**
+   * Whether the wallet can prove, and whether it is being asked to.
+   *
+   * Read from the wallet rather than passed in. This used to take a
+   * `delegateProving` prop, and its one caller passed a hardcoded `false` — so
+   * ending employment always proved locally, against a proof server most
+   * employers do not run. On a hosted page that is not a slow path, it is no
+   * path at all: the fetch to 127.0.0.1:6300 fails and the attestation cannot
+   * be made. Filing payroll and claiming both decide this for themselves, and
+   * this now matches them, which also means a future caller cannot turn it off
+   * by accident.
+   *
+   * Defaulted ON where the wallet supports it, as in `RosterUpload` and
+   * `ClaimForm`: the wallet is already trusted with the employer's spending
+   * keys, and it is the option that works without local infrastructure.
+   */
+  const canDelegate = api ? walletCanProve(api) : false;
+  const [delegateProving, setDelegateProving] = useState(false);
+  useEffect(() => {
+    if (canDelegate) setDelegateProving(true);
+  }, [canDelegate]);
 
   if (periods.length === 0) return null;
 
@@ -91,7 +112,7 @@ export function EndEmployment({
         monthsWorked: survey.monthsWorked,
         claimKeyHash,
         passphrase,
-        provingMode: delegateProving ? "wallet" : "local",
+        provingMode: delegateProving && canDelegate ? "wallet" : "local",
         onProgress: setStep,
       });
       setDone({ ...result, matched: survey.matched });
@@ -264,6 +285,34 @@ export function EndEmployment({
             without anyone being able to recognise them. Your passphrase derives
             this attestation's nonce so the opening can be rebuilt later.
           </p>
+
+          <label className="prove-here">
+            <input
+              type="checkbox"
+              checked={delegateProving && canDelegate}
+              disabled={busy || !canDelegate}
+              onChange={(event) => setDelegateProving(event.target.checked)}
+            />{" "}
+            Let the wallet generate the proof
+            <span className="muted">
+              {" "}
+              {canDelegate ? (
+                <>
+                  — no proof server needed on this machine.{" "}
+                  <strong>
+                    Proving consumes this attestation's opening — their claim-key
+                    hash, their final month, their months worked and the nonce your
+                    passphrase derives — so this hands all four to the wallet.
+                  </strong>{" "}
+                  <span title="Unticked, proving runs against a proof server on this machine at 127.0.0.1:6300 and reaches nowhere else.">
+                    Unticked, they stay on this machine.
+                  </span>
+                </>
+              ) : (
+                " This wallet cannot prove on its own, so a proof server on this machine is the only option."
+              )}
+            </span>
+          </label>
 
           <button
             type="button"

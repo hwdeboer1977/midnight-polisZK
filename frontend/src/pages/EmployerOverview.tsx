@@ -398,7 +398,6 @@ export function EmployerOverview() {
               instance={instance.name.replace(/^payroll:/, "")}
               networkId={networkId}
               periods={periods.map(Number)}
-              delegateProving={false}
               roster={roster}
             />
           </details>
