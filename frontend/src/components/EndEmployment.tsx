@@ -74,6 +74,22 @@ export function EndEmployment({
    * `ClaimForm`: the wallet is already trusted with the employer's spending
    * keys, and it is the option that works without local infrastructure.
    */
+  /**
+   * The hash that is actually going to be sent.
+   *
+   * The field below displays `claimKeyHash || collectedFor(...)`, so a hash
+   * collected earlier appears in it without ever reaching state. Everything
+   * that ASKED about the hash asked the state instead: the button disabled
+   * itself on an empty `claimKeyHash` while showing a full one, and `submit`
+   * would have sent "" — an attestation anchored to a hash nobody holds, which
+   * is write-once and cannot be corrected.
+   *
+   * Derived once and used by the field, the button and the submit, so the three
+   * cannot disagree again.
+   */
+  const effectiveClaimKeyHash =
+    claimKeyHash || collectedFor(contractAddress)[payee]?.claimKeyHash || "";
+
   const canDelegate = api ? walletCanProve(api) : false;
   const [delegateProving, setDelegateProving] = useState(false);
   useEffect(() => {
@@ -111,7 +127,7 @@ export function EndEmployment({
         period,
         slot: survey.slot,
         monthsWorked: survey.monthsWorked,
-        claimKeyHash,
+        claimKeyHash: effectiveClaimKeyHash,
         passphrase,
         provingMode: delegateProving && canDelegate ? "wallet" : "local",
         onProgress: setStep,
@@ -284,7 +300,7 @@ export function EndEmployment({
                 retyping it is one more chance to anchor a termination against a
                 key nobody holds. */}
             <input
-              value={claimKeyHash || collectedFor(contractAddress)[payee]?.claimKeyHash || ""}
+              value={effectiveClaimKeyHash}
               disabled={busy}
               placeholder="Employee's claim key hash"
               style={{ minWidth: 320 }}
@@ -337,7 +353,7 @@ export function EndEmployment({
           <button
             type="button"
             className="primary"
-            disabled={busy || !claimKeyHash || !passphrase || !api}
+            disabled={busy || !effectiveClaimKeyHash || !passphrase || !api}
             onClick={() => void submit()}
           >
             {busy ? step : `End employment as of ${periodName(period!)}`}
