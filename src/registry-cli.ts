@@ -1,8 +1,12 @@
 import "dotenv/config";
 import * as readline from "readline/promises";
 import chalk from "chalk";
+import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
+import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { EnvironmentManager } from "./utils/environment.js";
+import { contractModulePath } from "./utils/contract.js";
 import { listDeployments } from "./utils/deployments.js";
+import { hex } from "./utils/keys.js";
 import {
   closeRegistry,
   databaseUrl,
@@ -56,44 +60,118 @@ function show(rows: Registration[]): void {
 /**
  * Rebuilds rows for contracts that were onboarded while the database was down.
  *
- * Only the fields the deployment record actually knows are restored — the
- * company's display name is not among them, so the instance slug stands in
- * rather than inventing one.
+ * `recordRegistration` runs at the end of onboarding and is deliberately
+ * non-fatal — the contract is deployed and assigned by then, both irreversible,
+ * so a database outage must not turn a completed onboarding into a failure. The
+ * cost of that correct decision is this: contracts exist on chain with no row
+ * anywhere, and the only sign was a warning in a job log that scrolled past.
+ *
+ * ── Where each field comes from ─────────────────────────────────────────────
+ *
+ * The employer key is read from the CONTRACT, not from `deployment.json`. This
+ * function used to write `employerKey: ""` with a comment saying the chain was
+ * the place to read it, which left every backfilled row missing the one field
+ * that says whose contract it is — the deployer card renders it, and a blank
+ * there is indistinguishable from an unassigned instance.
+ *
+ * The company's display name is nowhere on chain and nowhere in the deployment
+ * record — a slug is not a name — so it is asked for. Enter to accept the slug.
+ * Inventing one would be worse than either.
  */
-async function backfill(networkId: string): Promise<void> {
-  const missing = listDeployments().filter(
+async function backfill(
+  networkId: string,
+  rl: readline.Interface
+): Promise<void> {
+  const network = EnvironmentManager.getNetworkConfig();
+  setNetworkId(networkId);
+
+  const candidates = listDeployments().filter(
     ([, record]) =>
       record.networkId === networkId &&
       record.contractName === "payroll" &&
-      record.instance
+      record.instance &&
+      // A record marked unreadable by this build cannot be asked who its
+      // employer is, so registering it would mean writing the blank key this
+      // function exists to stop writing.
+      !record.retired
   );
 
-  if (missing.length === 0) {
+  if (candidates.length === 0) {
     console.log(chalk.gray("\nNothing to backfill.\n"));
     return;
   }
 
   const existing = new Set((await listRegistrations(networkId)).map((r) => r.instance));
-  let added = 0;
+  const provider = indexerPublicDataProvider(network.indexer, network.indexerWS);
+  const payroll = await import(contractModulePath("payroll"));
 
-  for (const [, record] of missing) {
-    if (existing.has(record.instance!)) continue;
-    await recordRegistration({
-      companyName: record.instance!,
-      instance: record.instance!,
+  let added = 0;
+  const skipped: string[] = [];
+
+  for (const [, record] of candidates) {
+    const instance = record.instance!;
+    if (existing.has(instance)) continue;
+
+    let employerKey: string;
+    try {
+      const state = await provider.queryContractState(record.contractAddress);
+      if (!state) {
+        skipped.push(`${instance} (no state on the indexer)`);
+        continue;
+      }
+      const ledger = payroll.ledger(state.data);
+      if (!ledger.employerAssigned) {
+        // Deployed but never handed over. There is no employer to register, and
+        // a row claiming otherwise would outlive the mistake.
+        skipped.push(`${instance} (no employer assigned)`);
+        continue;
+      }
+      employerKey = hex(ledger.employer.bytes);
+    } catch (cause) {
+      skipped.push(
+        `${instance} (${cause instanceof Error ? cause.message : String(cause)})`
+      );
+      continue;
+    }
+
+    const answer = (
+      await rl.question(
+        `Company name for ${chalk.white.bold(instance)} ` +
+          chalk.gray(`[${instance}]: `)
+      )
+    ).trim();
+
+    const registration = await recordRegistration({
+      companyName: answer || instance,
+      instance,
       networkId: record.networkId,
       contractAddress: record.contractAddress,
-      // Not in the deployment record; the chain is the place to read it.
-      employerKey: "",
+      employerKey,
     });
-    console.log(chalk.green(`   + ${record.instance}`));
+    console.log(
+      chalk.green(`   + ${registration.companyName}`) +
+        chalk.gray(`  employer ${employerKey.slice(0, 16)}…  until ${
+          registration.expiresAt.toISOString().slice(0, 10)
+        }`)
+    );
     added += 1;
+  }
+
+  // Said out loud rather than left to a count that does not add up. A silent
+  // skip here means a contract nobody will notice is unregistered.
+  if (skipped.length > 0) {
+    console.log(chalk.yellow(`\nSkipped ${skipped.length}:`));
+    for (const line of skipped) console.log(chalk.gray(`   · ${line}`));
   }
 
   console.log(
     added === 0
-      ? chalk.gray("\nAll deployed instances are already recorded.\n")
-      : chalk.green(`\nAdded ${added} registration(s).\n`)
+      ? chalk.gray("\nNothing added — every readable instance is already recorded.\n")
+      : chalk.green(`\nAdded ${added} registration(s).\n`) +
+          chalk.gray(
+            `   The term runs ${registrationTermMonths()} months from today, not from\n` +
+              "   the original onboarding — the chain does not record when that was.\n"
+          )
   );
 }
 
@@ -155,7 +233,7 @@ async function main() {
             break;
           }
           case "5":
-            await backfill(network.networkId);
+            await backfill(network.networkId, rl);
             break;
           case "6":
             running = false;
