@@ -379,8 +379,12 @@ export function Public() {
       {/* Directly under the sentence that explains why it cannot do more.
           Anywhere else and the card would read as the console that sentence
           says does not exist. */}
-      {isDeployer ? <DeployerRegistry networkId={networkId} /> : null}
+      {/* Above the registry, not below it. The registry is one card per
+          onboarded company and grows without bound, so anything after it is
+          off-screen on a service with any history — which is exactly the
+          service most likely to want a reset. */}
       {isDeployer ? <ServiceReset /> : null}
+      {isDeployer ? <DeployerRegistry networkId={networkId} /> : null}
 
       {/* Its own section rather than a row in the contract list: which asset
           salaries settle in is a property of the system, and the caveats that
