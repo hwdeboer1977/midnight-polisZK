@@ -92,5 +92,10 @@
     "networkId": "preview",
     "instance": "test-company-1",
     "retired": true
+  },
+  "preview/payroll": {
+    "contractAddress": "ee86a2e1f869abd68c17fffadf76ee712ae889c8cd01abd516fb17e15e06934f",
+    "contractName": "payroll",
+    "networkId": "preview"
   }
 }

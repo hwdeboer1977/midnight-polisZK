@@ -152,8 +152,16 @@ async function main() {
     // triggering a remittance can never redirect one. Read from the same two
     // environment variables, because money withheld from a salary and money
     // withheld from the benefit that replaces it must land in the same place.
+    //
+    // "exactly as payroll's are" was true of the contract and not of this list:
+    // payroll took the same two arguments and was not given them here, so
+    // `npm run deploy:payroll` failed with "expected 3 arguments … received 1"
+    // — a deploy-time arity error rather than anything about the contract. It
+    // went unnoticed because payroll is normally deployed through
+    // `utils/onboarding.ts`, which does pass them (and is the reason self-serve
+    // onboarding kept working while this path did not).
     const constructorArgs =
-      contractName === "fund"
+      contractName === "fund" || contractName === "payroll"
         ? (() => {
             const t = treasuryKeys();
             console.log(chalk.gray(`   tax treasury    ${process.env.TAX_TREASURY_KEY}`));
