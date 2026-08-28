@@ -813,6 +813,86 @@ export async function fundWithholding(options: {
  * Which is why this belongs in the browser: the passphrase is the one input the
  * server does not have and should not.
  */
+/**
+ * Which of the contract's coins the derived withholding coin actually is.
+ *
+ * Answers what the proof server will not: `Public transcript input mismatch for
+ * input N` names no field. This rebuilds the commitment from the fields
+ * `remitWithholding` would send and looks for it among the coins the contract
+ * holds, so "wrong nonce", "wrong ordinal" and "coin is fine" stop looking
+ * identical.
+ *
+ * `runtimeCoinCommitment` takes AlignedValues, not plain objects — see
+ * `onchain-runtime-v3.d.ts` — and the recipient needs BOTH branches of the
+ * Either present even though only one is used. Guessing either of those costs
+ * an opaque "Reflect.get called on non-object".
+ *
+ * Returns positions and booleans only: no nonce, no commitment, nothing that
+ * identifies a coin off this machine.
+ */
+export async function checkWithholdingCoin(options: {
+  networkId: string;
+  contractAddress: string;
+  passphrase: string;
+  tokenId: string;
+  period: number;
+  rounds?: number[];
+}): Promise<unknown> {
+  const { networkId, contractAddress, passphrase, tokenId, period } = options;
+  const rounds = options.rounds ?? [0, 1, 2];
+  const rt: any = await import("@midnight-ntwrk/compact-runtime");
+  const aligned = (d: any, v: unknown) => ({ value: d.toValue(v), alignment: d.alignment() });
+
+  const employerKey = await deriveEmployerKey(passphrase, contractAddress);
+  const entries = await fetchContractLeafEntries(networkId, contractAddress);
+  const ledger = ((await import("../generated/payroll/index.js")) as any).ledger(
+    await currentLedgerState(networkId, contractAddress)
+  );
+  const key = BigInt(period);
+  const totals: Record<string, bigint> = {
+    tax: ledger.totalTaxFor.member(key) ? ledger.totalTaxFor.lookup(key) : 0n,
+    social: ledger.totalSocialFor.member(key) ? ledger.totalSocialFor.lookup(key) : 0n,
+  };
+  const ordinals: Record<string, number | null> = {
+    tax: ledger.taxCoinFor.member(key) ? Number(ledger.taxCoinFor.lookup(key)) : null,
+    social: ledger.socialCoinFor.member(key) ? Number(ledger.socialCoinFor.lookup(key)) : null,
+  };
+
+  const recipient = aligned(rt.ShieldedCoinRecipientDescriptor, {
+    is_left: false,
+    left: { bytes: new Uint8Array(32) },
+    right: { bytes: toHexBytes(contractAddress) },
+  });
+
+  const results: Record<string, unknown> = {
+    ordinals,
+    leaves: entries.map((e) => e.index),
+    totals: { tax: String(totals.tax), social: String(totals.social) },
+  };
+  for (const which of ["tax", "social"] as const) {
+    for (const round of rounds) {
+      const nonce = await withholdingCoinNonce(employerKey, period, round, which);
+      const commitment = bytesToHex(
+        rt.runtimeCoinCommitment(
+          aligned(rt.ShieldedCoinInfoDescriptor, {
+            nonce,
+            color: toHexBytes(tokenId),
+            value: totals[which],
+          }),
+          recipient
+        ).value[0]
+      ).toLowerCase();
+      const at = entries.findIndex((e) => e.commitment === commitment);
+      results[`${which}-round${round}`] = {
+        matchesPosition: at,
+        matchesLeaf: at >= 0 ? entries[at]!.index : null,
+        expectedOrdinal: ordinals[which],
+      };
+    }
+  }
+  return results;
+}
+
 export async function remitWithholding(options: {
   api: ConnectedAPI;
   networkId: string;
@@ -887,6 +967,7 @@ export async function remitWithholding(options: {
     throw new Error(`No ${what} coin is recorded for period ${period}.`);
   }
   const ordinal = Number(coinMap.lookup(key));
+  const round = ledger.fileRoundFor?.member(key) ? Number(ledger.fileRoundFor.lookup(key)) : 0;
 
   // Read through the provider that will prove, so the leaf position and the tree
   // the proof is built over are the same tree — the mismatch `a07c8bf` chased.
@@ -896,65 +977,78 @@ export async function remitWithholding(options: {
     contractAddress,
     (contractProviders as any).publicDataProvider
   );
-  const entry = entries[ordinal];
+  // ── Find the coin by its commitment, not by its ordinal ───────────────────
+  //
+  // `taxCoinFor` / `socialCoinFor` record the ORDER the contract received each
+  // coin. The obvious next step — take the Nth-lowest leaf the contract owns —
+  // is wrong, and quietly so: `fundWithholding` creates both coins in ONE
+  // transaction, and the Zswap tree does not place them in the order they were
+  // received. On period 202609 the tax coin was received first (ordinal 2) and
+  // landed at leaf 47018, while the social coin (ordinal 3) landed at 47016.
+  //
+  // Sending the tax nonce and value with the social coin's `mt_index` produced
+  // `Public transcript input mismatch for input 13` — every field individually
+  // correct, the combination describing no coin that exists.
+  //
+  // `payPeriod` never hit this because salary coins are funded one per
+  // transaction, so receipt order and tree order happen to agree there.
+  //
+  // Rebuilding the commitment removes the guess entirely: the coin is whichever
+  // leaf holds exactly this nonce, colour and value.
+  const rt: any = await import("@midnight-ntwrk/compact-runtime");
+  const alignedValue = (descriptor: any, value: unknown) => ({
+    value: descriptor.toValue(value),
+    alignment: descriptor.alignment(),
+  });
+  const nonce = await withholdingCoinNonce(employerKey, period, round, what);
+  const commitment = bytesToHex(
+    rt.runtimeCoinCommitment(
+      alignedValue(rt.ShieldedCoinInfoDescriptor, {
+        nonce,
+        color: toHexBytes(tokenId),
+        value: forPeriod,
+      }),
+      // Both branches of the Either, even though only one is used — the
+      // descriptor requires it, and omitting one fails inside WASM with
+      // "Reflect.get called on non-object" rather than anything readable.
+      alignedValue(rt.ShieldedCoinRecipientDescriptor, {
+        is_left: false,
+        left: { bytes: new Uint8Array(32) },
+        right: { bytes: toHexBytes(contractAddress) },
+      })
+    ).value[0]
+  ).toLowerCase();
+
+  const entry = entries.find((candidate) => candidate.commitment === commitment);
   if (entry === undefined) {
     throw new Error(
-      `The contract records coin #${ordinal} for the ${what} withheld, but only ` +
-        `${entries.length} coins are visible — the indexer may be behind.`
+      `The ${what} coin for period ${period} matches none of the ${entries.length} ` +
+        "coins this contract holds. Its nonce comes from your passphrase, so the " +
+        "most likely cause is a different passphrase than the one that moved the " +
+        "withholding in — or the indexer is behind."
     );
   }
   const leaf = entry.index;
+  if (entries.indexOf(entry) !== ordinal) {
+    // Not an error: the contract's ordinal is a receipt counter, not a tree
+    // position, and the two disagreeing is the normal case here. Logged because
+    // it is the fact that made this bug invisible for a day.
+    console.info(
+      `[remit] ${what} coin is the contract's #${ordinal} by receipt order but ` +
+        `sits at leaf ${leaf} (position ${entries.indexOf(entry)}).`
+    );
+  }
 
-  const round = ledger.fileRoundFor?.member(key) ? Number(ledger.fileRoundFor.lookup(key)) : 0;
   const treasury = what === "tax" ? ledger.taxTreasury : ledger.socialTreasury;
   const recipient = bytesToHex(treasury.bytes).toLowerCase();
 
-  // ── Check the coin before proving it ──────────────────────────────────────
-  //
-  // Rebuild the commitment from the fields about to be sent and compare it with
-  // what the contract's leaf actually holds. A wrong nonce, colour or value is
-  // otherwise reported by the proof server as
-  // `Public transcript input mismatch for input N` — which names no field, took
-  // minutes of proving to reach, and cost an afternoon of guessing at exactly
-  // this call.
-  //
-  // Searched across every leaf rather than only the expected one, because
-  // "matches a different coin" and "matches nothing" are different bugs: the
-  // first is the ordinal lookup, the second is the coin's own fields.
+  // The coin the contract holds, rebuilt from the fields that created it.
   const coin = {
-    nonce: await withholdingCoinNonce(employerKey, period, round, what),
+    nonce,
     color: toHexBytes(tokenId),
     value: forPeriod,
     mt_index: BigInt(leaf),
   };
-  try {
-    const { runtimeCoinCommitment } = await import("@midnight-ntwrk/compact-runtime");
-    const expected = bytesToHex(
-      (runtimeCoinCommitment as any)(
-        { nonce: coin.nonce, color: coin.color, value: coin.value },
-        { left: { bytes: toHexBytes(contractAddress) }, is_left: false }
-      )
-    ).toLowerCase();
-
-    if (expected !== entry.commitment) {
-      const elsewhere = entries.find((e) => e.commitment === expected);
-      throw new Error(
-        elsewhere
-          ? `The ${what} coin this builds is the contract's coin at leaf ${elsewhere.index}, ` +
-            `but the contract records coin #${ordinal} (leaf ${leaf}) for that period. ` +
-            "The ordinal lookup is wrong, not the coin."
-          : `The ${what} coin this builds does not match anything the contract holds. ` +
-            "The passphrase derives its nonce, so the most likely cause is a different " +
-            "passphrase than the one that moved the withholding in."
-      );
-    }
-  } catch (cause) {
-    // A failure to CHECK must not block the send: this is a guard against a
-    // confusing error, not a consensus rule, and the circuit asserts the same
-    // facts anyway. Only a mismatch it actually proved is rethrown.
-    if (cause instanceof Error && cause.message.startsWith("The ")) throw cause;
-    console.warn("[remit] could not pre-check the coin:", cause);
-  }
 
   onProgress(`Sending the withheld ${what} to its treasury…`);
   // `submitCallTx` rather than the `callTx` shorthand, which cannot carry the
@@ -963,7 +1057,11 @@ export async function remitWithholding(options: {
     compiledContract,
     contractAddress,
     circuitId: what === "tax" ? "remitTax" : "remitSocial",
-    args: [key, coin],
+    // The treasury is passed and the circuit asserts it equals the frozen
+    // ledger value, so this cannot redirect anything. It is an argument rather
+    // than a ledger read so the recipient reaches `sendShielded` disclosed,
+    // exactly as `payPeriod` passes its payees.
+    args: [key, { bytes: treasury.bytes }, coin],
     additionalCoinEncPublicKeyMappings: new Map([[recipient, encryptionKey]]),
   } as any);
 
@@ -1009,6 +1107,21 @@ export interface PeriodStatus {
   unpaid: number | null;
   /** Whether any sealed opening exists, i.e. whether a passphrase can be checked. */
   hasSealed: boolean;
+  /**
+   * Newest period whose withholding is in the contract but not yet sent on.
+   *
+   * Read from `taxCoinFor`, because `remitTax` REMOVES that entry when it
+   * succeeds — so its presence is the chain's own record of "collected, not
+   * remitted", and needs no local state to track.
+   *
+   * Exists because remitting is the one step that outlives its month. Filing,
+   * paying and withholding all belong to the month being worked on, so the
+   * stepper follows the calendar and moves to the next month once they are
+   * done. A pool left in the contract does not move on with it — and without
+   * this the control for it was only ever rendered for the current month, so a
+   * September pool became unreachable the moment October began.
+   */
+  unremitted: number | null;
 }
 
 /**
@@ -1024,7 +1137,7 @@ export async function periodStatus(
 ): Promise<PeriodStatus> {
   const { ledger } = await import("../generated/payroll/index.js");
   const state = await currentLedgerState(networkId, contractAddress).catch(() => null);
-  if (!state) return { filed: [], unpaid: null, hasSealed: false };
+  if (!state) return { filed: [], unpaid: null, hasSealed: false, unremitted: null };
 
   const readable = (ledger as any)(state);
   const periods = [...(readable.periods as Iterable<bigint>)].sort((a, b) =>
@@ -1033,12 +1146,24 @@ export async function periodStatus(
 
   let unpaid: number | null = null;
   let hasSealed = false;
+  let unremitted: number | null = null;
 
   for (const period of periods) {
     if (readable.sealedFor.member(period)) {
       for (const [, blob] of readable.sealedFor.lookup(period)) {
         if ((blob as Uint8Array).some((b: number) => b !== 0)) hasSealed = true;
       }
+    }
+    // Either pool still holding a coin means this period is not fully remitted.
+    // Checked independently of `unpaid`: a period can be paid in full and still
+    // have its withholding sitting in the contract, which is exactly the state
+    // this exists to surface.
+    if (
+      unremitted === null &&
+      ((readable.taxCoinFor?.member(period) ?? false) ||
+        (readable.socialCoinFor?.member(period) ?? false))
+    ) {
+      unremitted = Number(period);
     }
     if (unpaid === null && readable.commitmentsFor.member(period)) {
       const total = Number(readable.commitmentsFor.lookup(period).size());
@@ -1050,7 +1175,7 @@ export async function periodStatus(
     }
   }
 
-  return { filed: periods.map(Number), unpaid, hasSealed };
+  return { filed: periods.map(Number), unpaid, hasSealed, unremitted };
 }
 
 /**

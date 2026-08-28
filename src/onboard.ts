@@ -29,8 +29,14 @@ async function main() {
   console.log(chalk.green.bold("🎉 Employer onboarded"));
   console.log(chalk.cyan("   Instance: ") + result.key);
   console.log(chalk.cyan("   Contract: ") + result.contractAddress);
-  console.log(chalk.gray("   deploy tx: " + result.deployTxHash));
   console.log(chalk.gray("   assign tx: " + result.assignTxHash));
+  console.log(
+    chalk.gray(
+      result.periodsRecorded.length > 0
+        ? `   rule sets recorded: ${result.periodsRecorded.join(", ")}`
+        : "   rule sets: already recorded for every period in the window"
+    )
+  );
   console.log();
   console.log(
     chalk.gray("   Fund them with pEUR: ") + chalk.yellow.bold("npm run peur") + chalk.gray(" (option 3)")

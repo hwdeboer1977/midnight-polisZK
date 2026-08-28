@@ -472,12 +472,13 @@ async function main() {
     while (running) {
       console.log(chalk.cyan("--- Menu ---"));
       console.log("1. Show status");
-      console.log("2. Assign employer            (platform, once)");
+      console.log("2. Assign employer            (platform)");
       console.log("3. Set payroll from roster.xlsx (employer)");
       console.log("4. Verify a commitment        (employer)");
       console.log("5. Transfer employer rights   (employer)");
       console.log("6. Recover openings from chain (employer)");
-      console.log("7. Exit");
+      console.log("7. Revoke employer            (platform)");
+      console.log("8. Exit");
 
       const choice = await rl.question("\nYour choice: ");
 
@@ -495,8 +496,8 @@ async function main() {
           console.log(
             chalk.gray(
               "\nThe employer runs this CLI and reads their key off the header,\n" +
-                "then sends it here. Assigning is permanent: after this the\n" +
-                "platform cannot reassign, revoke, or set payroll.\n"
+                "then sends it here. The platform still cannot set payroll — but it\n" +
+                "can take the seat back with option 7 and assign it again.\n"
             )
           );
           const answer = await rl.question("Employer coin public key (hex): ");
@@ -866,13 +867,52 @@ async function main() {
           break;
         }
 
-        case "7":
+        case "7": {
+          console.log(
+            chalk.yellow(
+              "\nThis vacates the employer seat. Payroll history, the pools and\n" +
+                "every past commitment stay exactly as they are — what stops is\n" +
+                "the employer's ability to write anything new. Assign again with\n" +
+                "option 2 to restore them, or to hand the instance to someone else.\n"
+            )
+          );
+          // The base contract has no INSTANCE, and an empty expected string
+          // would make a bare Enter the confirmation. A word to type keeps the
+          // gesture deliberate in both cases.
+          const expected = currentInstance() ?? "revoke";
+          const confirm = await rl.question(`Type "${expected}" to confirm: `);
+          if (confirm.trim() !== expected) {
+            // Matched against the instance rather than a plain y/n because this
+            // is the one platform action that takes something away from a
+            // customer, and the operator running it against the wrong INSTANCE
+            // is the realistic way it goes wrong.
+            console.error(
+              chalk.red(
+                `❌ Expected "${expected}" — nothing was revoked.\n`
+              )
+            );
+            break;
+          }
+
+          try {
+            console.log(chalk.gray("\nProving and submitting..."));
+            const tx = await conn.deployed.callTx.revokeEmployer();
+            console.log(chalk.green("✅ Employer revoked."));
+            console.log(`Tx hash: ${tx.public.txHash}`);
+            console.log(`Block height: ${tx.public.blockHeight}\n`);
+          } catch (error) {
+            console.error(chalk.red("❌ Failed to revoke employer:"), error);
+          }
+          break;
+        }
+
+        case "8":
           running = false;
           console.log("\n👋 Goodbye!");
           break;
 
         default:
-          console.log(chalk.red("❌ Invalid choice. Please enter 1-7.\n"));
+          console.log(chalk.red("❌ Invalid choice. Please enter 1-8.\n"));
       }
     }
   } finally {

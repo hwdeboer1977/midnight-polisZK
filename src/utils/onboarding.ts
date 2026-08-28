@@ -1,11 +1,10 @@
-import { deployContract } from "@midnight-ntwrk/midnight-js-contracts";
+import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { nativeToken } from "@midnight-ntwrk/ledger-v8";
 import { MidnightProviders } from "../providers/midnight-providers.js";
 import { EnvironmentManager } from "./environment.js";
 import { loadCompiledContract } from "./contract.js";
-import { deploymentKey, getDeployment, saveDeployment } from "./deployments.js";
-import { treasuryKeys } from "./treasury.js";
+import { deploymentKey, getDeployment } from "./deployments.js";
 import { DUTCH_V1 } from "./tax-params.js";
 import { hex, toPublicKey } from "./keys.js";
 import { recordRegistration } from "./registry.js";
@@ -16,16 +15,48 @@ export interface OnboardResult {
   instance: string;
   key: string;
   contractAddress: string;
+  /**
+   * Empty, and kept rather than removed.
+   *
+   * Onboarding no longer deploys anything, so there is no deploy transaction to
+   * report — the contract was deployed once, by `npm run deploy`, possibly
+   * months earlier. The field stays so the CLI and the demo server keep
+   * compiling and keep their response shape; a caller that renders it gets
+   * nothing to render, which is the truth.
+   */
   deployTxHash: string;
   assignTxHash: string;
+  /** Periods whose rule set this run recorded. Empty when all were already set. */
+  periodsRecorded: number[];
 }
 
 /**
- * Deploys a payroll contract and hands it to one employer.
+ * Hands THE payroll contract — the one named by `payroll_address` — to an
+ * employer.
  *
- * Two transactions, because assignment is a circuit call and cannot run in a
- * constructor. Doing both here closes the window in which an instance exists
- * with no owner and could be claimed by the wrong key.
+ * ── What changed, and why it is not a smaller system ───────────────────────
+ *
+ * This used to deploy a fresh contract per employer and assign that. It read
+ * well and it did not match how the service is run: `payroll_address` names the
+ * contract this deployment offers, the UI is pinned to it, and every CLI with no
+ * INSTANCE set resolves to it — while onboarding quietly created a different
+ * contract that none of those three would ever look at. Two employers onboarded
+ * that way produced two contracts nothing pointed to, which is exactly what
+ * `hw-test-1` and `hw-test-2` are.
+ *
+ * The seat is now singular and reusable rather than plural and permanent.
+ * `revokeEmployer` vacates it and this fills it again, so rotating employers is
+ * revoke-then-onboard rather than deploy-another-contract. Serving several
+ * employers at once means several contracts, each its own deployment with its
+ * own `payroll_address` — which is a deployment decision, made once, rather than
+ * something an onboarding form does silently on someone's behalf.
+ *
+ * ── The one irreversible thing it still does ───────────────────────────────
+ *
+ * `setParamsFor` is write-once per period. A period recorded under one employer
+ * keeps its rule set when the next employer takes the seat, and that is correct
+ * — the rules for March are a fact about March, not about who was filing. So
+ * this records only the periods that have none, and says which.
  *
  * Shared by the CLI and the demo onboarding service so both produce identical
  * results — an employer onboarded through the browser is not a second-class one.
@@ -59,9 +90,17 @@ export async function onboardEmployer(
     );
   }
 
-  const key = deploymentKey(network.networkId, "payroll", slug);
-  if (getDeployment(network.networkId, "payroll", slug)) {
-    throw new Error(`"${key}" already exists — pick a different company name`);
+  // The base contract, resolved exactly as every other unscoped caller resolves
+  // it — no instance, so this is `payroll_address`. Deliberately NOT keyed by
+  // slug: the slug names a customer, not a contract, and the two stopped being
+  // the same thing when onboarding stopped deploying.
+  const key = deploymentKey(network.networkId, "payroll");
+  const deployment = getDeployment(network.networkId, "payroll");
+  if (!deployment) {
+    throw new Error(
+      `No payroll contract on ${network.networkId}. Deploy one with ` +
+        "`npm run deploy` and put its address in payroll_address."
+    );
   }
 
   log("Building wallet…");
@@ -78,7 +117,7 @@ export async function onboardEmployer(
       throw new Error("The platform wallet has no tDUST, so it cannot pay fees");
     }
 
-    const { compiledContract } = await loadCompiledContract("payroll");
+    const { contractModule, compiledContract } = await loadCompiledContract("payroll");
     const { walletProvider, midnightProvider } = makeWalletProviders(wallet);
     const providers = MidnightProviders.create({
       contractName: "payroll",
@@ -89,27 +128,32 @@ export async function onboardEmployer(
       privateStateStoreName: `${key.replace(/[/:]/g, "-")}-state`,
     });
 
-    // The constructor freezes both treasury destinations, so self-service
-    // registration needs them too — without these the deploy fails at runtime
-    // with an arity error rather than anything that names the cause.
-    const treasuries = treasuryKeys();
-
-    log("Deploying the payroll contract…");
-    const deployed = await deployContract(providers as any, {
+    const contractAddress = deployment.contractAddress;
+    log(`Using the payroll contract at ${contractAddress}`);
+    const deployed: any = await findDeployedContract(providers as any, {
       compiledContract: compiledContract as any,
-      args: [treasuries.tax, treasuries.social],
-    } as any);
-    const contractAddress = deployed.deployTxData.public.contractAddress;
-    log(`Deployed at ${contractAddress}`);
-
-    saveDeployment({
       contractAddress,
-      deployedAt: new Date().toISOString(),
-      network: network.name,
-      networkId: network.networkId,
-      contractName: "payroll",
-      instance: slug,
     });
+
+    // Read the seat from the CONTRACT, not from any record of it.
+    //
+    // The registry database can say a company is inactive while the chain still
+    // has them as employer, and `deployment.json` says nothing about ownership
+    // at all. `assignEmployer` asserts `!employerAssigned` and would fail here
+    // anyway — but it would fail after a proof, with "employer already assigned"
+    // and no indication of who holds it or how to free it.
+    const ledger = (contractModule as any).ledger(
+      await providers.publicDataProvider.queryContractState(contractAddress).then(
+        (state: any) => state.data
+      )
+    );
+    if (ledger.employerAssigned) {
+      throw new Error(
+        `This contract already has an employer (${hex(ledger.employer.bytes)}). ` +
+          "Revoke them first — payroll CLI option 7, or the deployer's " +
+          "\"Revoke an employer\" card — then onboard again."
+      );
+    }
 
     // Before handing it over, open the window of months this contract can file.
     //
@@ -120,15 +164,32 @@ export async function onboardEmployer(
     // with an error about rule sets they have never heard of.
     const hash = await ruleSetHash(network.networkId);
     const window = ruleWindow(new Date(), DEFAULT_WINDOW_MONTHS);
-    log(`Recording the rule set for ${window.length} periods…`);
+
+    // Skipped where already recorded, because `setParamsFor` is write-once per
+    // period and this contract outlives the employer sitting in it. The second
+    // employer to take the seat shares the first one's rule window wherever it
+    // overlaps — which is right, since a period's rules are a fact about the
+    // period — and would otherwise fail on "that period already has a rule set"
+    // partway through, leaving the seat unfilled for a reason that reads like a
+    // bug.
+    const periodsRecorded: number[] = [];
+    const already: number[] = [];
     for (const period of window) {
+      if (ledger.paramsHashFor.member(BigInt(period))) {
+        already.push(period);
+        continue;
+      }
       await deployed.callTx.setParamsFor(BigInt(period), hash);
       log(`   ${period} → rule set v${DUTCH_V1.version}`);
+      periodsRecorded.push(period);
+    }
+    if (already.length > 0) {
+      log(`   ${already.length} period(s) already had a rule set — left as they were`);
     }
 
     log("Assigning the employer…");
     const assignTx = await deployed.callTx.assignEmployer(employer);
-    log("Assigned — this cannot be undone");
+    log("Assigned — reversible only by the platform, with revokeEmployer");
 
     // Bookkeeping, deliberately after the chain work and deliberately not fatal.
     // The contract is deployed and assigned by this point, and both are
@@ -157,8 +218,9 @@ export async function onboardEmployer(
       instance: slug,
       key,
       contractAddress,
-      deployTxHash: deployed.deployTxData.public.txHash,
+      deployTxHash: "",
       assignTxHash: assignTx.public.txHash,
+      periodsRecorded,
     };
   } finally {
     await wallet.facade.stop();

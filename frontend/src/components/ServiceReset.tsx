@@ -31,10 +31,11 @@ import { apiUrl } from "../lib/origin";
  * ── What it destroys ────────────────────────────────────────────────────────
  *
  * `deployment.json` is the only record of an onboarded contract's address, and
- * `assignEmployer` can be called once — so a contract already bound to an
- * employer is theirs permanently, and once its address is gone nothing can reach
- * it again. On a service with real employers on it this strands them. The
- * confirmation says that in those words rather than asking "are you sure?".
+ * an address is the only way back to a contract. `revokeEmployer` changes who
+ * holds an instance but not this: a revoked seat is still a seat on a contract
+ * nothing can find once its address is gone. On a service with real employers on
+ * it this strands them. The confirmation says that in those words rather than
+ * asking "are you sure?".
  */
 export function ServiceReset() {
   const [token, setToken] = useState("");

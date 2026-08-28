@@ -9,6 +9,7 @@ export type ImpureCircuits<PS> = {
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
+  revokeEmployer(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   transferEmployer(context: __compactRuntime.CircuitContext<PS>,
                    newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
@@ -71,6 +72,7 @@ export type ImpureCircuits<PS> = {
                                 }): __compactRuntime.CircuitResults<PS, []>;
   remitTax(context: __compactRuntime.CircuitContext<PS>,
            period_0: bigint,
+           treasury_0: { bytes: Uint8Array },
            coin_0: { nonce: Uint8Array,
                      color: Uint8Array,
                      value: bigint,
@@ -78,6 +80,7 @@ export type ImpureCircuits<PS> = {
                    }): __compactRuntime.CircuitResults<PS, []>;
   remitSocial(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
+              treasury_0: { bytes: Uint8Array },
               coin_0: { nonce: Uint8Array,
                         color: Uint8Array,
                         value: bigint,
@@ -105,6 +108,7 @@ export type ProvableCircuits<PS> = {
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
+  revokeEmployer(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   transferEmployer(context: __compactRuntime.CircuitContext<PS>,
                    newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
@@ -167,6 +171,7 @@ export type ProvableCircuits<PS> = {
                                 }): __compactRuntime.CircuitResults<PS, []>;
   remitTax(context: __compactRuntime.CircuitContext<PS>,
            period_0: bigint,
+           treasury_0: { bytes: Uint8Array },
            coin_0: { nonce: Uint8Array,
                      color: Uint8Array,
                      value: bigint,
@@ -174,6 +179,7 @@ export type ProvableCircuits<PS> = {
                    }): __compactRuntime.CircuitResults<PS, []>;
   remitSocial(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
+              treasury_0: { bytes: Uint8Array },
               coin_0: { nonce: Uint8Array,
                         color: Uint8Array,
                         value: bigint,
@@ -221,6 +227,7 @@ export type Circuits<PS> = {
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
+  revokeEmployer(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   transferEmployer(context: __compactRuntime.CircuitContext<PS>,
                    newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
@@ -283,6 +290,7 @@ export type Circuits<PS> = {
                                 }): __compactRuntime.CircuitResults<PS, []>;
   remitTax(context: __compactRuntime.CircuitContext<PS>,
            period_0: bigint,
+           treasury_0: { bytes: Uint8Array },
            coin_0: { nonce: Uint8Array,
                      color: Uint8Array,
                      value: bigint,
@@ -290,6 +298,7 @@ export type Circuits<PS> = {
                    }): __compactRuntime.CircuitResults<PS, []>;
   remitSocial(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
+              treasury_0: { bytes: Uint8Array },
               coin_0: { nonce: Uint8Array,
                         color: Uint8Array,
                         value: bigint,

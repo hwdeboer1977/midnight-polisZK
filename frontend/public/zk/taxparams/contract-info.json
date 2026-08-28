@@ -1,0 +1,308 @@
+{
+  "compiler-version": "0.31.1",
+  "language-version": "0.23.0",
+  "runtime-version": "0.16.0",
+  "circuits": [
+    {
+      "name": "publish",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "params",
+          "type": {
+            "type-name": "Struct",
+            "name": "TaxParams",
+            "elements": [
+              {
+                "name": "version",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "validFrom",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 4294967295
+                }
+              },
+              {
+                "name": "threshold1",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 1152921504606846975
+                }
+              },
+              {
+                "name": "threshold2",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 1152921504606846975
+                }
+              },
+              {
+                "name": "rate1",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "rate2",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "rate3",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "maxContribBase",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 1152921504606846975
+                }
+              },
+              {
+                "name": "contribRate",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Tuple",
+        "types": [
+        ]
+      }
+    },
+    {
+      "name": "paramsHash",
+      "pure": true,
+      "proof": false,
+      "arguments": [
+        {
+          "name": "params",
+          "type": {
+            "type-name": "Struct",
+            "name": "TaxParams",
+            "elements": [
+              {
+                "name": "version",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "validFrom",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 4294967295
+                }
+              },
+              {
+                "name": "threshold1",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 1152921504606846975
+                }
+              },
+              {
+                "name": "threshold2",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 1152921504606846975
+                }
+              },
+              {
+                "name": "rate1",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "rate2",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "rate3",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "maxContribBase",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 1152921504606846975
+                }
+              },
+              {
+                "name": "contribRate",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    }
+  ],
+  "witnesses": [
+  ],
+  "contracts": [
+  ],
+  "ledger": [
+    {
+      "name": "authority",
+      "index": 0,
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Struct",
+        "name": "ZswapCoinPublicKey",
+        "elements": [
+          {
+            "name": "bytes",
+            "type": {
+              "type-name": "Bytes",
+              "length": 32
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "paramsFor",
+      "index": 1,
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Uint",
+        "maxval": 65535
+      },
+      "value": {
+        "type-name": "Struct",
+        "name": "TaxParams",
+        "elements": [
+          {
+            "name": "version",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 65535
+            }
+          },
+          {
+            "name": "validFrom",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 4294967295
+            }
+          },
+          {
+            "name": "threshold1",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 1152921504606846975
+            }
+          },
+          {
+            "name": "threshold2",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 1152921504606846975
+            }
+          },
+          {
+            "name": "rate1",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 65535
+            }
+          },
+          {
+            "name": "rate2",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 65535
+            }
+          },
+          {
+            "name": "rate3",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 65535
+            }
+          },
+          {
+            "name": "maxContribBase",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 1152921504606846975
+            }
+          },
+          {
+            "name": "contribRate",
+            "type": {
+              "type-name": "Uint",
+              "maxval": 65535
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "versions",
+      "index": 2,
+      "exported": true,
+      "storage": "Set",
+      "type": {
+        "type-name": "Uint",
+        "maxval": 65535
+      }
+    },
+    {
+      "name": "latestVersion",
+      "index": 3,
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Uint",
+        "maxval": 65535
+      }
+    },
+    {
+      "name": "versionCount",
+      "index": 4,
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Uint",
+        "maxval": 65535
+      }
+    }
+  ]
+}

@@ -28,10 +28,11 @@ export type Deployments = Record<string, Deployment>;
 /**
  * Every contract this app knows about, from two sources.
  *
- * The STATIC file is written by `npm run frontend:config` from deployment.json,
- * with pEUR's token id read off the contract, and committed — which is what
- * lets a hosted build know any addresses at all. It is also a snapshot taken
- * when the frontend was built.
+ * The BASELINE comes from the build's own environment, written into
+ * `frontend/.env.local` by `npm run frontend:config` from the root `.env`, with
+ * pEUR's token id read off the contract. It is what lets a hosted build know any
+ * addresses at all, and it is fixed at the moment the bundle was built — it
+ * holds the four shared contracts and nothing that was deployed since.
  *
  * The BACKEND knows about anything deployed since, including contracts it
  * deployed itself a minute ago. Without asking it, a freshly onboarded employer
@@ -39,23 +40,36 @@ export type Deployments = Record<string, Deployment>;
  * their own contract — the snapshot cannot contain something created after it
  * was taken.
  *
- * Static first, backend merged over it: the committed file stays the baseline
- * that works with no backend reachable, and the live list wins where both have
- * an entry. Neither source is trusted for anything but addresses; what a
- * contract actually says about its employer is read from the chain.
+ * Baseline first, backend merged over it: the built-in addresses keep working
+ * with no backend reachable, and the live list wins where both have an entry.
+ * Neither source is trusted for anything but addresses; what a contract actually
+ * says about its employer is read from the chain.
  */
 export async function loadDeployments(): Promise<Deployments> {
   const [stat, live] = await Promise.all([loadStatic(), loadFromApi()]);
   const merged: Deployments = { ...stat, ...live };
   // `retired` survives the merge, for the same reason it does on the server.
-  // The backend wins on every other field because it knows about contracts
-  // deployed after this bundle was built — but its own record for a contract IT
-  // onboarded carries no flag, since retirement is written by hand into the
-  // committed file. Letting the API record win wholesale would un-retire
-  // exactly the contracts the static file was edited to retire.
+  //
+  // Nothing in the env baseline can carry the flag — it names four current
+  // contracts and no history — so in practice this now only defends against a
+  // future baseline that does. Kept rather than deleted because the rule it
+  // encodes is still true: retirement is sticky in one direction, and a merge
+  // must never be the thing that un-retires a contract.
   for (const [key, entry] of Object.entries(stat)) {
     if (entry.retired && merged[key] && !merged[key].retired) {
       merged[key] = { ...merged[key], retired: true };
+    }
+    // `tokenId` survives the merge too, and for a plainer reason than `retired`
+    // does: the backend's record simply may not carry one. It is written by
+    // `frontend:config`, which reads the token off the deployed pEUR contract —
+    // `deployment.json` is appended to by deploy scripts that do not. A
+    // wholesale overwrite then replaces a known token id with nothing, and every
+    // caller that needs one fails with "No pEUR token id for <network>" on a page
+    // whose baseline had it all along.
+    //
+    // Only fills a gap; a backend that DOES carry a token id still wins.
+    if (entry.tokenId && merged[key] && !merged[key].tokenId) {
+      merged[key] = { ...merged[key], tokenId: entry.tokenId };
     }
   }
   return pinned(merged);
@@ -73,8 +87,8 @@ export async function loadDeployments(): Promise<Deployments> {
  * being offered.
  *
  * Applied AFTER the merge rather than to either source, because both can carry
- * stale instances: the committed baseline has every contract ever deployed, and
- * the backend keeps its own list of what it onboarded.
+ * stale instances: the env baseline names whichever payroll contract `.env` was
+ * last pointed at, and the backend keeps its own list of what it onboarded.
  *
  * Payroll only. Other contracts are single-deployment and there is nothing to
  * choose between.
@@ -98,7 +112,17 @@ export async function loadDeployments(): Promise<Deployments> {
 export function pinnedContracts(): Set<string> | null {
   // Cast rather than typed in an ambient declaration: Vite types unknown keys
   // loosely enough that .split() lands on any.
-  const raw = String(import.meta.env.VITE_PAYROLL_CONTRACTS ?? "").trim();
+  //
+  // Falls back to the baseline address, which is the whole point: the contract
+  // this build was told to run is by definition the one it may offer, so the
+  // common case needs no second variable. Writing the default out as
+  // `VITE_PAYROLL_CONTRACTS` was the first shape and it put the same 64
+  // characters in the file twice — two names for one fact, free to disagree
+  // after any hand edit. `VITE_PAYROLL_CONTRACTS` now appears only when someone
+  // deliberately widens the list beyond that one contract.
+  const raw = String(
+    import.meta.env.VITE_PAYROLL_CONTRACTS ?? import.meta.env.VITE_PAYROLL_ADDRESS ?? ""
+  ).trim();
   if (!raw) return null;
 
   const allowed = new Set(
@@ -131,13 +155,52 @@ function pinned(all: Deployments): Deployments {
   return kept;
 }
 
+/**
+ * The baseline, built from the build's environment.
+ *
+ * This used to be `fetch("/deployments.json")` — a committed address book served
+ * as a static asset. It carried every contract ever deployed, retired ones
+ * included, and keeping it honest meant hand-editing JSON that had to agree with
+ * the root `deployment.json`. The four shared contracts it existed to carry are
+ * now lines in the root `.env`, copied into Vite's namespace by
+ * `npm run frontend:config`.
+ *
+ * Synchronous in substance, async in shape: the signature is kept so
+ * `loadDeployments` still reads as two sources merged, and so restoring a
+ * fetched source later does not ripple.
+ *
+ * An unset variable yields no entry rather than an empty address, because a
+ * deployment record with a blank address is worse than a missing one — it
+ * satisfies every "do we have a contract?" check and then fails at the indexer.
+ *
+ * Nothing here is trusted for more than an address. Whether a payroll contract
+ * belongs to this build is still decided by `pinned()`, and who controls it is
+ * still read from the chain.
+ */
 async function loadStatic(): Promise<Deployments> {
-  try {
-    const response = await fetch("/deployments.json", { cache: "no-store" });
-    return response.ok ? ((await response.json()) as Deployments) : {};
-  } catch {
-    return {};
+  const networkId = String(import.meta.env.VITE_NETWORK_ID ?? "").trim();
+  if (!networkId) return {};
+
+  const tokenId = String(import.meta.env.VITE_PEUR_TOKEN_ID ?? "").trim();
+  const baseline: [string, string, string?][] = [
+    ["payroll", String(import.meta.env.VITE_PAYROLL_ADDRESS ?? "")],
+    ["peur", String(import.meta.env.VITE_PEUR_ADDRESS ?? ""), tokenId],
+    ["taxparams", String(import.meta.env.VITE_TAXPARAMS_ADDRESS ?? "")],
+    ["fund", String(import.meta.env.VITE_FUND_ADDRESS ?? "")],
+  ];
+
+  const out: Deployments = {};
+  for (const [contractName, rawAddress, rawToken] of baseline) {
+    const contractAddress = rawAddress.trim();
+    if (!contractAddress) continue;
+    out[`${networkId}/${contractName}`] = {
+      contractAddress,
+      contractName,
+      networkId,
+      ...(rawToken ? { tokenId: rawToken } : {}),
+    };
   }
+  return out;
 }
 
 /**

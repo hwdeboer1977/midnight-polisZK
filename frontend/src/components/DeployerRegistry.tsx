@@ -1,11 +1,9 @@
 import { CopyRow } from "./CopyRow";
-import { ServiceUnavailable } from "./ServiceUnavailable";
 import { useRegistrations } from "../lib/useRegistrations";
 import { isPinned } from "../lib/deployments";
 
 /**
- * The companies this deployer has onboarded, and the one thing it can do to
- * them.
+ * The companies this deployer has onboarded. Read-only.
  *
  * Shown only to the platform key, and not because the contents are secret —
  * `/api/registrations` is public, and every contract address on this page
@@ -13,37 +11,48 @@ import { isPinned } from "../lib/deployments";
  * a visitor reading the network's own page does not need a list of customers,
  * and an employer needs their own contract, not the roll.
  *
- * ── What "deactivate" is, and is not ────────────────────────────────────────
+ * ── Why there is no button on it ───────────────────────────────────────────
  *
- * It writes one column in the registry. It does NOT touch the contract, and
- * cannot: `assignEmployer` is permanent, there is no revoke circuit, and the
- * employer keeps every power they had a second earlier — filing, funding,
- * paying, remitting. The card says so next to the button rather than in a
- * tooltip, because an operator who believes they have cut someone off when they
- * have not is worse off than one who was never offered the button.
+ * There was one: a toggle writing the registry's `status` column. It had to
+ * carry two paragraphs explaining that pressing it changed nothing an employer
+ * could feel — no transaction, no loss of any power — and an operator who
+ * believes they have cut someone off when they have not is worse off than one
+ * who was never offered the button.
  *
- * The lever that does bite is `setParamsFor`: platform-only, write-once per
+ * `revokeEmployer` is what cuts someone off, it is one card up, and it says so
+ * plainly. With a control that works, a control that only looks like it works is
+ * a liability. The status column still exists and `/api/platform/registrations/
+ * status` still writes it, for an operator who wants the bookkeeping — it is
+ * simply not a button here.
+ *
+ * The other lever that bites is `setParamsFor`: platform-only, write-once per
  * period, so an employer whose future months are never recorded cannot file
- * them. That is not a button and should not become one — it works by omission,
- * and the window an employer already holds is one they keep.
+ * them. That is not a button either and should not become one — it works by
+ * omission, and the window an employer already holds is one they keep.
  */
 export function DeployerRegistry({ networkId }: { networkId: string }) {
-  const { registrations, loading, error, pending, reachable, canWrite, setStatus } =
-    useRegistrations(networkId);
+  const { registrations, loading, error, reachable } = useRegistrations(networkId);
 
   /**
-   * Hidden rather than shown-and-broken: a registration whose contract was
-   * compiled from other source has verifier keys this build cannot transact
-   * with, so offering it leads to a wall of key-mismatch text at submit. The
-   * registry service keeps every company it ever onboarded and has no idea which
-   * contract version each belongs to, so the filter has to happen here.
+   * Hidden rather than shown-and-broken.
+   *
+   * `isPinned` now answers a narrower question than it used to. It began as
+   * "was this compiled from source this build can transact with" — a real
+   * problem, since a verifier-key mismatch surfaces as a wall of text at submit.
+   * It resolves to `payroll_address`, so what it actually asks today is "is this
+   * the contract this deployment runs", and rows for earlier contracts fail it
+   * whatever they were compiled from.
+   *
+   * Both reasons point the same way and the copy below states the current one.
+   * The registry keeps every company it ever onboarded — across redeployments,
+   * across contract versions — and has no idea which contract is live, so the
+   * filter has to happen here.
    *
    * The rows still exist in the registry and this changes nothing about them —
    * `/api/reset` does not clear registrations either, since they live in the
    * database rather than in the two files it removes.
    */
   const shown = (registrations ?? []).filter((row) => isPinned(row.contractAddress));
-  const hidden = (registrations?.length ?? 0) - shown.length;
 
   return (
     <section className="card">
@@ -85,45 +94,18 @@ export function DeployerRegistry({ networkId }: { networkId: string }) {
               </p>
               <CopyRow label="Contract" value={row.contractAddress} />
               <CopyRow label="Employer key" value={row.employerKey} />
-              <button
-                className="ghost"
-                disabled={!canWrite || pending === row.instance}
-                onClick={() =>
-                  void setStatus(row.instance, inactive ? "active" : "inactive")
-                }
-              >
-                {pending === row.instance
-                  ? "Saving…"
-                  : inactive
-                    ? "Reactivate registration"
-                    : "Deactivate registration"}
-              </button>
             </div>
           );
         })
       )}
 
-      {hidden > 0 ? (
-        <p className="note">
-          {hidden} {hidden === 1 ? "company is" : "companies are"} not shown: their
-          contracts were compiled from different contract source, so this build
-          cannot transact with them. They are still registered — nothing here
-          removed them.
-        </p>
-      ) : null}
-
       {error ? <p className="status error">{error}</p> : null}
 
-      {reachable && !canWrite ? (
-        <ServiceUnavailable what="registration change" />
-      ) : null}
-
       <p className="note">
-        Deactivating ends the service registration. It does not end the
-        employer's control of their contract — that was assigned once and cannot
-        be taken back by anyone, including you. What it does change is what this
-        platform vouches for. To stop an employer filing new months, stop
-        recording rule sets for their future periods.
+        This list is what the platform vouches for, not what the chain enforces.
+        A row here cannot give anyone control of a contract and cannot take it
+        away. To stop an employer filing, use <strong>Revoke an employer</strong>{" "}
+        above — that one is a chain transaction.
       </p>
     </section>
   );

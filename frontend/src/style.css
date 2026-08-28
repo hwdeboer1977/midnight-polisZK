@@ -1126,3 +1126,7 @@ button.primary.secondary-action {
    is broken — which is the exact misreading this card exists to prevent. */
 .registry-status.off { color: var(--muted); background: var(--line-soft); }
 .registry-row button { margin-top: 8px; }
+/* Confirm and Cancel side by side rather than stacked. Two buttons on separate
+   lines read as two independent actions; the destructive one needs its way out
+   sitting next to it, at the same weight, so neither is the obvious click. */
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }

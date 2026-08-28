@@ -7,11 +7,12 @@ export type RegistrationStatus = "active" | "inactive";
  * A company's commercial standing, which is a different question from who
  * controls their payroll contract.
  *
- * The chain answers the second and only the second: `employer` is written once
- * by `assignEmployer` and there is no circuit that unwrites it. This record
- * answers "did they sign up, and does that still stand" — so an inactive
- * registration beside a perfectly functional contract is not a contradiction,
- * it is the two questions giving their own answers.
+ * The chain answers the second and only the second. `revokeEmployer` can unwrite
+ * `employer`, but nothing here calls it: this record answers "did they sign up,
+ * and does that still stand" — so an inactive registration beside a perfectly
+ * functional contract is not a contradiction, it is the two questions giving
+ * their own answers. Ending the subscription does not revoke the contract, and
+ * that separation is on purpose.
  */
 export interface Registration {
   id: number;

@@ -24,6 +24,7 @@
     "deploy:payroll": "npm run build && CONTRACT_NAME=payroll node dist/deploy.js",
     "deploy:tax": "npm run build && node dist/deploy-tax.js",
     "payroll": "npm run build && node dist/payroll-cli.js",
+    "probe:atomic": "npm run build && node dist/atomic-probe.js",
     "payee": "npm run build && node dist/payee-cli.js",
     "wallet:reset": "rm -rf .wallet-state",
     "deploy:peur": "npm run build && CONTRACT_NAME=peur node dist/deploy.js",

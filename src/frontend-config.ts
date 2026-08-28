@@ -4,6 +4,7 @@ import path from "path";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { WebSocket } from "ws";
+import { EnvironmentManager } from "./utils/environment.js";
 import { listDeployments } from "./utils/deployments.js";
 import { managedPath } from "./utils/contract.js";
 
@@ -21,8 +22,6 @@ const INDEXERS: Record<string, string> = {
   preview: "https://indexer.preview.midnight.network/api/v4/graphql",
   preprod: "https://indexer.preprod.midnight.network/api/v4/graphql",
 };
-
-const OUT = path.join(process.cwd(), "frontend", "public", "deployments.json");
 
 /**
  * The browser decodes contract state with the generated contract module, so the
@@ -88,12 +87,27 @@ function copyZkAssets(contractName: string): void {
   const from = managedPath(contractName);
   const to = path.join(PUBLIC, "zk", contractName);
 
+  // The circuit manifest, published next to the keys it names.
+  //
+  // `contractVersion()` hashes the verifier keys of the circuits this contract
+  // declares, and needs the declaration to know which files those are. It lives
+  // under `compiler/` in `contracts/managed` and nowhere else, so a checkout
+  // without that directory — a server, a hosted build — could not compute a
+  // version at all. Copied to the root of the published tree rather than into a
+  // `compiler/` subdirectory, since it is the only file from there anyone needs.
+  const info = path.join(from, "compiler", "contract-info.json");
+  if (fs.existsSync(info)) {
+    fs.mkdirSync(to, { recursive: true });
+    fs.copyFileSync(info, path.join(to, "contract-info.json"));
+  }
+
   let copied = 0;
   for (const kind of ["keys", "zkir"]) {
     const sourceDir = path.join(from, kind);
     if (!fs.existsSync(sourceDir)) continue;
     const targetDir = path.join(to, kind);
     fs.mkdirSync(targetDir, { recursive: true });
+
     for (const file of fs.readdirSync(sourceDir)) {
       // Only what the prover actually asks for: the verifier keys are already
       // on chain, and shipping them would double the payload for nothing.
@@ -101,6 +115,17 @@ function copyZkAssets(contractName: string): void {
       fs.copyFileSync(path.join(sourceDir, file), path.join(targetDir, file));
       copied += 1;
     }
+
+    // Copies, never deletes. A renamed circuit therefore leaves its old key
+    // behind here, which is untidy and harmless — the browser fetches these by
+    // name and never enumerates them.
+    //
+    // Deleting the surplus was tried and reverted. `contracts/managed` can hold
+    // an interrupted compile (fund's had an empty `keys/`), and pruning against
+    // one destroyed twelve committed keys whose only remaining copy was the one
+    // being pruned. Nothing needs the two trees to match file-for-file:
+    // `contractVersion()` hashes the contract module, precisely so this build
+    // step never has to delete anything to stay correct.
   }
   if (copied > 0) {
     console.log(`copied ${copied} ${contractName} ZK assets -> frontend/public/zk`);
@@ -148,31 +173,25 @@ async function peurTokenId(
 
 copySharedSource();
 
-const out: Record<string, Entry> = {};
+/**
+ * The pEUR token id, if a pEUR contract is known and has minted.
+ *
+ * Carried out of the loop because it is the one field the browser needs that
+ * cannot be read from an address: the token type is decided at the first mint
+ * and recorded in contract state. Everything else in the frontend's view of a
+ * deployment is a string already sitting in `.env`.
+ */
+let peurToken: string | undefined;
 
 for (const [key, record] of listDeployments()) {
-  const entry: Entry = {
-    contractAddress: record.contractAddress,
-    contractName: record.contractName,
-    networkId: record.networkId,
-    ...(record.instance ? { instance: record.instance } : {}),
-    ...(record.retired ? { retired: true } : {}),
-  };
-
   if (record.contractName === "peur") {
-    const tokenId = await peurTokenId(record.networkId, record.contractAddress);
-    if (tokenId) entry.tokenId = tokenId;
+    peurToken = await peurTokenId(record.networkId, record.contractAddress);
   }
 
   copyContractModule(record.contractName);
   copyZkAssets(record.contractName);
-  out[key] = entry;
-  console.log(`${key}  ${record.contractAddress}${entry.tokenId ? `  token ${entry.tokenId}` : ""}`);
+  console.log(`${key}  ${record.contractAddress}`);
 }
-
-fs.mkdirSync(path.dirname(OUT), { recursive: true });
-fs.writeFileSync(OUT, JSON.stringify(out, null, 2) + "\n");
-console.log(`\nWrote ${Object.keys(out).length} deployment(s) to ${OUT}`);
 
 /**
  * Carries `PAYROLL_CONTRACT` from the root `.env` into Vite's namespace.
@@ -210,9 +229,56 @@ const encKeys = {
   social: (process.env.SOCIAL_TREASURY_ENC_KEY ?? "").trim(),
 };
 
+/**
+ * The deployment baseline, carried from the root `.env` into Vite's namespace.
+ *
+ * This is what `frontend/public/deployments.json` used to be. That file was a
+ * committed address book the browser fetched at run time; it accumulated every
+ * contract ever deployed and had to be pruned by hand alongside
+ * `deployment.json`. The browser needs four addresses and a token id, all of
+ * which are now single lines in the root `.env` — so they are copied here for
+ * the same reason the treasury keys are: Vite exposes only `VITE_`-prefixed
+ * variables, and only from `frontend/`.
+ *
+ * The network id is emitted too, because an address means nothing without the
+ * chain it is on and the browser has no `MIDNIGHT_NETWORK` to read.
+ *
+ * Contracts deployed at run time are deliberately absent — no build-time file
+ * can hold them. The browser merges `/api/deployments` over this, which is
+ * where a freshly onboarded employer's contract has always actually come from.
+ */
+const networkId = EnvironmentManager.getNetworkConfig().networkId;
+
+const baseline: [string, string | undefined][] = [
+  ["VITE_NETWORK_ID", networkId],
+  ["VITE_PAYROLL_ADDRESS", process.env.payroll_address],
+  ["VITE_PEUR_ADDRESS", process.env.peur_address],
+  // Prefers what was just read off the contract, since a token id recorded by
+  // hand in `.env` can describe a pEUR contract that has since been redeployed.
+  ["VITE_PEUR_TOKEN_ID", peurToken ?? process.env.peur_token_id],
+  ["VITE_TAXPARAMS_ADDRESS", process.env.taxparams_address],
+  ["VITE_FUND_ADDRESS", process.env.fund_address],
+];
+
+/**
+ * An explicit override of which payroll contracts the browser may offer, and
+ * only that — written out solely when `PAYROLL_CONTRACT` is set.
+ *
+ * The default is not written here, because it would be `payroll_address` copied
+ * into a second variable holding the identical string. `pinnedContracts()` falls
+ * back to `VITE_PAYROLL_ADDRESS` instead, so the common case emits one line and
+ * there is no pair of variables to drift apart.
+ *
+ * Set, it replaces rather than extends: a service running several employer
+ * contracts lists all of them, base address included or it disappears too.
+ */
 const pin = (process.env.PAYROLL_CONTRACT ?? "").trim();
 const envLocal = path.join(process.cwd(), "frontend", ".env.local");
 const lines: string[] = [];
+for (const [name, value] of baseline) {
+  const trimmed = (value ?? "").trim();
+  if (trimmed) lines.push(`${name}=${trimmed}`);
+}
 if (pin) lines.push(`VITE_PAYROLL_CONTRACTS=${pin}`);
 if (encKeys.tax) lines.push(`VITE_TAX_TREASURY_ENC_KEY=${encKeys.tax}`);
 if (encKeys.social) lines.push(`VITE_SOCIAL_TREASURY_ENC_KEY=${encKeys.social}`);
@@ -224,6 +290,7 @@ if (lines.length > 0) {
       lines.join("\n") +
       "\n"
   );
+  console.log(`Deployment baseline -> ${lines.length} variable(s)`);
   if (pin) console.log(`Pinned payroll contracts -> ${pin}`);
   if (encKeys.tax && encKeys.social) console.log("Treasury encryption keys -> frontend");
 } else if (fs.existsSync(envLocal)) {

@@ -13,11 +13,18 @@ import { dataPath } from "../utils/data-dir.js";
  * browser bundle is a published token. So both are bounded rather than
  * authenticated, and each bound is chosen against what its route can cost.
  *
- * What `/api/onboard` CAN cost: transaction fees, and a contract on chain that
- * nobody wanted. What it cannot: money. `onboardEmployer` deploys a payroll
- * contract and assigns it to the CALLER'S signing key, so an abuser ends up with
- * a contract only they can use, paid for with the platform's fees. Spam and a
- * bill, not theft.
+ * What `/api/onboard` CAN cost, since onboarding stopped deploying: the employer
+ * seat on `payroll_address` itself. `onboardEmployer` assigns THE contract this
+ * deployment offers to the CALLER'S signing key, so an abuser does not get a
+ * throwaway contract of their own any more — they get the one everything here
+ * points at, and the operator gets it back only by calling `revokeEmployer`.
+ *
+ * Still not theft: no money moves, nothing is unrecoverable, and a revoke undoes
+ * it in one transaction. But it is no longer "spam and a bill" either, and the
+ * rate limit is the wrong shape for it — the damage is done by the first request,
+ * not the hundredth. `SIGNUP_CODE` is what actually bounds this now, and it fails
+ * OPEN when unset. Set it before this service is reachable by anyone you did not
+ * hand the code to.
  *
  * `/api/claim` does create pEUR, so its bound has to be tighter, and it is:
  * `fundEmployer` refuses a key that is not already the employer of a payroll

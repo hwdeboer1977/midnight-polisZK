@@ -4,6 +4,7 @@ import { CopyRow } from "../components/CopyRow";
 import { FundDeposit } from "../components/FundDeposit";
 import { ServiceReset } from "../components/ServiceReset";
 import { DeployerRegistry } from "../components/DeployerRegistry";
+import { EmployerRevoke } from "../components/EmployerRevoke";
 import { EXPLORERS } from "../lib/chain";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { formatPeur, formatPeurTile, group } from "../lib/format";
@@ -32,7 +33,7 @@ export function Public() {
   useEffect(() => {
     void loadDeployments().then(setDeployments);
   }, []);
-  const { instances } = usePayrollInstances(
+  const { instances, refresh: refreshInstances } = usePayrollInstances(
     networkId,
     deployments,
     account?.coinPublicKey ?? null
@@ -371,9 +372,10 @@ export function Public() {
           ))
         )}
         <p className="note">
-          One contract per employer, assigned once and permanently. The platform
-          deploys it and then cannot write payroll to it, cannot reassign it and
-          cannot take it back.
+          One live employer per contract. The platform deploys it and names the
+          employer, and cannot write payroll to it afterwards — but it can take
+          the seat back and assign it again, so an employer's hold on their
+          instance rests on the platform's word rather than on the contract.
         </p>
       </section>
 
@@ -386,6 +388,18 @@ export function Public() {
           service most likely to want a reset. */}
       {isDeployer ? <FundDeposit /> : null}
       {isDeployer ? <ServiceReset /> : null}
+      {/* Before the registry, for the reason stated two comments up: the registry
+          is one card per onboarded company and grows without bound, so anything
+          after it is off-screen. Revoke was placed after it and promptly went
+          missing — the card rendered, the button sat below the fold, and the
+          honest report was "there is no revoke button".
+
+          Still its own card rather than a row in the registry. Deactivating a
+          registration and revoking a contract are one click apart in effect and
+          a world apart in consequence; adjacent is fine, merged is not. */}
+      {isDeployer ? (
+        <EmployerRevoke instances={instances} onRevoked={refreshInstances} />
+      ) : null}
       {isDeployer ? <DeployerRegistry networkId={networkId} /> : null}
 
       {/* Its own section rather than a row in the contract list: which asset

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import cors from "cors";
 import { requirePlatformToken } from "./auth.js";
-import { alreadyOnboarded, rateLimit, recordOnboarded, requireSignupCode } from "./guards.js";
+import { rateLimit, requireSignupCode } from "./guards.js";
 import { getJob, startJob } from "./jobs.js";
 import type { ServerConfig } from "./config.js";
 import { fundAndPay } from "../utils/payroll-run.js";
@@ -189,14 +189,30 @@ export function createApp(config: ServerConfig): Express {
   // ── Privileged ────────────────────────────────────────────────────────────
 
   /**
-   * Self-service signup. Public, and bounded rather than authenticated.
+   * Signup. Bounded rather than authenticated — and that bound is no longer
+   * enough on its own. Read this before exposing the service.
    *
-   * The deploy is signed by the PLATFORM wallet — which is why this server
-   * exists — but the contract it produces is assigned to the CALLER'S key, so
-   * what an abuser gets is a contract only they can use and a bill the platform
-   * pays in fees. Spam and cost, not theft. `guards.ts` sets out why that makes
-   * this route openable, and why `/api/claim` below is openable for a different
-   * reason, when the three behind the token are not.
+   * ⚠️ SET `SIGNUP_CODE` BEFORE THIS IS REACHABLE BY STRANGERS.
+   *
+   * The old reasoning was sound and is now false. This route used to DEPLOY a
+   * contract and assign that, so an abuser walked away with a contract only they
+   * could use, paid for in the platform's fees: spam and cost, not theft.
+   * Onboarding now assigns `payroll_address` — the single contract this
+   * deployment offers, the one the UI is pinned to and every unscoped CLI
+   * resolves. The first caller takes the seat, and the only way back is
+   * `revokeEmployer`.
+   *
+   * That is recoverable, which is the one thing keeping this a bounded route
+   * rather than a privileged one: nothing is stolen, no money moves, and the
+   * platform can take the seat back in a single transaction. But "recoverable by
+   * the operator noticing" is not a security bound, and the rate limit does not
+   * help when the damage is done by the FIRST request rather than the hundredth.
+   *
+   * Left openable rather than moved behind the platform token because the token
+   * ships in no browser bundle and self-service signup is the point of the
+   * route; `requireSignupCode` is the intended control, and it fails OPEN when
+   * `SIGNUP_CODE` is unset. That default was harmless under the old model and is
+   * not under this one.
    */
   /**
    * Builds a period's claim bundles, and optionally publishes the root.
@@ -275,34 +291,23 @@ export function createApp(config: ServerConfig): Express {
         return;
       }
 
-      // Refused before three minutes of proving. Note this runs AFTER the rate
-      // limit, so a repeated duplicate still spends the caller's budget — which
-      // is right: it is a request either way, and the alternative would be an
-      // unlimited oracle for "does this key already have a contract".
+      // The "this key already has a contract" gate that used to sit here is
+      // gone, and its absence is not a loosening.
       //
-      // The check matters because a second contract for the same employer is
-      // not harmless: their dashboard would find two, and only one of them
-      // holds their filings.
-      const existing = alreadyOnboarded(String(employerKey));
-      if (existing) {
-        res.status(409).json({
-          error:
-            `That signing key already has a payroll contract ("${existing.instance}", ` +
-            `created ${existing.at.slice(0, 10)}). Connect that wallet and use it, or ` +
-            "ask the platform operator if you need a second.",
-        });
-        return;
-      }
-
-      startJob(res, `onboarding "${instance}"`, async (log) => {
-        const result = await onboardEmployer(
-          String(instance), String(employerKey), log, companyName
-        );
-        // Recorded only on success, so a failed deploy does not lock the key
-        // out of trying again.
-        recordOnboarded(String(employerKey), String(instance));
-        return result;
-      });
+      // It existed because onboarding deployed a contract per caller, so a
+      // repeat call left one employer owning two — a dashboard finding both and
+      // only one holding their filings. There is one contract now, so that
+      // cannot happen, and the list it consulted had become wrong in the
+      // direction that matters: it remembered a key forever, so an employer
+      // REVOKED and then legitimately re-onboarded was refused by a file rather
+      // than by the chain.
+      //
+      // `onboardEmployer` reads `employerAssigned` off the contract before it
+      // proves anything and refuses a taken seat by name, pointing at revoke.
+      // That is the same guard, asked of the only thing that actually knows.
+      startJob(res, `onboarding "${instance}"`, async (log) =>
+        onboardEmployer(String(instance), String(employerKey), log, companyName)
+      );
     }
   );
 
@@ -360,15 +365,16 @@ export function createApp(config: ServerConfig): Express {
    * Ends — or restores — a company's registration.
    *
    * Read what this does NOT do, because the button that calls it is easy to
-   * misread. It writes one column in the registry. The contract is untouched:
-   * `assignEmployer` is permanent, there is no revoke circuit, and the employer
-   * keeps every power they had a moment ago. `registry.ts` says it plainly —
-   * marking a registration inactive is a statement about the SERVICE, not about
-   * the contract.
+   * misread. It writes one column in the registry. The contract is untouched —
+   * the employer keeps every power they had a moment ago. `registry.ts` says it
+   * plainly: marking a registration inactive is a statement about the SERVICE,
+   * not about the contract.
    *
-   * The one lever that does bite is elsewhere and is not a button: `setParamsFor`
-   * is platform-only and write-once per period, so an employer whose future
-   * periods are never recorded cannot file them. Revocation by omission.
+   * `revokeEmployer` is the lever that does bite on chain, and it is deliberately
+   * NOT wired to this route. Ending a subscription and taking a customer's
+   * contract away from them are different decisions with different blast radii,
+   * and one button doing both is how the second happens by accident. Revoking is
+   * a separate, explicit act — option 7 in the payroll CLI.
    *
    * Token-gated, and it has to be. A page can check that the connected wallet is
    * the platform key, and that check is worth exactly nothing to the server —

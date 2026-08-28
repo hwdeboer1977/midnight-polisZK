@@ -111,7 +111,27 @@ export function RosterUpload({
   const [passphrase, setPassphrase] = useState("");
   const [confirmation, setConfirmation] = useState("");
   /** Null until the chain has been asked whether this contract has been filed before. */
+  /**
+   * Whether anything has been filed against this contract yet.
+   *
+   * Three states, and keeping them apart is the point: `true` first filing,
+   * `false` returning employer, `null` NOT KNOWN YET. It used to have two —
+   * `needsConfirmation` was `firstFiling !== false`, so "still loading" and "a
+   * failed read" both meant "first filing". A returning employer was then asked
+   * to invent a passphrase for a contract that already had one, and every
+   * button stayed disabled behind a confirmation field they had no reason to
+   * fill. A slow indexer was indistinguishable from a new contract.
+   */
   const [firstFiling, setFirstFiling] = useState<boolean | null>(null);
+  /** Set when the read failed, so the card can say so rather than guess. */
+  const [statusError, setStatusError] = useState<string | null>(null);
+  /**
+   * The period whose withholding is collected but not sent on, from chain.
+   *
+   * Held separately from the month being displayed because it is not the same
+   * question. The stepper follows the calendar; this follows the money.
+   */
+  const [unremitted, setUnremitted] = useState<number | null>(null);
   const [payStep, setPayStep] = useState<string | null>(null);
   const [remitted, setRemitted] = useState<
     { taxMinor: bigint; socialMinor: bigint } | null
@@ -223,14 +243,21 @@ export function RosterUpload({
       try {
         const status = await periodStatus(networkId, address);
         if (cancelled) return;
+        setStatusError(null);
+        setUnremitted(status.unremitted);
         setFirstFiling(!status.hasSealed);
         setOutstanding(status.unpaid === null ? null : periodName(status.unpaid));
         setFiledPeriods(status.filed);
-      } catch {
-        // A failed read must not make the card claim a period is settled, nor
-        // skip the confirmation field. Both fall back to the cautious answer.
+      } catch (cause) {
+        // A failed read must not make the card claim a period is settled — and
+        // must not claim this is a first filing either. Both were once called
+        // "the cautious answer"; the second is not cautious, it is a guess that
+        // locks a returning employer out of their own contract. Unknown stays
+        // unknown, and the card says why.
         if (cancelled) return;
-        setFirstFiling(true);
+        setFirstFiling(null);
+        setUnremitted(null);
+        setStatusError(cause instanceof Error ? cause.message : String(cause));
         setOutstanding(null);
         setFiledPeriods([]);
       }
@@ -257,9 +284,13 @@ export function RosterUpload({
     },
     { tax: 0n, social: 0n, net: 0n }
   );
-  const needsConfirmation = firstFiling !== false;
+  const needsConfirmation = firstFiling === true;
+  /** The contract has not answered yet, so nothing that needs the answer runs. */
+  const statusUnknown = firstFiling === null;
   const passphraseReady =
-    passphrase.length >= 8 && (!needsConfirmation || confirmation === passphrase);
+    passphrase.length >= 8 &&
+    !statusUnknown &&
+    (!needsConfirmation || confirmation === passphrase);
   const submitting = step !== null;
   // Filing a month that is already on chain replaces its commitments with fresh
   // nonces and resets its payment flags — so a month that was paid would read
@@ -364,7 +395,22 @@ export function RosterUpload({
     // can be withheld without finding the workbook again — which is the whole
     // point of publishing those totals.
     const period = roster?.period ?? openPeriod ?? null;
-    if (period === null || !target || !api) return;
+    // Same reporting as `onRemit` below, and for the same reason: this returned
+    // silently on a reloaded page, which reads as a dead button.
+    if (period === null) {
+      setPayError(
+        "No period to withhold for. Load this month's figures above first."
+      );
+      return;
+    }
+    if (!target) {
+      setPayError("No payroll contract is selected for this wallet.");
+      return;
+    }
+    if (!api) {
+      setPayError("Connect a wallet first — this transaction is signed by the employer.");
+      return;
+    }
 
     setPayError(null);
     setPayStep("Starting…");
@@ -408,8 +454,49 @@ export function RosterUpload({
    * here chooses where anything goes.
    */
   async function onRemit() {
-    const period = roster?.period ?? openPeriod ?? null;
-    if (period === null || !target || !api) return;
+    // Logged on entry so a click proves it fired. A handler that returns early
+    // and a handler that is never called look identical from the outside, and
+    // telling them apart by inspection cost hours.
+    console.log("[remit] clicked", {
+      rosterPeriod: roster?.period ?? null,
+      openPeriod: openPeriod ?? null,
+      filedPeriods,
+      hasTarget: Boolean(target),
+      hasApi: Boolean(api),
+      passphraseLength: passphrase.length,
+      payStep,
+    });
+
+    // Falls back to the newest FILED period, because remitting needs a period
+    // and a passphrase and nothing else — no workbook, no salaries. Requiring
+    // one meant this returned silently on a page that had not loaded a roster
+    // this session, which is every page after a reload: the button was enabled,
+    // the click fired, and nothing happened or was said.
+    // The unremitted period first: that is the one with money in the contract,
+    // and it is usually NOT the month on screen.
+    const period =
+      unremitted ??
+      roster?.period ??
+      openPeriod ??
+      (filedPeriods.length > 0 ? Math.max(...filedPeriods) : null);
+
+    // Reported, never returned silently. A click that does nothing and explains
+    // nothing is indistinguishable from a broken button, and cost an evening.
+    if (period === null) {
+      setPayError(
+        "No filed period to remit. Load this month's figures above, or wait for " +
+          "the contract to be read — nothing on chain says which month to send."
+      );
+      return;
+    }
+    if (!target) {
+      setPayError("No payroll contract is selected for this wallet.");
+      return;
+    }
+    if (!api) {
+      setPayError("Connect a wallet first — this transaction is signed by the employer.");
+      return;
+    }
 
     setPayError(null);
     setPayStep("Starting…");
@@ -627,6 +714,14 @@ export function RosterUpload({
 
   const passphraseBlock = (
     <div className="passphrase">
+      {statusUnknown ? (
+        <p className="note">
+          {statusError
+            ? `This contract could not be read, so it is not known whether it has been filed against before — and a passphrase entered now might be the wrong question. Reload once the indexer answers. (${statusError})`
+            : "Checking whether this contract has been filed against before…"}
+        </p>
+      ) : null}
+
       {needsConfirmation ? (
         <p className="note first-time">
           <strong>You are creating this passphrase now.</strong> Nothing has been filed
@@ -833,6 +928,13 @@ export function RosterUpload({
         this contract was deployed and cannot be redirected — this step performs
         the transfer or it does not happen, and nobody here chooses where.
       </p>
+      {/* Rendered here, not only on the step above. `onRemit` sets `payError`
+          and this control never showed it, so a failure inside the try looked
+          exactly like a dead button: the handler ran, threw, reset itself, and
+          said nothing. */}
+      {payError ? <p className="status error">{payError}</p> : null}
+      {payStep ? <p className="muted">{payStep}</p> : null}
+
       {remitted ? (
         <p className="ok-line">
           ✓ €{formatPeur(remitted.taxMinor)} tax and €{formatPeur(remitted.socialMinor)}{" "}
@@ -937,12 +1039,19 @@ export function RosterUpload({
           action: paid || withheldDone ? withholdAction : null,
         },
         {
-          title: "Send withholding to the treasuries",
-          detail:
-            "The pools leave the contract for the tax and social treasuries. Until this runs the money is collected but has not moved on — and the benefit fund is fed from the contributions, so nothing can be claimed against it yet.",
+          title: unremitted
+            ? `Send ${periodName(unremitted)}'s withholding to the treasuries`
+            : "Send withholding to the treasuries",
+          detail: unremitted
+            ? `${periodName(unremitted)} still has its tax and contribution sitting in the contract. Collected, but not moved on — and the benefit fund is fed from the contributions, so nothing can be claimed against it yet.`
+            : "The pools leave the contract for the tax and social treasuries. Until this runs the money is collected but has not moved on — and the benefit fund is fed from the contributions, so nothing can be claimed against it yet.",
           cost: "2 transactions",
-          state: remitted ? "done" : withheldDone ? "now" : "todo",
-          action: withheldDone || remitted ? remitAction : null,
+          // Driven by `unremitted` rather than by the month on screen. A pool
+          // does not move on when the calendar does: September's withholding was
+          // unreachable the moment October became the current month, because
+          // this step only ever rendered for the month being worked on.
+          state: unremitted ? "now" : remitted ? "done" : withheldDone ? "now" : "todo",
+          action: unremitted || withheldDone || remitted ? remitAction : null,
         },
         {
           title: "Send payslips",

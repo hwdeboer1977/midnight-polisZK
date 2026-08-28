@@ -4,10 +4,15 @@ import CompactStandardLibrary;
 
 // Payroll for a single employer with a fixed roster of 10 employees.
 //
-// One contract instance per employer. The platform operator deploys it, then
-// hands ownership to that employer exactly once; from then on the platform
-// cannot write payroll and cannot take ownership back. Only employer X can
-// touch employer X's contract.
+// One LIVE employer per contract instance. The platform operator deploys it and
+// names the employer; from then on only that employer can write payroll, and
+// the platform cannot — not even after revoking them.
+//
+// The seat is reassignable, not permanent. `revokeEmployer` vacates it and
+// `assignEmployer` fills it again, so a lapsed subscription can be ended and
+// later restored to the same contract. The cost is stated at `revokeEmployer`:
+// an employer's hold on their instance is a platform commitment, not something
+// the contract guarantees on its own.
 //
 // Privacy model: individual salaries are circuit inputs, so they never leave
 // the employer's machine — only the proof does. What the chain learns is the
@@ -334,15 +339,52 @@ export circuit setParamsFor(period: Uint<32>, hash: Bytes<32>): [] {
   paramsHashFor.insert(p, disclose(hash));
 }
 
-// Hands the instance to its employer. Callable once, by the deployer only.
-// After this the platform has no privileged circuit left: it cannot reassign,
-// cannot revoke, and cannot set payroll.
+// Hands the instance to an employer. Platform only, and only while the seat is
+// vacant — which it is at deploy, and again after `revokeEmployer`.
+//
+// Nothing here distinguishes a first assignment from a re-assignment, so a
+// revoked employer can be given the same instance back by naming their key
+// again. That is deliberate: a lapsed subscription that is later paid should
+// restore the employer to the contract holding their own payroll history, not
+// strand it and force a fresh deployment they cannot migrate into.
 export circuit assignEmployer(newEmployer: ZswapCoinPublicKey): [] {
   assert(ownPublicKey() == platform, "only the platform may assign the employer");
   assert(!employerAssigned, "employer already assigned");
 
   employer = disclose(newEmployer);
   employerAssigned = true;
+}
+
+// Takes the seat back. Platform only.
+//
+// ⚠️ This is a real reduction in what an employer is guaranteed, and it should
+// be read before it is relied on. Until this circuit existed, `assignEmployer`
+// fired once and the platform had no privileged circuit left — an employer
+// could verify from the contract alone that nobody could take it from them.
+// That is no longer true. The platform can now vacate the seat at any time and
+// hand it to any key it chooses, and the employer cannot prevent it.
+//
+// What it deliberately does NOT do:
+//
+//   • It writes no payroll and moves no money. The platform still cannot call
+//     `setPayroll`, `payEmployee` or anything else gated on `employer` — those
+//     assert `employerAssigned`, which this clears, so the platform's own
+//     revocation locks those circuits rather than opening them.
+//   • It erases no history. Commitments, sealed openings, terminations, the
+//     pools and the remitted totals all stand. Revocation decides who may write
+//     next, never what was already written — an employee's claim against a past
+//     period survives their employer losing the contract.
+//
+// `employer` is cleared rather than left in place. `employerAssigned` already
+// gates every use, so the stale key would be inert — but it is a public ledger
+// field, and leaving the last employer's key readable there states an ownership
+// that no longer holds.
+export circuit revokeEmployer(): [] {
+  assert(ownPublicKey() == platform, "only the platform may revoke the employer");
+  assert(employerAssigned, "no employer assigned yet");
+
+  employer = default<ZswapCoinPublicKey>;
+  employerAssigned = false;
 }
 
 // Key rotation, controlled by the employer rather than the platform. Without
@@ -775,7 +817,35 @@ export circuit fundWithholding(
 // The destination is not an argument. It was fixed when this contract was
 // deployed, so triggering a remittance cannot redirect one — which is what
 // makes it safe to let either the employer or the platform call this.
-export circuit remitTax(period: Uint<32>, coin: QualifiedShieldedCoinInfo): [] {
+// The treasury is taken as an ARGUMENT and checked against the ledger, rather
+// than read from the ledger and sent to directly.
+//
+// It changes nothing about where the money goes — the assert below pins it to
+// the same frozen value, so a caller naming any other treasury is refused. What
+// it changes is how the recipient reaches `sendShielded`: as a disclosed
+// argument, exactly as `payPeriod` passes `disclose(payees[i])`.
+//
+// That difference WAS the cause, and this is no longer a hypothesis. Reading the
+// recipient from the ledger got every remittance refused by the node with the
+// retired catch-all 103, while `payPeriod` — the same contract-owned-coin to
+// wallet-key send, differing only in that it sends to `disclose(payees[i])`, an
+// argument — succeeded throughout. Passing the treasury the same way fixed it:
+// contract 0fa90dd3…, period 202609, tax and social both remitted 2026-08-28
+// after a full cycle on a fresh deployment.
+//
+// Keys, providers, delegated proving, duplicate commitments and stale merkle
+// roots were each ruled out by evidence first; the recipient's provenance was
+// what remained. Worth knowing the next time a bare 103 appears with no other
+// signal — compare how the failing circuit obtains its recipient.
+//
+// The assert is what keeps the guarantee: naming any other treasury is refused,
+// so taking it as an argument changes how the value reaches `sendShielded` and
+// nothing about where the money can go.
+export circuit remitTax(
+  period: Uint<32>,
+  treasury: ZswapCoinPublicKey,
+  coin: QualifiedShieldedCoinInfo
+): [] {
   assert(employerAssigned, "no employer assigned yet");
   assert(
     ownPublicKey() == employer || ownPublicKey() == platform,
@@ -789,10 +859,13 @@ export circuit remitTax(period: Uint<32>, coin: QualifiedShieldedCoinInfo): [] {
   const owed = totalTaxFor.lookup(p);
   assert(payToken == disclose(coin.color), "wrong token for this payroll");
   assert(coin.value == owed as Uint<128>, "coin does not hold that period's tax");
+  // The destination is still the one frozen at deploy. Naming it as an argument
+  // does not let a caller choose it.
+  assert(disclose(treasury) == taxTreasury, "that is not this contract's tax treasury");
 
   sendShielded(
     disclose(coin),
-    left<ZswapCoinPublicKey, ContractAddress>(taxTreasury),
+    left<ZswapCoinPublicKey, ContractAddress>(disclose(treasury)),
     disclose(owed) as Uint<128>
   );
 
@@ -802,7 +875,13 @@ export circuit remitTax(period: Uint<32>, coin: QualifiedShieldedCoinInfo): [] {
 }
 
 // The same for the social contribution, to its own treasury.
-export circuit remitSocial(period: Uint<32>, coin: QualifiedShieldedCoinInfo): [] {
+// The same for the social contribution — see `remitTax` for why the treasury
+// is an argument rather than a ledger read.
+export circuit remitSocial(
+  period: Uint<32>,
+  treasury: ZswapCoinPublicKey,
+  coin: QualifiedShieldedCoinInfo
+): [] {
   assert(employerAssigned, "no employer assigned yet");
   assert(
     ownPublicKey() == employer || ownPublicKey() == platform,
@@ -816,10 +895,14 @@ export circuit remitSocial(period: Uint<32>, coin: QualifiedShieldedCoinInfo): [
   const owed = totalSocialFor.lookup(p);
   assert(payToken == disclose(coin.color), "wrong token for this payroll");
   assert(coin.value == owed as Uint<128>, "coin does not hold that period's contribution");
+  assert(
+    disclose(treasury) == socialTreasury,
+    "that is not this contract's social treasury"
+  );
 
   sendShielded(
     disclose(coin),
-    left<ZswapCoinPublicKey, ContractAddress>(socialTreasury),
+    left<ZswapCoinPublicKey, ContractAddress>(disclose(treasury)),
     disclose(owed) as Uint<128>
   );
 

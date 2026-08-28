@@ -252,8 +252,9 @@ export function Register() {
         ) : (
           <>
             <p className="lead-sm">
-              This deploys a payroll contract for {company.trim() || "your company"} and
-              locks it to your signing key, permanently.
+              This assigns the payroll contract to{" "}
+              {company.trim() || "your company"} and locks it to your signing
+              key. Only the platform can hand it on, by revoking you first.
             </p>
 
             {/* Optional, and shown as such.
@@ -325,9 +326,11 @@ export function Register() {
         <h2>What happens next</h2>
         <ol className="next">
           <li>
-            <strong>Your payroll contract is created</strong> and locked to the signing
-            key above. This happens once and cannot be undone — afterwards nobody else,
-            including us, can set your salaries.
+            <strong>Your payroll contract is assigned</strong> to the signing key
+            above. From then on nobody else can set your salaries — not another
+            employer, and not us. What we can do is revoke the assignment, which
+            stops you filing anything new; it cannot rewrite what you already
+            filed, and it cannot make us you.
           </li>
           <li>
             <strong>We fund you</strong> with pEUR to pay salaries from, and with the

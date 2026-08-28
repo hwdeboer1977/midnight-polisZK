@@ -52,7 +52,16 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
   );
   const { job: claimJob, submitting: claiming, unavailable, claim } = useClaim();
 
-  if (!account) return <WalletPicker />;
+  // Only when this page IS the page. Setup composes `Register` — which asks for
+  // a signing key — and then `Overview variant="funding"` below it, so with no
+  // wallet connected the visitor got the same two Connect buttons twice, under
+  // two different headings, for one wallet. A section of a larger page has no
+  // business running its own connect flow; the page that owns the page does.
+  //
+  // Rendering nothing rather than a prompt, because the prompt is already on
+  // screen a few hundred pixels up. Once connected, both variants render in
+  // full as before.
+  if (!account) return variant === "all" ? <WalletPicker /> : null;
 
   const tokenId = deployments[`${networkId}/peur`]?.tokenId;
   const peur = tokenId

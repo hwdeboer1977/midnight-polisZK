@@ -7,8 +7,13 @@ import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { pipe } from "effect";
 import { MidnightProviders } from "../providers/midnight-providers.js";
 import { EnvironmentManager } from "./environment.js";
+import { managedPath } from "./contract-version.js";
 import { currentInstance, deploymentKey, getDeployment } from "./deployments.js";
 import { buildWallet, makeWalletProviders, waitForSync, type BuiltWallet } from "./wallet.js";
+
+// Re-exported from its leaf module so every existing `from "./contract.js"`
+// import keeps working; see contract-version.ts for why it moved.
+export { managedPath };
 
 export interface Connection {
   wallet: BuiltWallet;
@@ -21,34 +26,6 @@ export interface Connection {
   compiledContract: any;
   deployed: any;
   contractAddress: string;
-}
-
-/**
- * Path to a contract's ZK assets — the `keys/` and `zkir/` a prover needs.
- *
- * `contracts/managed` first, because that is what a local `npm run compile`
- * updates and a developer expects to be reading. It is gitignored, though, so a
- * fresh clone has none of it and cannot rebuild it without the Compact
- * compiler.
- *
- * `frontend/public/zk` is the fallback and is the reason a server can be
- * deployed at all: it carries byte-identical copies under the same
- * `<contract>/{keys,zkir}/` layout, committed on purpose because a Vercel build
- * cannot produce them either. `frontend-config.ts` keeps the two in step.
- */
-export function managedPath(contractName: string): string {
-  const compiled = path.join(process.cwd(), "contracts", "managed", contractName);
-  if (fs.existsSync(path.join(compiled, "keys"))) return compiled;
-
-  const committed = path.join(process.cwd(), "frontend", "public", "zk", contractName);
-  if (fs.existsSync(path.join(committed, "keys"))) return committed;
-
-  // Neither: report the one that a developer is most likely to be missing, and
-  // say how to produce it, rather than failing later on an unreadable key file.
-  throw new Error(
-    `No ZK assets for "${contractName}". Run \`npm run compile\`, or check that ` +
-      `frontend/public/zk/${contractName} shipped with this checkout.`
-  );
 }
 
 /**

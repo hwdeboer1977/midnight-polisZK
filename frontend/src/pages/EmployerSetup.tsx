@@ -19,6 +19,12 @@ import { Register } from "./Register";
  * smart-contract module describes the codebase instead of the system.
  */
 export function EmployerSetup() {
+  // Only to decide whether the sections BELOW registration have anything to
+  // show. `Register` asks for the signing key; until that is answered, funding
+  // and balances have nothing to say, and a heading over an empty space reads
+  // as a section that failed to load.
+  const { account } = useWallet();
+
   return (
     <>
       <section className="area-head">
@@ -36,14 +42,18 @@ export function EmployerSetup() {
       <SetupStatus />
       <Register />
 
-      <section className="area-sub">
-        <h2>Wallet &amp; funding</h2>
-        <p className="note" style={{ marginTop: 0 }}>
-          What you hold, where people pay you, and how to get the pEUR salaries
-          settle in.
-        </p>
-      </section>
-      <Overview variant="funding" />
+      {account ? (
+        <>
+          <section className="area-sub">
+            <h2>Wallet &amp; funding</h2>
+            <p className="note" style={{ marginTop: 0 }}>
+              What you hold, where people pay you, and how to get the pEUR
+              salaries settle in.
+            </p>
+          </section>
+          <Overview variant="funding" />
+        </>
+      ) : null}
 
       {/* Everything a reviewer wants and an employer does not: raw addresses,
           deployed contracts, the token's own ledger. Present, because it is what

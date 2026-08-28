@@ -5,11 +5,14 @@ export interface OnboardResult {
   instance: string;
   key: string;
   contractAddress: string;
+  /** Always empty now — onboarding assigns an existing contract, it deploys none. */
   deployTxHash: string;
   assignTxHash: string;
+  /** Periods whose rule set this run recorded; empty when all were already set. */
+  periodsRecorded?: number[];
 }
 
-/** Deploys a payroll contract and assigns it to the employer, in one job. */
+/** Assigns the platform's payroll contract to the employer, in one job. */
 export function useOnboarding() {
   const { job, submitting, unavailable, start, reset } =
     useServiceJob<OnboardResult>("/api/onboard");
