@@ -35,8 +35,59 @@ export interface TreasuryBalance {
    * fallible segment N`, naming a segment number and no wallet.
    */
   nightMinor: string | null;
+  /**
+   * The most that can actually be moved in ONE transaction, minor units.
+   *
+   * Lower than `minor` whenever the wallet holds two coins of the same value,
+   * and the gap is not cosmetic — see `spendableMax`. Offering the balance as a
+   * Max would fill an amount the balancer cannot reach.
+   */
+  spendableMinor: string | null;
   /** Why it could not be read — an unset seed, usually. Never the seed itself. */
   error?: string;
+}
+
+/**
+ * The largest amount the balancer can assemble from these coins, in one go.
+ *
+ * ⚠️ This is not the balance, and the difference is a defect in the SDK rather
+ * than a property of the money.
+ *
+ * `getBalanceRecipe` (wallet-sdk-capabilities/balancer/Balancer.js) consumes a
+ * coin and then drops every candidate matching it:
+ *
+ * ```js
+ * counterOffer.addInput(coin);
+ * coins = coins.filter((c) => !isCoinEqual(c, coin));
+ * ```
+ *
+ * and the shielded wallet passes `isCoinEqual: (a, b) => a.type === b.type &&
+ * a.value === b.value` — **value equality, with no nonce**. Two coins of the
+ * same value are therefore indistinguishable to it, and spending one discards
+ * the other. A treasury collects identical amounts as a matter of course: the
+ * same payroll remits the same withholding every month, so €200.20 arriving
+ * twice is the normal case, not a coincidence.
+ *
+ * This simulates that loop exactly — `chooseCoin` takes the smallest, the
+ * filter removes every coin of that value — so the figure is what the balancer
+ * will actually reach rather than an estimate of it. Effectively the sum of the
+ * DISTINCT values present.
+ *
+ * The rest of the balance is not lost; it needs another transaction, whose
+ * change will carry values unlikely to collide again.
+ */
+export function spendableMax(
+  coins: readonly { type: string; value: bigint }[],
+  tokenType: string
+): bigint {
+  let pool = coins.filter((coin) => coin.type === tokenType);
+  let total = 0n;
+  while (pool.length > 0) {
+    const chosen = [...pool].sort((a, b) => Number(a.value - b.value))[0];
+    total += chosen.value;
+    pool = pool.filter((coin) => !(coin.type === chosen.type && coin.value === chosen.value));
+  }
+  return total;
 }
 
 /** NIGHT's unshielded token type: all zeroes. */
@@ -75,11 +126,26 @@ export async function readTreasuryBalances(options?: {
         const unshielded = ((state.unshielded as any).balances ?? {}) as Record<string, bigint>;
         const night = unshielded[NIGHT] ?? unshielded[`0x${NIGHT}`] ?? 0n;
 
+        // The individual coins, not just their sum. `state.state` is the
+        // shielded wallet's view and `.state` inside it is the Zswap state
+        // itself, whose `coins` getter is what the balancer is handed.
+        const coins = [...((state.shielded as any).state?.state?.coins ?? [])] as {
+          type: string;
+          value: bigint;
+        }[];
+        const spendable = spendableMax(coins, colourHex);
+
         log(
-          `   ${from}: €${formatPeur(held)} pEUR` +
+          `   ${from}: €${formatPeur(held)} pEUR in ${coins.length} coin(s)` +
+            (spendable < held ? `, of which €${formatPeur(spendable)} is reachable at once` : "") +
             (night > 0n ? "" : " — and no NIGHT, so it cannot pay a fee to spend it")
         );
-        out.push({ from, minor: held.toString(), nightMinor: night.toString() });
+        out.push({
+          from,
+          minor: held.toString(),
+          spendableMinor: spendable.toString(),
+          nightMinor: night.toString(),
+        });
       } finally {
         // Always stopped, including when the sync throws. A wallet runtime left
         // running holds an indexer subscription open for the life of the
@@ -93,7 +159,7 @@ export async function readTreasuryBalances(options?: {
       // One unreadable wallet must not take the other down: a service with only
       // SOCIAL_TREASURY_SEED set should still be told what the social treasury
       // holds.
-      out.push({ from, minor: null, nightMinor: null, error: message });
+      out.push({ from, minor: null, spendableMinor: null, nightMinor: null, error: message });
     }
   }
 

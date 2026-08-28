@@ -754,6 +754,7 @@ table.roster .mono {
 .treasury-balances li { font-size: 13px; color: var(--muted); padding: 1px 0; }
 .treasury-balances li strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .treasury-balances .faint { color: var(--faint); }
+.treasury-balances .capped { color: var(--faint); }
 .treasury-balances .no-fees { color: var(--danger, #b42318); font-weight: 600; }
 
 /* What reached the benefit fund and the tax vault for this period. Sits under

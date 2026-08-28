@@ -11,6 +11,16 @@ interface TreasuryBalance {
   minor: string | null;
   /** Unshielded NIGHT in the same wallet. Without it the pEUR cannot be spent. */
   nightMinor: string | null;
+  /**
+   * The most that can be moved in ONE transaction.
+   *
+   * Below `minor` whenever the wallet holds two coins of the same value: the
+   * balancer discards candidates by value alone, so spending one of a matching
+   * pair drops the other. A treasury collects identical amounts as a matter of
+   * course — the same payroll remits the same withholding every month — so this
+   * is the ordinary case rather than an odd one.
+   */
+  spendableMinor: string | null;
   error?: string;
 }
 
@@ -130,7 +140,10 @@ export function FundDeposit({
   const [reading, setReading] = useState(false);
   const [funding, setFunding] = useState(false);
   const selected = balances?.find((balance) => balance.from === from) ?? null;
-  const maxMinor = selected?.minor ?? null;
+  // The reachable figure, never the balance. A Max that fills more than the
+  // balancer can assemble fails minutes later as `Insufficient funds for
+  // fallible segment`, which describes neither the wallet nor the amount.
+  const maxMinor = selected?.spendableMinor ?? null;
 
   // Defaulted to the payroll contract this deployment runs, which is where the
   // money came from in every ordinary case. Editable, because an operator may be
@@ -370,7 +383,7 @@ export function FundDeposit({
           title={
             maxMinor === null
               ? "Check the balances first — a shielded balance cannot be guessed"
-              : `Deposit everything the ${WALLET_LABEL[from]} holds`
+              : `The most the ${WALLET_LABEL[from]} can send in one transaction`
           }
           onClick={() => maxMinor && setAmount(maxMinor)}
         >
@@ -489,6 +502,18 @@ function TreasuryBalances({
           only imports a recovery phrase.
         </p>
       ) : null}
+      {balances?.some(
+        (b) => b.spendableMinor !== null && b.spendableMinor !== b.minor
+      ) ? (
+        <p className="note" style={{ marginTop: 6 }}>
+          A wallet holding two coins of the same value can only reach one of
+          them per transaction — the balancer drops candidates by value alone,
+          so spending one discards its twin. Identical amounts are normal here,
+          since the same payroll remits the same withholding every month.
+          Nothing is lost: deposit what is reachable, then repeat, and the
+          change carries values that no longer collide.
+        </p>
+      ) : null}
       {balances ? (
         <ul>
           {balances.map((balance) => (
@@ -499,6 +524,13 @@ function TreasuryBalances({
               ) : (
                 <>
                   <strong>€{formatPeur(BigInt(balance.minor))}</strong>
+                  {balance.spendableMinor !== null &&
+                  balance.spendableMinor !== balance.minor ? (
+                    <span className="capped">
+                      {" "}
+                      · €{formatPeur(BigInt(balance.spendableMinor))} in one transaction
+                    </span>
+                  ) : null}
                   {/* The fee, beside the money it moves. A treasury only ever
                       receives — nothing sends it NIGHT — so a balance it cannot
                       spend is its ordinary state rather than an odd one, and
