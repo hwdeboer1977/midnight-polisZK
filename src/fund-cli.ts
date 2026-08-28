@@ -279,10 +279,35 @@ async function main(): Promise<void> {
   }
 
   if (command === "deposit") {
+    // Which month's contributions these are, and which payroll contract they
+    // came from. Both are recorded on the fund so `contributedFor[period]` can
+    // be checked against that period's `totalSocialFor` — a deposit with
+    // neither is an unattributed increase in a pool.
+    const period = Number(
+      requireFlag(args, "period", "which period these contributions cover, as YYYYMM")
+    );
+    if (!Number.isInteger(period) || period < 200001 || period > 299912) {
+      throw new Error(`--period must be YYYYMM, e.g. 202609 — got "${period}"`);
+    }
+
+    // Defaults to the payroll contract this deployment runs, which is where the
+    // money came from in every ordinary case. Overridable because an operator
+    // may be depositing on behalf of an older instance.
+    const payroll = getDeployment(network.networkId, "payroll");
+    const source = (flag(args, "source") ?? payroll?.contractAddress ?? "").replace(/^0x/, "");
+    if (!/^[0-9a-f]{64}$/i.test(source)) {
+      throw new Error(
+        "--source must be the payroll contract address these contributions came " +
+          "from (64 hex characters). No payroll deployment was found to default to."
+      );
+    }
+
     await deposit(
       network,
       record.contractAddress,
-      parseEur(requireFlag(args, "amount", "how much to put into the fund, in EUR"))
+      parseEur(requireFlag(args, "amount", "how much to put into the fund, in EUR")),
+      period,
+      source
     );
     return;
   }
@@ -394,7 +419,9 @@ async function main(): Promise<void> {
 async function deposit(
   network: ReturnType<typeof EnvironmentManager.getNetworkConfig>,
   contractAddress: string,
-  amount: bigint
+  amount: bigint,
+  period: number,
+  source: string
 ): Promise<void> {
   const colour = await benefitTokenColour(network);
   const colourHex = hex(colour);
@@ -456,11 +483,12 @@ async function deposit(
     );
 
     console.log(chalk.blue("Proving (a minute or two)…"));
-    const tx: any = await conn.deployed.callTx.fundBenefits({
-      nonce,
-      color: colour,
-      value: amount,
-    });
+    const tx: any = await conn.deployed.callTx.fundBenefits(
+      BigInt(period),
+      Uint8Array.from(Buffer.from(source.replace(/^0x/, ""), "hex")),
+      amount,
+      { nonce, color: colour, value: amount }
+    );
     const txHash = String(tx.public?.txHash ?? "");
 
     // The ordinal comes from the chain, not from a count kept here: `poolOrdinal`

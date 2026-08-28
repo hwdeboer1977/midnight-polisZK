@@ -1,0 +1,185 @@
+pragma language_version >= 0.16;
+
+import CompactStandardLibrary;
+
+// Where withheld wage tax is held once it leaves a payroll contract.
+//
+// The counterpart to `fund.compact` on the tax side, and deliberately a much
+// smaller thing. The benefit fund exists to PAY people, so it needs published
+// rules, per-period anchors and a claim circuit that proves entitlement without
+// revealing who is claiming. Tax has no claimants. What it needs is custody with
+// an audit trail: money arrives against a stated period, and money leaves only
+// one way.
+//
+// ── What this replaces, and why it is better than a keypair ────────────────
+//
+// Today `remitTax` sends the pool to a WALLET — `4b936412…` — whose seed sits in
+// a `.env` file. Once the coin lands there the contract's guarantee has ended:
+// whoever holds the seed can spend it, in any amount, to anywhere, with nothing
+// on chain saying what it was for or that it was supposed to stay. Three
+// remittances from three different payroll contracts pool into one balance with
+// nothing distinguishing them.
+//
+// Here, three things are true that are not true of a wallet:
+//
+//   · every deposit names the PERIOD it covers, so a verifier can compare
+//     `receivedFor[p]` against that period's `totalTaxFor` on the payroll
+//     contract and see whether the right amount arrived;
+//   · every withdrawal is a transaction on this contract, counted and totalled,
+//     so the balance cannot quietly change;
+//   · withdrawals can only go to the authority key frozen at deploy — naming a
+//     destination is not a power anyone here has.
+//
+// ── What it does NOT do, stated rather than implied ────────────────────────
+//
+// It cannot verify that a deposit is correct. A contract cannot read another
+// contract's ledger (probe/probe_xread.compact), so this one cannot look up
+// `totalTaxFor[p]` on the payroll contract and insist the coin matches. An
+// employer could deposit less than they assessed, and this contract would record
+// exactly what it was given.
+//
+// That mismatch is PUBLICLY CHECKABLE — both figures are on chain, and anyone
+// with an indexer can compare them — but it is not enforced here. Saying
+// otherwise would be a lie about what a proof proves. The enforcement that does
+// exist lives in the payroll contract, where `fundWithholding` and `fundPeriod`
+// assert the coin equals the assessed total; what this contract adds is that the
+// money's arrival and departure become facts rather than a wallet balance.
+//
+// ── Deposits are permissionless, on purpose ────────────────────────────────
+//
+// Anyone may pay tax in. Gating deposits would protect nothing — the failure
+// mode worth caring about is money NOT arriving, and no access check prevents
+// that — while adding a way for a legitimate remittance to be refused. The same
+// reasoning `fund.compact` applies to `fundBenefits`.
+
+// Who may withdraw. Frozen at deploy and never settable again, exactly as the
+// treasuries are in `payroll.compact`: a custody contract whose destination can
+// be changed is a custody contract with an extra key to steal.
+export ledger authority: ZswapCoinPublicKey;
+
+// The token this vault holds, fixed by the first coin it receives. A vault that
+// silently mixed tokens would make every total below meaningless.
+export ledger token: Bytes<32>;
+export ledger tokenSet: Boolean;
+
+// What arrived, per period. THE field this contract exists for: it is what a
+// verifier compares against the payroll contract's `totalTaxFor` for the same
+// period. A wallet balance cannot answer that question at all.
+export ledger receivedFor: Map<Uint<32>, Uint<64>>;
+
+// Which payroll contract each period's deposit claimed to come from. Recorded so
+// the comparison above has an address to be made against — without it a verifier
+// knows an amount arrived for September but not whose September.
+//
+// Claimed, not proved. This contract cannot check that the named contract
+// actually assessed that figure; see the note at the top.
+export ledger sourceFor: Map<Uint<32>, Bytes<32>>;
+
+// Running totals. `heldTotal` is what is here now; the other two are permanent
+// records that only ever increase, so a balance returning to zero does not erase
+// the history of what passed through.
+export ledger heldTotal: Uint<64>;
+export ledger receivedTotal: Uint<64>;
+export ledger withdrawnTotal: Uint<64>;
+
+export ledger depositCount: Uint<32>;
+export ledger withdrawalCount: Uint<32>;
+
+// Which coin the contract most recently received, by receipt order.
+//
+// ⚠️ A receipt ordinal is NOT a position in the Zswap tree. They coincide only
+// while each transaction creates one coin, and diverge the moment one creates
+// several — measured on a payroll `fundPeriod` run, coin 0 landed at leaf 48188
+// and coin 1 at 48186, inverted. Anything spending a coin held here must locate
+// it by rebuilding its commitment, never by indexing sorted leaves against this.
+export ledger coinsReceived: Uint<32>;
+
+constructor(withdrawTo: ZswapCoinPublicKey) {
+  authority = disclose(withdrawTo);
+  tokenSet = false;
+  heldTotal = 0;
+  receivedTotal = 0;
+  withdrawnTotal = 0;
+  depositCount = 0;
+  withdrawalCount = 0;
+  coinsReceived = 0;
+}
+
+// Pays withheld tax in, against the period it covers.
+//
+// `amount` is stated alongside the coin and pinned to it rather than read off
+// `coin.value` directly: Compact has no narrowing from the coin's Uint<128> to
+// the Uint<64> these totals are kept in, and `payroll.compact` already
+// establishes the pattern — state the figure, then assert the coin holds it.
+export circuit deposit(
+  period: Uint<32>,
+  source: Bytes<32>,
+  amount: Uint<64>,
+  coin: ShieldedCoinInfo
+): [] {
+  const p = disclose(period);
+  // Shape, not calendar — the same bound `setPayroll` applies. A zero or absurd
+  // period is a typo, and a typo here files money against a month nobody will
+  // look for it under.
+  assert(p >= 200001, "period must be YYYYMM, e.g. 202609");
+  assert(p <= 299912, "period must be YYYYMM, e.g. 202609");
+  assert(disclose(amount) > 0, "a deposit of nothing records nothing");
+
+  if (!tokenSet) {
+    token = disclose(coin.color);
+    tokenSet = true;
+  }
+  assert(token == disclose(coin.color), "wrong token for this vault");
+  assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
+
+  receiveShielded(disclose(coin));
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
+
+  // Accumulated rather than overwritten. A period may be paid in more than one
+  // instalment — a correction, or two payroll contracts remitting for the same
+  // month — and the total for that period is the sum of what arrived, not the
+  // last figure through the door.
+  const already = receivedFor.member(p) ? receivedFor.lookup(p) : 0;
+  receivedFor.insert(p, (already + disclose(amount)) as Uint<64>);
+
+  // First writer wins. A second remittance for the same period from a different
+  // payroll contract leaves the first source recorded, which is honest: it says
+  // where the period's money started arriving from and does not pretend a single
+  // field can name several.
+  if (!sourceFor.member(p)) {
+    sourceFor.insert(p, disclose(source));
+  }
+
+  heldTotal = (heldTotal + disclose(amount)) as Uint<64>;
+  receivedTotal = (receivedTotal + disclose(amount)) as Uint<64>;
+  depositCount = (depositCount + 1) as Uint<32>;
+}
+
+// Moves money out, to the authority and nowhere else.
+//
+// The destination is not an argument, for the same reason `payPeriod` pays a
+// committed payee and `remitTax` pays a frozen treasury: whoever can trigger a
+// transfer must not also be able to choose where it lands. Here the caller must
+// BE the authority as well, so triggering and receiving are the same party and
+// there is nothing to redirect.
+//
+// Every withdrawal is a transaction on this contract and increments the counters
+// below. That is the whole difference from a keypair: a wallet balance can drop
+// with no on-chain statement that anything was withdrawn, and this cannot.
+export circuit withdraw(amount: Uint<64>, coin: QualifiedShieldedCoinInfo): [] {
+  assert(ownPublicKey() == authority, "only the authority may withdraw");
+  assert(tokenSet, "this vault holds nothing yet");
+  assert(token == disclose(coin.color), "wrong token for this vault");
+  assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
+  assert(disclose(amount) <= heldTotal, "cannot withdraw more than the vault holds");
+
+  sendShielded(
+    disclose(coin),
+    left<ZswapCoinPublicKey, ContractAddress>(authority),
+    disclose(amount) as Uint<128>
+  );
+
+  heldTotal = (heldTotal - disclose(amount)) as Uint<64>;
+  withdrawnTotal = (withdrawnTotal + disclose(amount)) as Uint<64>;
+  withdrawalCount = (withdrawalCount + 1) as Uint<32>;
+}

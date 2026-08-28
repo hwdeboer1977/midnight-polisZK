@@ -209,6 +209,29 @@ export ledger socialRemitted: Uint<64>;
 export ledger benefitToken: Bytes<32>;
 export ledger benefitTokenSet: Boolean;
 export ledger coinsReceived: Uint<32>;
+
+// What arrived as contributions, per period, and from where.
+//
+// Added to match `taxvault.compact`, and for the same reason: a contribution
+// that lands with nothing saying what it was FOR cannot be checked against
+// anything. With these, a verifier compares `contributedFor[p]` against the
+// payroll contract's `totalSocialFor[p]` for the same period and sees whether
+// the right amount arrived.
+//
+// Claimed, not proved. This contract cannot read a payroll ledger — the wall
+// this whole design is built around — so it records what a depositor states.
+// The mismatch is publicly checkable and not enforced here, which is the same
+// honesty the header applies to claims.
+//
+// Deliberately separate from `taxPool` and the rest: those account for tax
+// withheld from BENEFITS PAID OUT, which is the opposite direction. Money in
+// and money out are different questions and sharing a counter would answer
+// neither.
+export ledger contributedFor: Map<Uint<32>, Uint<64>>;
+export ledger contributionSourceFor: Map<Uint<32>, Bytes<32>>;
+export ledger contributedTotal: Uint<64>;
+export ledger contributionCount: Uint<32>;
+
 // Which leaf holds the pool's current coin. An ordinal, not a nonce and not a
 // value: enough for the fund's operator to reconstruct the coin they already
 // know the value of, and useless to anyone who does not.
@@ -218,6 +241,8 @@ constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
   platform = disclose(ownPublicKey());
   latestVersion = 0;
   benefitTokenSet = false;
+  contributedTotal = 0;
+  contributionCount = 0;
   coinsReceived = 0;
 
   taxTreasury = disclose(taxTo);
@@ -264,21 +289,58 @@ export circuit publishRoot(period: Uint<32>, root: Field): [] {
   }
 }
 
-// Takes in money to pay benefits with.
+// Takes in money to pay benefits with, against the period it covers.
 //
 // Contributions cannot arrive here automatically: a payroll contract cannot
 // call this one, so a remittance is a transfer to a key, and funding the fund
 // is a deliberate transaction by whoever holds it.
-export circuit fundBenefits(coin: ShieldedCoinInfo): [] {
+//
+// `period` and `source` were added so that deliberate transaction leaves a
+// record of what it was for. Without them a contribution is an unattributed
+// increase in a pool, indistinguishable from any other, and the question "did
+// September's contributions actually arrive" has no answer on chain. The tax
+// side records the same two fields for the same reason; see
+// `taxvault.compact`.
+//
+// `amount` is stated alongside the coin and pinned to it rather than read off
+// `coin.value`, because Compact has no narrowing from the coin's Uint<128> to
+// the Uint<64> these totals are kept in.
+export circuit fundBenefits(
+  period: Uint<32>,
+  source: Bytes<32>,
+  amount: Uint<64>,
+  coin: ShieldedCoinInfo
+): [] {
+  const p = disclose(period);
+  // Shape, not calendar — the same bound `setPayroll` applies.
+  assert(p >= 200001, "period must be YYYYMM, e.g. 202609");
+  assert(p <= 299912, "period must be YYYYMM, e.g. 202609");
+  assert(disclose(amount) > 0, "a contribution of nothing records nothing");
+
   if (!benefitTokenSet) {
     benefitToken = disclose(coin.color);
     benefitTokenSet = true;
   }
   assert(benefitToken == disclose(coin.color), "wrong token for this fund");
+  assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
 
   receiveShielded(disclose(coin));
   poolOrdinal = coinsReceived;
   coinsReceived = (coinsReceived + 1) as Uint<32>;
+
+  // Accumulated, not overwritten: a period may be paid in instalments, or by
+  // more than one payroll contract.
+  const already = contributedFor.member(p) ? contributedFor.lookup(p) : 0;
+  contributedFor.insert(p, (already + disclose(amount)) as Uint<64>);
+
+  // First writer wins, so the field says where a period's money started
+  // arriving from rather than pretending one field can name several.
+  if (!contributionSourceFor.member(p)) {
+    contributionSourceFor.insert(p, disclose(source));
+  }
+
+  contributedTotal = (contributedTotal + disclose(amount)) as Uint<64>;
+  contributionCount = (contributionCount + 1) as Uint<32>;
 }
 
 // Claims a month's benefit.

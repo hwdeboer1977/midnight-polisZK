@@ -187,6 +187,7 @@ async function loadStatic(): Promise<Deployments> {
     ["peur", String(import.meta.env.VITE_PEUR_ADDRESS ?? ""), tokenId],
     ["taxparams", String(import.meta.env.VITE_TAXPARAMS_ADDRESS ?? "")],
     ["fund", String(import.meta.env.VITE_FUND_ADDRESS ?? "")],
+    ["taxvault", String(import.meta.env.VITE_TAXVAULT_ADDRESS ?? "")],
   ];
 
   const out: Deployments = {};

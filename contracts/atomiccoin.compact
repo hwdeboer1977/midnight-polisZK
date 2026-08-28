@@ -1,0 +1,80 @@
+pragma language_version >= 0.16;
+
+import CompactStandardLibrary;
+
+// A contract that does nothing but accept a shielded coin.
+//
+// The follow-up to `atomic.compact`, which proved that one transaction can carry
+// calls to two different contracts and that both apply. That probe deliberately
+// moved no money, so what it established is narrow: two calls can ride together
+// when there is nothing to settle. Every use the answer was wanted for moves
+// money.
+//
+// ── Why coins are a separate question ──────────────────────────────────────
+//
+// A call that receives a coin produces Zswap inputs and outputs, and those have
+// to be placed in the same section as the contract interaction that claims them.
+// midnight-js does that per call, inside `zswapStateToSegmentedOffer`, which is
+// not exported — so a two-call transaction has to combine two calls' offers
+// without the helper that knows how. `incomelayerzk-constraints` already records
+// `Transaction.merge` throwing when both sides have contract interactions, which
+// is the obvious route and the one most likely to be closed.
+//
+// So the question this contract exists to answer is not "can two calls ride
+// together" — that is settled — but "can they still ride together once each one
+// is carrying a coin".
+//
+// ── Kept to exactly one moving part ────────────────────────────────────────
+//
+// One circuit, one coin, no access control, no periods, no commitments. Two
+// instances stand in for two contracts, the same substitution `atomic.compact`
+// makes: what the ledger sees is two distinct addresses in one transaction, each
+// receiving a coin. That is the shape of net-into-payroll plus tax-into-treasury
+// plus contribution-into-social, at the smallest size that can still fail for
+// the right reason.
+
+// Total received, in the token's minor units.
+export ledger total: Uint<64>;
+
+// How many coins have arrived. Distinct from `total` so a deposit of zero would
+// still be visible, and so two deposits of the same amount can be told apart.
+export ledger deposits: Uint<32>;
+
+// Set by the caller on each deposit. The same device `atomic.compact` uses: a
+// transaction that lands with tag 1 on one vault and tag 2 on the other is
+// unambiguous evidence that both calls executed, which matching totals alone
+// could not distinguish from one call applied twice.
+export ledger lastTag: Uint<32>;
+
+// Fixed by the first coin, exactly as payroll fixes its pay token. Not a
+// requirement of the test — a vault that accepted anything would test the same
+// thing — but a vault that silently mixed tokens would make `total` meaningless
+// and the failure would look like a coin problem rather than a test problem.
+export ledger token: Bytes<32>;
+export ledger tokenSet: Boolean;
+
+constructor() {
+  total = 0;
+  deposits = 0;
+  lastTag = 0;
+  tokenSet = false;
+}
+
+// `amount` is passed alongside the coin and pinned to it, rather than read off
+// `coin.value` and added directly. Compact has no narrowing from the coin's
+// Uint<128> to the ledger's Uint<64>, and payroll already establishes the
+// pattern: state the figure, then assert the coin holds it.
+export circuit deposit(tag: Uint<32>, amount: Uint<64>, coin: ShieldedCoinInfo): [] {
+  if (!tokenSet) {
+    token = disclose(coin.color);
+    tokenSet = true;
+  }
+  assert(token == disclose(coin.color), "wrong token for this vault");
+  assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
+
+  receiveShielded(disclose(coin));
+
+  total = (total + disclose(amount)) as Uint<64>;
+  deposits = (deposits + 1) as Uint<32>;
+  lastTag = disclose(tag);
+}

@@ -38,7 +38,7 @@ export function Public() {
     deployments,
     account?.coinPublicKey ?? null
   );
-  const isDeployer = instances.some((instance) => instance.role === "platform");
+  const isDeployer = instances.some((instance) => instance.isPlatform);
   const explorer = EXPLORERS[networkId] ?? "";
   const peurContract = stats.deployed.find((d) => d.deployment.contractName === "peur");
   const payrollContracts = stats.deployed.filter(
@@ -386,7 +386,7 @@ export function Public() {
           onboarded company and grows without bound, so anything after it is
           off-screen on a service with any history — which is exactly the
           service most likely to want a reset. */}
-      {isDeployer ? <FundDeposit /> : null}
+      {isDeployer ? <FundDeposit networkId={networkId} /> : null}
       {isDeployer ? <ServiceReset /> : null}
       {/* Before the registry, for the reason stated two comments up: the registry
           is one card per onboarded company and grows without bound, so anything

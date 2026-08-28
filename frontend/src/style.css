@@ -734,6 +734,34 @@ table.roster .mono {
    monospace and the full value on hover. */
 .payee-key { font-size: 11px; color: var(--faint); white-space: nowrap; }
 
+/* A checkbox that reads as one control with its label, on the same row as the
+   selects it modifies. */
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.inline-check input { margin: 0; }
+
+/* The treasury balances, above the amount they bound. Read on demand — a
+   shielded balance costs a wallet sync — so the control that asks sits with
+   the figures rather than somewhere else on the page. */
+.treasury-balances { margin-top: 10px; }
+.treasury-balances ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.treasury-balances li { font-size: 13px; color: var(--muted); padding: 1px 0; }
+.treasury-balances li strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.treasury-balances .faint { color: var(--faint); }
+.treasury-balances .no-fees { color: var(--danger, #b42318); font-weight: 600; }
+
+/* What reached the benefit fund and the tax vault for this period. Sits under
+   the step as a result rather than beside it, and stays plain-weight: two
+   figures to compare against the payroll totals, not a headline. */
+.national-arrivals { list-style: none; margin: 4px 0 0; padding: 0; font-weight: 400; }
+.national-arrivals li { font-size: 12px; color: var(--muted); padding: 1px 0; }
+
 .month-step-action { margin-top: 10px; }
 /* A step's own button sits inside it, so it must not stretch the way a panel's
    primary action does. */

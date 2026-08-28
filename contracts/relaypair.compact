@@ -1,0 +1,111 @@
+pragma language_version >= 0.16;
+
+import CompactStandardLibrary;
+
+// Can one contract hand a shielded coin to ANOTHER contract, with the receiver
+// claiming it in the same transaction?
+//
+// This is the question that decides whether the treasuries can be contracts
+// without giving up anything. Today `remitTax` sends the pool to a WALLET —
+// `sendShielded(coin, left<ZswapCoinPublicKey, ContractAddress>(treasury), …)`.
+// The `right()` branch of that Either is a contract address. If it works, the
+// payroll contract keeps every property that makes it strong — the money and
+// the proof stay together, `fundWithholding` still asserts the coin equals the
+// assessed tax, underpayment stays unbuildable — and the treasury stops being a
+// keypair whose seed sits in a `.env` file.
+//
+// `incomelayerzk-constraints` records this as tried and stranded: "a
+// contract-to-contract shielded send compiles but strands the coin — the
+// receiver must `receiveShielded` in the same transaction, and
+// `Transaction.merge` throws when both sides have contract interactions."
+// The second half of that is now false — merge works (13d1f74f…) and two
+// contracts in one transaction is proven (d6531c86…). So the first half is
+// worth retrying: the receiver CAN be in the same transaction now.
+//
+// ── One contract, deployed twice ───────────────────────────────────────────
+//
+// Instance S plays the payroll contract, instance R the treasury. Same compiled
+// code, so one key set covers both and the probe avoids the cross-contract key
+// provider that `claim-call-probe` needed. What the ledger sees is still two
+// distinct addresses exchanging a coin, which is the shape under test.
+//
+// ── The unknown this is written to expose ──────────────────────────────────
+//
+// A wallet finds coins by scanning; a contract cannot. So R has to be TOLD
+// exactly which coin to claim — nonce, colour and value. When S sends, the
+// output coin's nonce is derived by `sendShielded`, not chosen by the caller,
+// and whether the client can predict it is the thing that decides if this is
+// buildable at all. `SendResult` is returned in-circuit and stored here so the
+// answer is visible on chain rather than inferred.
+
+// ── S's side ───────────────────────────────────────────────────────────────
+
+/** What this instance has been funded with, minus what it has sent on. */
+export ledger held: Uint<64>;
+export ledger sent: Uint<64>;
+
+/** Receipt ordinal of the coin most recently received, for locating it later. */
+export ledger coinsReceived: Uint<32>;
+
+// ── R's side ───────────────────────────────────────────────────────────────
+
+export ledger received: Uint<64>;
+export ledger takes: Uint<32>;
+
+// ── What the send actually produced ────────────────────────────────────────
+//
+// Published deliberately. If the nonce of the coin S sent is knowable, this is
+// where it becomes knowable; if `SendResult` does not carry it, that shows up
+// here as a compile error rather than as a coin nobody can claim.
+export ledger lastSentNonce: Bytes<32>;
+export ledger lastSentColor: Bytes<32>;
+
+constructor() {
+  held = 0;
+  sent = 0;
+  coinsReceived = 0;
+  received = 0;
+  takes = 0;
+}
+
+/** Fund this instance from a wallet. Plays `fundWithholding`. */
+export circuit fund(amount: Uint<64>, coin: ShieldedCoinInfo): [] {
+  assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
+  receiveShielded(disclose(coin));
+  held = (held + disclose(amount)) as Uint<64>;
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
+}
+
+/**
+ * Send a held coin to another CONTRACT. Plays `remitTax`, with `right()` where
+ * payroll uses `left()`.
+ */
+export circuit remitTo(
+  amount: Uint<64>,
+  to: ContractAddress,
+  coin: QualifiedShieldedCoinInfo
+): [] {
+  assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
+
+  const result = sendShielded(
+    disclose(coin),
+    right<ZswapCoinPublicKey, ContractAddress>(disclose(to)),
+    disclose(amount) as Uint<128>
+  );
+
+  // Whatever the send says it produced, recorded so the receiving side has
+  // something to be told.
+  lastSentNonce = disclose(result.sent.nonce);
+  lastSentColor = disclose(result.sent.color);
+
+  held = (held - disclose(amount)) as Uint<64>;
+  sent = (sent + disclose(amount)) as Uint<64>;
+}
+
+/** Claim a coin sent by another contract. Plays the treasury's receive. */
+export circuit take(amount: Uint<64>, coin: ShieldedCoinInfo): [] {
+  assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
+  receiveShielded(disclose(coin));
+  received = (received + disclose(amount)) as Uint<64>;
+  takes = (takes + 1) as Uint<32>;
+}

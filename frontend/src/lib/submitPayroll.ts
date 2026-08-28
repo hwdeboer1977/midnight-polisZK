@@ -282,6 +282,31 @@ export function walletCanProve(api: ConnectedAPI): boolean {
   return typeof (api as any)?.getProvingProvider === "function";
 }
 
+/**
+ * One indexer provider per endpoint pair, reused across calls.
+ *
+ * Constructing one opens a WEBSOCKET, and `connectContract` runs on every fund,
+ * pay, remit and revoke — so a fresh provider per operation meant a fresh socket
+ * per operation. The public preview indexer answers that with "Rate limited",
+ * which surfaces here as `Could not fund/pay: Rate limited` and looks like the
+ * transaction being refused rather than the connection.
+ *
+ * `payPayroll.ts` already caches its read-side provider for exactly this reason;
+ * this is the same fix on the side that builds transactions. Keyed by both URLs
+ * because the wallet supplies them — a wallet pointed at a different network
+ * must not be handed the previous network's socket.
+ */
+const indexerProviders = new Map<string, ReturnType<typeof indexerPublicDataProvider>>();
+
+function sharedIndexerProvider(indexer: string, indexerWs: string) {
+  const key = `${indexer}|${indexerWs}`;
+  const existing = indexerProviders.get(key);
+  if (existing) return existing;
+  const created = indexerPublicDataProvider(indexer, indexerWs);
+  indexerProviders.set(key, created);
+  return created;
+}
+
 export async function connectContract(options: {
   api: ConnectedAPI;
   networkId: string;
@@ -394,7 +419,7 @@ export async function connectContract(options: {
 
   const providers: any = {
     privateStateProvider: emptyPrivateStateProvider(),
-    publicDataProvider: indexerPublicDataProvider(indexer, indexerWs),
+    publicDataProvider: sharedIndexerProvider(indexer, indexerWs),
     zkConfigProvider,
     proofProvider: loggingProofProvider(
       provingMode === "wallet" && walletCanProve(api)

@@ -169,7 +169,22 @@ async function main() {
             console.log(chalk.gray("   Both are frozen at deploy and can never be changed."));
             return [t.tax, t.social];
           })()
-        : [];
+        : contractName === "taxvault"
+          ? (() => {
+              // One argument: who may withdraw. The tax treasury key, because
+              // that is already the party a payroll contract remits to — the
+              // vault sits between arrival and spending, it does not change who
+              // the money is for.
+              //
+              // Frozen at deploy like payroll's treasuries, and for the same
+              // reason: a custody contract whose destination can be changed is a
+              // custody contract with an extra key to steal.
+              const t = treasuryKeys();
+              console.log(chalk.gray(`   authority  ${process.env.TAX_TREASURY_KEY}`));
+              console.log(chalk.gray("   Frozen at deploy — withdrawals can go nowhere else."));
+              return [t.tax];
+            })()
+          : [];
 
     const deployed = await deployContract(providers as any, {
       compiledContract: compiledContract as any,

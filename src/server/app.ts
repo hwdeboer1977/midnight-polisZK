@@ -8,7 +8,9 @@ import { getJob, startJob } from "./jobs.js";
 import type { ServerConfig } from "./config.js";
 import { fundAndPay } from "../utils/payroll-run.js";
 import { runRelay, type TerminationOpening } from "../utils/relay-run.js";
-import { depositToFund } from "../utils/fund-deposit.js";
+import { depositToFund, type TreasuryName } from "../utils/fund-deposit.js";
+import { readTreasuryBalances } from "../utils/treasury-balances.js";
+import { fundTreasuriesWithNight } from "../utils/treasury-night.js";
 import { onboardEmployer } from "../utils/onboarding.js";
 import {
   EMPLOYER_ALLOWANCE,
@@ -436,6 +438,76 @@ export function createApp(config: ServerConfig): Express {
   });
 
   /**
+   * Gives the treasury wallets the NIGHT they need to spend what they hold.
+   *
+   * A treasury only ever receives, so its ordinary state is a pEUR balance it
+   * cannot move: fees are paid in DUST, DUST comes from registered NIGHT, and
+   * nothing sends a treasury NIGHT. Doing it by hand is not an option either —
+   * the seeds are raw hex, and a browser wallet imports a recovery phrase and
+   * nothing else, so no wallet app can hold these keys.
+   *
+   * This service can, so it does it: the platform wallet sends NIGHT, and each
+   * treasury registers what it received. Both halves are needed; unregistered
+   * NIGHT generates no DUST and fails exactly like none at all.
+   *
+   * Idempotent by default — a treasury that already holds NIGHT is checked for
+   * registration and otherwise left alone.
+   */
+  platform.post("/treasuries/night", (req: Request, res: Response) => {
+    const asked = req.body?.wallets;
+    const wallets = Array.isArray(asked)
+      ? asked.filter((w: unknown): w is TreasuryName =>
+          w === "social-treasury" || w === "tax-treasury"
+        )
+      : undefined;
+    if (wallets && wallets.length === 0) {
+      res.status(400).json({
+        error: 'wallets must name "social-treasury" or "tax-treasury"',
+      });
+      return;
+    }
+
+    // The platform wallet is not fundable from here: it is the source, and a
+    // request that could name it would be asking this service to pay itself.
+    startJob(res, "funding the treasuries with NIGHT", (log) =>
+      fundTreasuriesWithNight({ wallets, force: Boolean(req.body?.force), log })
+    );
+  });
+
+  /**
+   * What the treasury wallets hold, so an operator does not have to guess.
+   *
+   * A job rather than a plain GET, for two reasons that both come from the
+   * balance being SHIELDED. It cannot be read from the indexer — only the
+   * holder of the spending key can decrypt its own coins — so this builds each
+   * wallet and syncs it, which is minutes on a cold cache. And it touches the
+   * same wallets `/fund/deposit` spends, so it belongs under the same `busy`
+   * lock rather than racing a deposit that is already running.
+   *
+   * Behind the platform token with the rest of this router: the balance of a
+   * wallet is not a public fact, and the route exists to serve the operator who
+   * is about to spend it.
+   */
+  platform.post("/treasuries/balances", (req: Request, res: Response) => {
+    const asked = req.body?.wallets;
+    const wallets = Array.isArray(asked)
+      ? asked.filter((w: unknown): w is TreasuryName =>
+          w === "social-treasury" || w === "tax-treasury" || w === "platform"
+        )
+      : undefined;
+    if (wallets && wallets.length === 0) {
+      res.status(400).json({
+        error: 'wallets must name "social-treasury", "tax-treasury" or "platform"',
+      });
+      return;
+    }
+
+    startJob(res, `reading treasury balances`, (log) =>
+      readTreasuryBalances({ wallets, log })
+    );
+  });
+
+  /**
    * Moves a treasury's pEUR into the benefit fund.
    *
    * Behind the platform token, unlike `/api/relay`, and the difference is what
@@ -476,8 +548,33 @@ export function createApp(config: ServerConfig): Express {
       return;
     }
 
-    startJob(res, `depositing €${body.amount} from ${from}`, (log) =>
-      depositToFund({ amountMinor, from: from as any, log })
+    // The period these contributions cover, and the payroll contract they came
+    // from. Required rather than defaulted: a deposit filed against the wrong
+    // month is worse than one refused, because it reconciles against a total it
+    // has nothing to do with.
+    const period = Number(body.period);
+    if (!Number.isInteger(period) || period < 200001 || period > 299912) {
+      res.status(400).json({ error: "period is required, as YYYYMM (e.g. 202609)" });
+      return;
+    }
+    const source = String(body.source ?? "").replace(/^0x/, "");
+    if (!/^[0-9a-f]{64}$/i.test(source)) {
+      res.status(400).json({
+        error: "source is required — the payroll contract address these contributions came from",
+      });
+      return;
+    }
+
+    // Which national contract receives it. Defaulted rather than required, so
+    // the existing fund flow keeps working unchanged.
+    const target = String(body.target ?? "fund");
+    if (target !== "fund" && target !== "taxvault") {
+      res.status(400).json({ error: 'target must be "fund" or "taxvault"' });
+      return;
+    }
+
+    startJob(res, `depositing €${body.amount} from ${from} into ${target}`, (log) =>
+      depositToFund({ amountMinor, from: from as any, period, source, target, log })
     );
   });
 

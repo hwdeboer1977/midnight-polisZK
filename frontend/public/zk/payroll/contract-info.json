@@ -364,6 +364,185 @@
       }
     },
     {
+      "name": "fundPeriod",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "period",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 4294967295
+          }
+        },
+        {
+          "name": "gross",
+          "type": {
+            "type-name": "Vector",
+            "length": 2,
+            "type": {
+              "type-name": "Uint",
+              "maxval": 1152921504606846975
+            }
+          }
+        },
+        {
+          "name": "tax",
+          "type": {
+            "type-name": "Vector",
+            "length": 2,
+            "type": {
+              "type-name": "Uint",
+              "maxval": 1152921504606846975
+            }
+          }
+        },
+        {
+          "name": "social",
+          "type": {
+            "type-name": "Vector",
+            "length": 2,
+            "type": {
+              "type-name": "Uint",
+              "maxval": 1152921504606846975
+            }
+          }
+        },
+        {
+          "name": "net",
+          "type": {
+            "type-name": "Vector",
+            "length": 2,
+            "type": {
+              "type-name": "Uint",
+              "maxval": 1152921504606846975
+            }
+          }
+        },
+        {
+          "name": "weeks",
+          "type": {
+            "type-name": "Vector",
+            "length": 2,
+            "type": {
+              "type-name": "Uint",
+              "maxval": 255
+            }
+          }
+        },
+        {
+          "name": "nonces",
+          "type": {
+            "type-name": "Vector",
+            "length": 2,
+            "type": {
+              "type-name": "Bytes",
+              "length": 32
+            }
+          }
+        },
+        {
+          "name": "netCoins",
+          "type": {
+            "type-name": "Vector",
+            "length": 2,
+            "type": {
+              "type-name": "Struct",
+              "name": "ShieldedCoinInfo",
+              "elements": [
+                {
+                  "name": "nonce",
+                  "type": {
+                    "type-name": "Bytes",
+                    "length": 32
+                  }
+                },
+                {
+                  "name": "color",
+                  "type": {
+                    "type-name": "Bytes",
+                    "length": 32
+                  }
+                },
+                {
+                  "name": "value",
+                  "type": {
+                    "type-name": "Uint",
+                    "maxval": 340282366920938463463374607431768211455
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "taxCoin",
+          "type": {
+            "type-name": "Struct",
+            "name": "ShieldedCoinInfo",
+            "elements": [
+              {
+                "name": "nonce",
+                "type": {
+                  "type-name": "Bytes",
+                  "length": 32
+                }
+              },
+              {
+                "name": "color",
+                "type": {
+                  "type-name": "Bytes",
+                  "length": 32
+                }
+              },
+              {
+                "name": "value",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 340282366920938463463374607431768211455
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "socialCoin",
+          "type": {
+            "type-name": "Struct",
+            "name": "ShieldedCoinInfo",
+            "elements": [
+              {
+                "name": "nonce",
+                "type": {
+                  "type-name": "Bytes",
+                  "length": 32
+                }
+              },
+              {
+                "name": "color",
+                "type": {
+                  "type-name": "Bytes",
+                  "length": 32
+                }
+              },
+              {
+                "name": "value",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 340282366920938463463374607431768211455
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Tuple",
+        "types": [
+        ]
+      }
+    },
+    {
       "name": "payEmployee",
       "pure": false,
       "proof": true,

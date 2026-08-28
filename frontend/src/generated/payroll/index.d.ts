@@ -41,6 +41,18 @@ export type ImpureCircuits<PS> = {
                weeks_0: bigint,
                nonce_0: Uint8Array,
                coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
+  fundPeriod(context: __compactRuntime.CircuitContext<PS>,
+             period_0: bigint,
+             gross_0: bigint[],
+             tax_0: bigint[],
+             social_0: bigint[],
+             net_0: bigint[],
+             weeks_0: bigint[],
+             nonces_0: Uint8Array[],
+             netCoins_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }[],
+             taxCoin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint },
+             socialCoin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint
+                           }): __compactRuntime.CircuitResults<PS, []>;
   payEmployee(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
               index_0: bigint,
@@ -140,6 +152,18 @@ export type ProvableCircuits<PS> = {
                weeks_0: bigint,
                nonce_0: Uint8Array,
                coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
+  fundPeriod(context: __compactRuntime.CircuitContext<PS>,
+             period_0: bigint,
+             gross_0: bigint[],
+             tax_0: bigint[],
+             social_0: bigint[],
+             net_0: bigint[],
+             weeks_0: bigint[],
+             nonces_0: Uint8Array[],
+             netCoins_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }[],
+             taxCoin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint },
+             socialCoin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint
+                           }): __compactRuntime.CircuitResults<PS, []>;
   payEmployee(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
               index_0: bigint,
@@ -259,6 +283,18 @@ export type Circuits<PS> = {
                weeks_0: bigint,
                nonce_0: Uint8Array,
                coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
+  fundPeriod(context: __compactRuntime.CircuitContext<PS>,
+             period_0: bigint,
+             gross_0: bigint[],
+             tax_0: bigint[],
+             social_0: bigint[],
+             net_0: bigint[],
+             weeks_0: bigint[],
+             nonces_0: Uint8Array[],
+             netCoins_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }[],
+             taxCoin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint },
+             socialCoin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint
+                           }): __compactRuntime.CircuitResults<PS, []>;
   payEmployee(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
               index_0: bigint,

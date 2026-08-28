@@ -648,6 +648,125 @@ PayrollCommitment {
   coinsReceived = (coinsReceived + 1) as Uint<32>;
 }
 
+// Funds a whole period in one transaction: every employee's net, plus the tax
+// and the contribution.
+//
+// ── Why this exists, and it is not the transaction count ───────────────────
+//
+// Run separately, `fundEmployee` and `fundWithholding` leave a window in which
+// the employees have been funded and the withholding has not — `fundedFor` true,
+// `withheldFor` false. That state is visible on chain, which is the good part,
+// and it is a state in which the employer is holding money that is not theirs.
+// Here it cannot occur: one circuit receives the net coins and the withholding
+// coins or receives nothing. Skipping the tax stops being something to notice
+// and chase, and becomes something that cannot be built — the same class of
+// guarantee `fundWithholding` already gives on the AMOUNT.
+//
+// ── Why one circuit rather than several calls in one transaction ───────────
+//
+// A call's transcript is computed against the state as it stands BEFORE the
+// transaction, so two calls in one transaction cannot see each other's writes.
+// `coinsReceived` is incremented by every receipt here, and `payToken` is set by
+// the first coin and read by the ones after it — both would be wrong across
+// separate calls, and the ledger would reject the replay. A circuit sees its own
+// writes, so the sequence is safe inside one call in a way it is not across two.
+//
+// ── What it deliberately does NOT do ───────────────────────────────────────
+//
+// It does not pay anyone. Funding puts coins into this contract; paying spends
+// them, and spending needs each coin's `mt_index` — its position in the Zswap
+// tree, which does not exist until the coin has been committed. Receive and
+// spend therefore cannot share a transaction, and `payPeriod` stays separate.
+//
+// ⚠️ ROSTER SIZE IS 2 and is written out in full, exactly as `setPayroll` and
+// `payPeriod` do. See the note on `platform` for why.
+export circuit fundPeriod(
+  period: Uint<32>,
+  gross: Vector<2, Uint<60>>,
+  tax: Vector<2, Uint<60>>,
+  social: Vector<2, Uint<60>>,
+  net: Vector<2, Uint<60>>,
+  weeks: Vector<2, Uint<8>>,
+  nonces: Vector<2, Bytes<32>>,
+  netCoins: Vector<2, ShieldedCoinInfo>,
+  taxCoin: ShieldedCoinInfo,
+  socialCoin: ShieldedCoinInfo
+): [] {
+  assert(employerAssigned, "no employer assigned yet");
+  assert(ownPublicKey() == employer, "only the employer may fund payroll");
+
+  const p = disclose(period);
+  assert(commitmentsFor.member(p), "no payroll filed for that period");
+  assert(!withheldFor.member(p) || !withheldFor.lookup(p), "withholding already funded");
+
+  // The pay token is fixed by the first coin this contract ever receives, and
+  // that must be an employee's, never the withholding's — the same rule
+  // `fundWithholding` enforces by refusing to be first.
+  if (!payTokenSet) {
+    payToken = disclose(netCoins[0].color);
+    payTokenSet = true;
+  }
+
+  // ── the roster, unrolled ────────────────────────────────────────────────
+  for (const i of 0..2) {
+    const idx = i as Uint<8>;
+    assert(commitmentsFor.lookup(p).member(idx), "no such employee in that period");
+    assert(!fundedFor.lookup(p).lookup(idx), "already funded");
+
+    assert(
+      commitmentsFor.lookup(p).lookup(idx) ==
+        persistentHash<PayrollCommitment>(
+          PayrollCommitment {
+            gross: gross[i], tax: tax[i], social: social[i], net: net[i],
+            weeks: weeks[i], period: p, employer: employer,
+            paramsHash: paramsHashFor.lookup(p), nonce: nonces[i]
+          }
+        ),
+      "the figures and nonce do not open the commitment for that employee"
+    );
+
+    assert(payToken == disclose(netCoins[i].color), "wrong token for this payroll");
+    // Net, not gross. This coin is the employee's; the withholding is received
+    // below, once for the period, because it is owed to two destinations rather
+    // than to N people.
+    assert(netCoins[i].value == net[i] as Uint<128>, "coin does not hold the committed net pay");
+
+    receiveShielded(disclose(netCoins[i]));
+    fundedFor.lookup(p).insert(idx, true);
+    coinOrdinalFor.lookup(p).insert(idx, coinsReceived);
+    coinsReceived = (coinsReceived + 1) as Uint<32>;
+  }
+
+  // ── the withholding ─────────────────────────────────────────────────────
+  //
+  // Checked against the period totals, which `setPayroll` accumulated from the
+  // per-employee figures rather than by reapplying a rate to the gross total.
+  // Checking against them is therefore checking against the commitments opened
+  // above.
+  assert(payToken == disclose(taxCoin.color), "wrong token for the tax coin");
+  assert(payToken == disclose(socialCoin.color), "wrong token for the contribution coin");
+  assert(
+    taxCoin.value == totalTaxFor.lookup(p) as Uint<128>,
+    "tax coin does not hold the tax assessed for that period"
+  );
+  assert(
+    socialCoin.value == totalSocialFor.lookup(p) as Uint<128>,
+    "contribution coin does not hold the contribution assessed for that period"
+  );
+
+  receiveShielded(disclose(taxCoin));
+  taxCoinFor.insert(p, coinsReceived);
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
+
+  receiveShielded(disclose(socialCoin));
+  socialCoinFor.insert(p, coinsReceived);
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
+
+  taxPool = (taxPool + totalTaxFor.lookup(p)) as Uint<64>;
+  socialPool = (socialPool + totalSocialFor.lookup(p)) as Uint<64>;
+  withheldFor.insert(p, true);
+}
+
 // Pays one employee the exact amount committed for them.
 //
 // This is the circuit the whole design exists for. The commitment already on

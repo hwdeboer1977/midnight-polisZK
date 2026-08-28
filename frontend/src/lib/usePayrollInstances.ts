@@ -9,8 +9,24 @@ export interface PayrollInstance {
   deployment: Deployment;
   state: PayrollLedger | null;
   blockHeight: number | null;
-  /** How the connected key relates to this instance. */
+  /**
+   * How the connected key relates to this instance.
+   *
+   * One label, and employer wins — which is right for "whose contract is this?"
+   * and wrong for "is this the deployer?". The two are not exclusive: a platform
+   * that assigns itself as employer, which every local and test deployment does,
+   * is both. Ask `isPlatform` for the second question.
+   */
   role: "employer" | "platform" | "none";
+  /**
+   * Whether the connected key is this instance's `platform`, independent of the
+   * label above.
+   *
+   * `role === "platform"` was standing in for this and silently answered "no"
+   * whenever the deployer was also an employer — so the operator-only controls
+   * disappeared for exactly the wallet that runs the service in development.
+   */
+  isPlatform: boolean;
 }
 
 
@@ -82,10 +98,13 @@ export function usePayrollInstances(
             }
 
             let role: PayrollInstance["role"] = "none";
+            const isPlatform = Boolean(
+              state && coinPublicKey && sameKey(hex(state.platform.bytes), coinPublicKey)
+            );
             if (state && coinPublicKey) {
               if (state.employerAssigned && sameKey(hex(state.employer.bytes), coinPublicKey)) {
                 role = "employer";
-              } else if (sameKey(hex(state.platform.bytes), coinPublicKey)) {
+              } else if (isPlatform) {
                 role = "platform";
               }
             }
@@ -96,6 +115,7 @@ export function usePayrollInstances(
               state,
               blockHeight: chainState?.blockHeight ?? null,
               role,
+              isPlatform,
             };
           })
         );

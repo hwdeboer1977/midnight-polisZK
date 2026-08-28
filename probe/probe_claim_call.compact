@@ -1,0 +1,79 @@
+pragma language_version >= 0.16;
+import CompactStandardLibrary;
+
+// Probe: can a circuit bind itself to ANOTHER contract's call in the same
+// transaction? This is the primitive option D needs — the one that would let a
+// tax contract refuse a coin unless the payroll call it belongs to is present.
+
+export ledger x: Uint<64>;
+
+export circuit probe(addr: Bytes<32>, entry: Bytes<32>, comm: Field): [] {
+  x = 1;
+  kernel.claimContractCall(disclose(addr), disclose(entry), disclose(comm));
+}
+
+// ── RESULT: COMPILES ──────────────────────────────────────────────────────
+//
+// compactc 0.33.0, 2026-08-28. Signature discovered by feeding wrong types and
+// reading the errors:
+//
+//   kernel.claimContractCall(Bytes<32>, Bytes<32>, Field)
+//                            address    entryPoint  communicationCommitment
+//
+// which lines up exactly with `ContractCallPrototype(address, entry_point, …,
+// communication_commitment_rand)` in ledger-v8. So the claim names a sibling
+// call in the same transaction.
+//
+// ── The asymmetry, which is the whole finding ──────────────────────────────
+//
+// A contract still cannot CALL another — `probe_xcall.compact` retested on
+// 0.33.0 and `cross-contract calls are not yet supported` still stands. But a
+// contract CAN CLAIM that another contract's call happened alongside it.
+//
+// That is the direction option D actually needs. Nobody wants payroll to call
+// the tax contract; they want the tax contract to refuse money unless the
+// payroll call it belongs to is in the same transaction.
+//
+// ── What this does NOT establish ──────────────────────────────────────────
+//
+// Compiling is not enforcing. Three runtime questions remain, none answerable
+// by the compiler:
+//
+//   1. Does the node REJECT a claim naming a call that is not in the
+//      transaction? If it does not, the claim is decoration.
+//   2. What exactly does the communication commitment cover? It is computed by
+//      `communicationCommitment(input, output, rand)` over the callee's aligned
+//      input and output. Whether payroll's per-employee commitments are inside
+//      that input/output decides whether claiming binds the AMOUNTS or merely
+//      binds "some call to payroll happened".
+//   3. Can midnight-js be driven to produce matching randomness on both sides?
+//      `communicationCommitment` is exported from ledger-v8, so the client can
+//      compute it — but `createUnprovenCallTx` calls
+//      `communicationCommitmentRandomness()` itself and does not accept one.
+//
+// (2) is the load-bearing one. If the commitment does not cover the figures,
+// the tax contract learns only that payroll was called, not that it was called
+// with the numbers this coin claims to match — and option D collapses back to
+// option C.
+//
+// ── Also established, same session ────────────────────────────────────────
+//
+// Kernel surface (by probing `operation X undefined for ledger field type
+// Kernel`):
+//   PRESENT: self, checkpoint, claimZswapNullifier, claimZswapCoinSpend,
+//            claimZswapCoinReceive, claimContractCall
+//   ABSENT:  mint, caller, sender, origin, callers, actions, intent, segment,
+//            transaction, siblings
+//
+// No transaction introspection: a circuit cannot enumerate its siblings, only
+// claim a specific one it already knows the identity of.
+//
+// No signature-verification primitive. All unbound: verifySignature,
+// signatureVerify, checkSignature, verify, ecdsaVerify, schnorrVerify,
+// eddsaVerify, ecVerify, signatureValid, verifySig.
+//
+// But curve arithmetic IS present — ecAdd, ecMul, ecMulGenerator, hashToCurve,
+// alongside persistentCommit / transientCommit / persistentHash /
+// transientHash / upgradeFromTransient. So in-circuit Schnorr verification is
+// CONSTRUCTIBLE by hand rather than impossible. Expensive, and unnecessary if
+// claimContractCall turns out to enforce.

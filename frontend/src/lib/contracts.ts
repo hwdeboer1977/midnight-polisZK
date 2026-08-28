@@ -14,6 +14,7 @@ const LOADERS: Record<string, () => Promise<ContractModule>> = {
   payroll: () => import("../generated/payroll/index.js"),
   peur: () => import("../generated/peur/index.js"),
   fund: () => import("../generated/fund/index.js"),
+  taxvault: () => import("../generated/taxvault/index.js"),
 };
 
 const cache = new Map<string, Promise<ContractModule>>();

@@ -14,7 +14,9 @@ import {
 } from "../lib/payPayroll";
 import { loadDeployments } from "../lib/deployments";
 import { recordRoster } from "../lib/collected";
+import { readNationalDeposits, type NationalDeposits } from "../lib/nationalDeposits";
 import { FilePicker } from "./FilePicker";
+import { FundDeposit } from "./FundDeposit";
 import { MonthSteps } from "./MonthSteps";
 import { PayslipRecovery } from "./PayslipRecovery";
 import { Payslips } from "./Payslips";
@@ -626,6 +628,57 @@ export function RosterUpload({
   const withheldDone = monthState?.withheld ?? withheld !== null;
   const ready = Boolean(roster && usable);
 
+  /**
+   * Whether this month's pools have left the payroll contract.
+   *
+   * `remitted` alone only knows about THIS session, so a reload turned a
+   * finished step back into an outstanding one — the step said "now" against a
+   * period whose money left the contract days ago. `unremitted` is the chain's
+   * answer and survives a reload: it names the earliest period still holding a
+   * pool, so a contract with withholding on it and nothing unremitted has
+   * remitted everything.
+   *
+   * Guarded on `statusUnknown` because `unremitted` is null before the read
+   * lands and null again if it fails, and neither is "nothing outstanding". A
+   * failed read leaves the step where it was rather than ticking it, which is
+   * the direction that cannot mislead: it may ask for work already done, and
+   * the circuit refuses a second remittance anyway.
+   */
+  const remitDone =
+    remitted !== null || (!statusUnknown && unremitted === null && withheldDone);
+
+  /**
+   * What has reached the benefit fund and the tax vault for the month on
+   * screen, read from those contracts rather than from payroll — payroll's
+   * ledger cannot see past its own `remitTax`.
+   */
+  const shownPeriod = roster?.period ?? openPeriod ?? null;
+  const [national, setNational] = useState<NationalDeposits | null>(null);
+  const [nationalNonce, setNationalNonce] = useState(0);
+  useEffect(() => {
+    if (shownPeriod === null) {
+      setNational(null);
+      return;
+    }
+    let cancelled = false;
+    void readNationalDeposits(networkId, shownPeriod).then((result) => {
+      if (!cancelled) setNational(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId, shownPeriod, nationalNonce]);
+
+  // Both arrived, and both were readable. `null` is unknown and is not treated
+  // as zero here for the same reason it is not there: a contract that could not
+  // be read must not tick a step nobody has performed.
+  const depositedDone =
+    national !== null &&
+    national.contributionsMinor !== null &&
+    national.taxMinor !== null &&
+    national.contributionsMinor > 0n &&
+    national.taxMinor > 0n;
+
   const previewBlock = roster ? (
     <>
       {roster.problems.length > 0 ? (
@@ -1016,28 +1069,48 @@ export function RosterUpload({
           action: ready ? fileAction : null,
         },
         {
+          // One step where there were two, because the contract now does it in
+          // one circuit. `fundPeriod` receives every employee's net AND the tax
+          // and contributions together, so there is no longer a moment when the
+          // employees are covered and the withholding is still in the employer's
+          // wallet. Splitting it across two rows would describe a gap that can
+          // no longer occur.
           title: "Fund and pay everyone",
-          detail: "Each employee receives their net as a shielded transfer.",
-          cost: roster
-            ? `${roster.rows.length + 1} transactions · one per employee to fund, then one to pay`
-            : "one transaction per employee, then one to pay",
-          state: paid ? "done" : filed && ready ? "now" : "todo",
+          detail:
+            "Each employee receives their net as a shielded transfer. The tax and " +
+            "contributions leave your wallet in the same transaction — they cannot " +
+            "be funded separately or skipped.",
+          // Two transactions whatever the headcount: one to fund the whole
+          // period, one to pay it out. Funding used to be one per employee.
+          // Paying stays separate because spending a coin needs its position in
+          // the ledger's tree, which does not exist until it has been committed.
+          cost: "2 transactions · one to fund the period, then one to pay",
+          state: paid && withheldDone ? "done" : filed && ready ? "now" : "todo",
           action: ready && filed ? payAction : null,
         },
-        {
-          title: "Move withholding into the contract",
-          detail:
-            "Tax and contributions leave your wallet for the contract's pools. Until this runs they are assessed, not collected.",
-          cost: "1 transaction",
-          state: withheldDone ? "done" : paid ? "now" : "todo",
-          // `paid`, matching the state above, rather than `filed`. Gated on
-          // filing, this step rendered a live-looking button while it was still
-          // "todo" — the only step in the strip offering an action it was not
-          // yet the turn of, which is exactly the ambiguity a stepper exists to
-          // remove. `withheldDone` is kept in the condition so a finished step
-          // still has something behind "Correct this".
-          action: paid || withheldDone ? withholdAction : null,
-        },
+        // Only when the two came apart.
+        //
+        // Normally funding and withholding are one circuit and this never
+        // appears. It appears when a period was funded the old way — an
+        // interrupted run, or one that fell back to per-slot funding because
+        // some slots were already covered — since the batched circuit refuses a
+        // partly-funded period and `fundWithholding` is then the only way to
+        // finish. Showing it unconditionally would advertise a gap that no
+        // longer exists on a normal run.
+        ...(paid && !withheldDone
+          ? [
+              {
+                title: "Move withholding into the contract",
+                detail:
+                  "This period was funded without its withholding, so the tax and " +
+                  "contributions still need to follow. Until this runs they are " +
+                  "assessed, not collected.",
+                cost: "1 transaction",
+                state: "now" as const,
+                action: withholdAction,
+              },
+            ]
+          : []),
         {
           title: unremitted
             ? `Send ${periodName(unremitted)}'s withholding to the treasuries`
@@ -1050,8 +1123,70 @@ export function RosterUpload({
           // does not move on when the calendar does: September's withholding was
           // unreachable the moment October became the current month, because
           // this step only ever rendered for the month being worked on.
-          state: unremitted ? "now" : remitted ? "done" : withheldDone ? "now" : "todo",
+          state: unremitted ? "now" : remitDone ? "done" : withheldDone ? "now" : "todo",
+          // Named as a HOP rather than as an ending. The pools are out of the
+          // payroll contract at this point and in two keypairs, which is
+          // finished as far as this contract is concerned and not finished as
+          // far as the money is concerned — the step below is the rest of it.
+          result: remitted ? (
+            <>
+              €{formatPeur(remitted.taxMinor)} tax and €
+              {formatPeur(remitted.socialMinor)} contribution are with the treasury
+              wallets
+            </>
+          ) : remitDone ? (
+            "Sent — the pools are with the treasury wallets"
+          ) : null,
           action: unremitted || withheldDone || remitted ? remitAction : null,
+        },
+        {
+          title: "Send withholding to the national contracts",
+          detail:
+            "The second hop, and the last one. The step above empties the pools into " +
+            "the two treasury wallets, where nothing on chain says what they were for; " +
+            "this moves them into the contracts that govern them — contributions to " +
+            "the benefit fund, which pays claims out of them, and wage tax to the " +
+            "vault, which records it per period and can only pay out to the authority " +
+            "frozen at its deploy.",
+          cost: "1 transaction per contract, run one at a time",
+          // Read from the receiving contracts, not from payroll: payroll's
+          // ledger stops at `remitTax`, so it cannot answer this and never
+          // could. Unknown reads leave the step where it was — see
+          // `depositedDone`.
+          state: depositedDone ? "done" : remitDone ? "now" : "todo",
+          result:
+            shownPeriod === null ? null : (
+              <NationalArrivals deposits={national} period={shownPeriod} />
+            ),
+          // Not gated on the connected wallet, and that is deliberate.
+          //
+          // It was, on `role === "platform"`, and the control was invisible to
+          // everyone: `deploy.ts` runs from the service's seed, so the contract's
+          // `platform` is a key that never enters a browser. The connected wallet
+          // is the employer's. There is no wallet that both holds this page open
+          // and satisfies that check, so the gate hid the step's only control
+          // from the one person who can perform it.
+          //
+          // The real check is the platform token, verified by the server that
+          // holds the treasury seeds. A gate in front of it could only ever be
+          // decoration — and this one was decoration that pointed the wrong way.
+          action: (
+            <>
+              <p className="note">
+                This hop spends the treasury wallets, whose seeds are held by the
+                service rather than by any wallet here, so it needs the platform
+                token. What arrives is recorded on both contracts under this
+                period and is shown above once it lands.
+              </p>
+              <FundDeposit
+                bare
+                networkId={networkId}
+                defaultPeriod={shownPeriod}
+                defaultSource={target?.contractAddress}
+                onDeposited={() => setNationalNonce((n) => n + 1)}
+              />
+            </>
+          ),
         },
         {
           title: "Send payslips",
@@ -1084,6 +1219,46 @@ export function RosterUpload({
         },
       ]}
     />
+  );
+}
+
+/**
+ * What each national contract recorded for this period.
+ *
+ * Three states per contract and they are kept apart deliberately. A figure is
+ * what arrived; **zero** is a deposit that has not been made; **unknown** is a
+ * contract that is not deployed here or did not answer, and rendering that as
+ * zero would tell an employer to redo a hop that may already be done. The same
+ * distinction `readNationalDeposits` draws, carried through to the screen
+ * rather than flattened on the way.
+ *
+ * Neither figure is checked against the payroll contract's totals here. It
+ * cannot be, on chain — one contract cannot read another's ledger — so what
+ * these contracts record is a claim about a period, and a mismatch with
+ * `totalTaxFor` is publicly visible rather than refused. Showing the figure is
+ * what makes that comparison possible at all.
+ */
+function NationalArrivals({
+  deposits,
+  period,
+}: {
+  deposits: NationalDeposits | null;
+  period: number;
+}) {
+  if (!deposits) return <span className="muted">Reading the national contracts…</span>;
+
+  const line = (label: string, minor: bigint | null, address: string | null) => {
+    if (address === null) return `${label}: no contract deployed on this network`;
+    if (minor === null) return `${label}: could not be read`;
+    if (minor === 0n) return `${label}: nothing recorded for ${periodName(period)} yet`;
+    return `${label}: €${formatPeur(minor)} recorded for ${periodName(period)}`;
+  };
+
+  return (
+    <ul className="national-arrivals">
+      <li>{line("Benefit fund", deposits.contributionsMinor, deposits.fundAddress)}</li>
+      <li>{line("Tax vault", deposits.taxMinor, deposits.taxvaultAddress)}</li>
+    </ul>
   );
 }
 

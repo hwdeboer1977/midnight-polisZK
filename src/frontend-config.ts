@@ -258,6 +258,7 @@ const baseline: [string, string | undefined][] = [
   ["VITE_PEUR_TOKEN_ID", peurToken ?? process.env.peur_token_id],
   ["VITE_TAXPARAMS_ADDRESS", process.env.taxparams_address],
   ["VITE_FUND_ADDRESS", process.env.fund_address],
+  ["VITE_TAXVAULT_ADDRESS", process.env.taxvault_address],
 ];
 
 /**

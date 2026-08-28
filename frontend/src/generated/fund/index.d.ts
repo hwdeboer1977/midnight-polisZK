@@ -15,6 +15,9 @@ export type ImpureCircuits<PS> = {
               period_0: bigint,
               root_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   fundBenefits(context: __compactRuntime.CircuitContext<PS>,
+               period_0: bigint,
+               source_0: Uint8Array,
+               amount_0: bigint,
                coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
   claim(context: __compactRuntime.CircuitContext<PS>,
         path_0: { leaf: Uint8Array,
@@ -87,6 +90,9 @@ export type ProvableCircuits<PS> = {
               period_0: bigint,
               root_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   fundBenefits(context: __compactRuntime.CircuitContext<PS>,
+               period_0: bigint,
+               source_0: Uint8Array,
+               amount_0: bigint,
                coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
   claim(context: __compactRuntime.CircuitContext<PS>,
         path_0: { leaf: Uint8Array,
@@ -186,6 +192,9 @@ export type Circuits<PS> = {
               period_0: bigint,
               root_0: bigint): __compactRuntime.CircuitResults<PS, []>;
   fundBenefits(context: __compactRuntime.CircuitContext<PS>,
+               period_0: bigint,
+               source_0: Uint8Array,
+               amount_0: bigint,
                coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
   claim(context: __compactRuntime.CircuitContext<PS>,
         path_0: { leaf: Uint8Array,
@@ -319,6 +328,22 @@ export type Ledger = {
   readonly benefitToken: Uint8Array;
   readonly benefitTokenSet: boolean;
   readonly coinsReceived: bigint;
+  contributedFor: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(key_0: bigint): boolean;
+    lookup(key_0: bigint): bigint;
+    [Symbol.iterator](): Iterator<[bigint, bigint]>
+  };
+  contributionSourceFor: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(key_0: bigint): boolean;
+    lookup(key_0: bigint): Uint8Array;
+    [Symbol.iterator](): Iterator<[bigint, Uint8Array]>
+  };
+  readonly contributedTotal: bigint;
+  readonly contributionCount: bigint;
   readonly poolOrdinal: bigint;
 }
 

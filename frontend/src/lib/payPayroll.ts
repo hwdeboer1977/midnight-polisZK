@@ -241,13 +241,121 @@ const toHexBytes = (value: string): Uint8Array => {
 export { sealedCoinNonce as coinNonceFor };
 
 /**
- * Funds every slot of a period that is not funded yet.
+ * Funds a whole period — every slot's net AND the withholding — in ONE
+ * transaction.
+ *
+ * ── What this closes ───────────────────────────────────────────────────────
+ *
+ * Funding slot by slot and then calling `fundWithholding` leaves a window in
+ * which `fundedFor` is true and `withheldFor` is false: the employees are
+ * covered and the employer is still holding money that is not theirs. That
+ * state is visible on chain, which is the good part, and it is a state that can
+ * be left in place. Here it cannot occur — the circuit receives all four coins
+ * or none. Skipping the tax stops being something to notice and chase and
+ * becomes something that cannot be built.
+ *
+ * ── Why it is one circuit and not several calls ────────────────────────────
+ *
+ * A call's transcript is computed against the state as it stands BEFORE the
+ * transaction, so calls in one transaction cannot see each other's writes.
+ * `coinsReceived` is incremented by every receipt and `payToken` is set by the
+ * first coin and read by the rest — both would be wrong across separate calls.
+ * A circuit sees its own writes; separate calls do not.
+ *
+ * ── The consequence the caller must respect ────────────────────────────────
+ *
+ * This creates FOUR coins in one transaction, and receipt ordinals then stop
+ * agreeing with Zswap tree order. Measured: employee 0's coin at leaf 48188,
+ * employee 1's at 48186 — inverted. Anything that later spends these must
+ * locate them by rebuilding their commitment, never by indexing sorted leaves
+ * against `coinOrdinalFor`. `runPayroll` does that; a new caller must too.
+ */
+export async function fundPeriodBatched(options: {
+  deployed: any;
+  contractModule: any;
+  ledger: any;
+  employerKey: Uint8Array;
+  tokenId: string;
+  period: number;
+  round: number;
+  slots: SlotState[];
+  onProgress?: StepProgress;
+}): Promise<number> {
+  const { deployed, ledger, employerKey, tokenId, period, round, slots } = options;
+  const onProgress = options.onProgress ?? (() => {});
+  const key = BigInt(period);
+  const color = toHexBytes(tokenId);
+
+  // The circuit's roster is a fixed-width vector, so the slot count is not a
+  // preference. Refused here, by name, rather than as an arity error from the
+  // generated binding.
+  if (slots.length !== 2) {
+    throw new Error(
+      `fundPeriod takes exactly 2 employees, got ${slots.length}. ` +
+        "The roster width is fixed in the contract."
+    );
+  }
+
+  // The totals the circuit will check the withholding coins against. Read from
+  // the contract, not recomputed: they were accumulated per employee by
+  // `setPayroll`, and a figure derived any other way would be checking a
+  // different number from the one on chain.
+  const taxMinor: bigint = ledger.totalTaxFor.member(key) ? ledger.totalTaxFor.lookup(key) : 0n;
+  const socialMinor: bigint = ledger.totalSocialFor.member(key)
+    ? ledger.totalSocialFor.lookup(key)
+    : 0n;
+
+  onProgress("Funding the period — net pay and withholding together, proving…");
+
+  const salaryNonces = await Promise.all(
+    slots.map((_, index) => deriveNonce(employerKey, period, index))
+  );
+  const netCoins = await Promise.all(
+    slots.map(async (slot, index) => ({
+      nonce: await sealedCoinNonce(employerKey, period, round, index),
+      color,
+      value: slot.line.netMinor,
+    }))
+  );
+
+  await deployed.callTx.fundPeriod(
+    key,
+    slots.map((s) => s.line.grossMinor),
+    slots.map((s) => s.line.taxMinor),
+    slots.map((s) => s.line.socialMinor),
+    slots.map((s) => s.line.netMinor),
+    slots.map((s) => BigInt(s.line.weeks)),
+    salaryNonces,
+    netCoins,
+    {
+      nonce: await withholdingCoinNonce(employerKey, period, round, "tax"),
+      color,
+      value: taxMinor,
+    },
+    {
+      nonce: await withholdingCoinNonce(employerKey, period, round, "social"),
+      color,
+      value: socialMinor,
+    }
+  );
+
+  return slots.length;
+}
+
+/**
+ * Funds every slot of a period that is not funded yet, ONE TRANSACTION EACH.
+ *
+ * The fallback path. `fundPeriodBatched` does the same work plus the withholding
+ * in a single transaction and is what a fresh period should use; this one
+ * remains because the batched circuit refuses a period that is partly funded —
+ * it asserts every slot is unfunded — and a run interrupted half way through
+ * has to be finishable.
  *
  * One coin per slot, each carrying exactly the committed salary. The circuit
  * checks that against the commitment on the way in, so a wrong figure is
  * refused here rather than discovered on payday.
  */
-export async function fundPeriod(options: {
+export async function fundSlotsSeparately(options: {
   api: ConnectedAPI;
   deployed: any;
   employerKey: Uint8Array;
@@ -615,56 +723,105 @@ export async function fundAndPayPeriod(options: {
     ? Number(ledger.fileRoundFor.lookup(BigInt(period)))
     : 0;
 
-  const funded = await fundPeriod({
-    round,
-    api,
-    deployed,
-    employerKey,
-    tokenId,
-    period,
-    slots,
-    onProgress,
-  });
+  // Batched when the period is untouched, per-slot when it is not.
+  //
+  // `fundPeriod` asserts that EVERY slot is unfunded and that the withholding
+  // has not been funded, because it does all of it in one circuit. That is the
+  // normal case and the one worth having: net and withholding are received
+  // together or not at all, so there is no window in which the employees are
+  // funded and the tax is still sitting in the employer's wallet.
+  //
+  // A period that is already part-funded — an interrupted run — cannot use it,
+  // and falls back to the per-slot path plus a separate `fundWithholding`.
+  const untouched =
+    slots.every((s) => !s.funded) &&
+    !(ledger.withheldFor?.member(BigInt(period)) && ledger.withheldFor.lookup(BigInt(period)));
+
+  const funded = untouched
+    ? await fundPeriodBatched({
+        round,
+        deployed,
+        contractModule,
+        ledger,
+        employerKey,
+        tokenId,
+        period,
+        slots,
+        onProgress,
+      })
+    : await fundSlotsSeparately({
+        round,
+        api,
+        deployed,
+        employerKey,
+        tokenId,
+        period,
+        slots,
+        onProgress,
+      });
 
   // Re-read after funding: the coins that were just created are the ones the
   // payment step has to spend, and they did not exist a moment ago.
   onProgress("Waiting for the new coins to be indexed…");
-  // Through the provider that will prove and submit, so the positions below and
-  // the tree the proof is built over are the same tree. See `fetchContractLeaves`.
-  const allLeaves = await fetchContractLeaves(
+
+  // Which coin funds which slot — matched by COMMITMENT, never by ordinal.
+  //
+  // The comment that stood here said "the n-th coin the contract ever received
+  // is its n-th leaf", and it was true for as long as funding created one coin
+  // per transaction. It is false the moment a transaction creates more than one:
+  // measured on a `fundPeriod` run, employee 0's coin (ordinal 0) landed at leaf
+  // 48188 while employee 1's (ordinal 1) landed at 48186 — inverted. Sorting the
+  // leaves and taking the ordinal-th would have paid employee 0 against employee
+  // 1's coin.
+  //
+  // That failure is invisible until it reaches the proof server, which reports
+  // `Public transcript input mismatch for input N`: every field individually
+  // correct, the combination describing no coin that exists. The message names
+  // no field, so it reads as a contract or state bug for as long as you let it.
+  //
+  // Rebuilding the commitment removes the guesswork — the coin's own nonce,
+  // colour and value identify it, and the leaf holding that commitment is the
+  // one to spend. `remitWithholding` already locates its coins this way for
+  // exactly the same reason.
+  const entries = await fetchContractLeafEntries(
     networkId,
     contractAddress,
     (contractProviders as any).publicDataProvider
   );
+  const rt: any = await import("@midnight-ntwrk/compact-runtime");
+  const aligned = (d: any, v: unknown) => ({ value: d.toValue(v), alignment: d.alignment() });
+  // BOTH branches of the Either, even though only one is read. Omitting the
+  // unused one fails inside WASM as "Reflect.get called on non-object".
+  const recipient = aligned(rt.ShieldedCoinRecipientDescriptor, {
+    is_left: false,
+    left: { bytes: new Uint8Array(32) },
+    right: { bytes: toHexBytes(contractAddress) },
+  });
 
-  // Which coin funds which slot, straight from the contract. It records the
-  // ordinal when the coin is received, so there is nothing to infer: the n-th
-  // coin the contract ever received is its n-th leaf.
-  //
-  // This replaces counting positions from zero, which paid earlier periods'
-  // already-spent coins once a contract had any history.
-  const after = (contractModule as any).ledger(
-    await currentLedgerState(networkId, contractAddress)
-  );
-  const ordinals = after.coinOrdinalFor.member(BigInt(period))
-    ? after.coinOrdinalFor.lookup(BigInt(period))
-    : null;
-  if (!ordinals) throw new Error(`No funded coins recorded for period ${period}`);
+  const leaves: number[] = [];
+  for (const [index, slot] of slots.entries()) {
+    const commitment = bytesToHex(
+      rt.runtimeCoinCommitment(
+        aligned(rt.ShieldedCoinInfoDescriptor, {
+          nonce: await sealedCoinNonce(employerKey, period, round, index),
+          color: toHexBytes(tokenId),
+          value: slot.line.netMinor,
+        }),
+        recipient
+      ).value[0]
+    ).toLowerCase();
 
-  const leaves = slots.map((_, index) => {
-    if (!ordinals.member(BigInt(index))) {
-      throw new Error(`No coin recorded for employee ${index + 1}`);
-    }
-    const ordinal = Number(ordinals.lookup(BigInt(index)));
-    const leaf = allLeaves[ordinal];
-    if (leaf === undefined) {
+    const found = entries.find((e) => e.commitment.toLowerCase() === commitment);
+    if (!found) {
       throw new Error(
-        `The contract records coin #${ordinal} for employee ${index + 1}, but only ` +
-          `${allLeaves.length} coins are visible — the indexer may be behind.`
+        `Employee ${index + 1}'s coin is not among the ${entries.length} the contract ` +
+          "holds. Either funding has not been indexed yet, or the nonce this run " +
+          "derives differs from the one that funded it — check the passphrase and " +
+          "the filing round."
       );
     }
-    return leaf;
-  });
+    leaves.push(found.index);
+  }
 
   const fresh = slots.map((s) => ({ ...s, funded: true }));
 
