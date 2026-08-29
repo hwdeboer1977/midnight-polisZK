@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { periodName } from "../generated/roster";
 import { formatPeur } from "../lib/format";
 import type { NationalDeposits } from "../lib/nationalDeposits";

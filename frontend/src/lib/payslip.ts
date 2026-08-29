@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * A payslip: the opening of one on-chain salary commitment, carried by hand.
  *

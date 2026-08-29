@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import express, { type Express, type Request, type Response } from "express";
 import fs from "node:fs";
 import path from "node:path";

@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from "react";
 import { loadDeployments, type Deployments } from "./deployments";
 import { usePayrollInstances, type PayrollInstance } from "./usePayrollInstances";

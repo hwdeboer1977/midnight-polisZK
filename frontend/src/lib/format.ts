@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 /** 5000000000n -> "5,000,000,000". Raw ledger units are never scaled here. */
 export function group(value: bigint): string {
   return value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");

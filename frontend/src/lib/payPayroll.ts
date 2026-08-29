@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
 import { fetchContractState, INDEXERS, INDEXER_WS } from "./chain";

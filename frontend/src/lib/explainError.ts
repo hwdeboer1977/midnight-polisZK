@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Turning an infrastructure failure into something a person can act on.
  *

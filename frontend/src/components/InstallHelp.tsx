@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Shown when nothing is detected. An empty state that only says "not found" is a
  * dead end for someone who has never installed a browser extension, which is

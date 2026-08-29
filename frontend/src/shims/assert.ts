@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Node's `assert`, as used by @subsquid's scale codecs deep inside the indexer
  * provider. Vite externalises it for the browser, which leaves an import that

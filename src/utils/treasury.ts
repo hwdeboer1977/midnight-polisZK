@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { ZswapSecretKeys } from "@midnight-ntwrk/ledger-v8";
 import { toPublicKey } from "./keys.js";
 import { deriveKeys } from "./wallet.js";

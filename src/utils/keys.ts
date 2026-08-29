@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 /** Hex helpers for the two public keys the shielded token flow deals in. */
 
 export const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");

@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from "react";
 import { apiUrl } from "../lib/origin";
 import { loadDeployments } from "../lib/deployments";

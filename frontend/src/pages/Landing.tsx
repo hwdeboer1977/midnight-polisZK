@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { Link } from "react-router-dom";
 
 // Drop the URL in here to surface the demo link under the hero; empty

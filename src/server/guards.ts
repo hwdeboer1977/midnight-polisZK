@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import fs from "fs";
 import { timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";

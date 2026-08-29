@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * `isomorphic-ws` browser build exports only a default, but
  * `midnight-js-indexer-public-data-provider` imports it as a NAMED export:

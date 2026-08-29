@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { useCallback } from "react";
 import { PEUR_SCALE } from "./format";
 import { useServiceJob } from "./useServiceJob";

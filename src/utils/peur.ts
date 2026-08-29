@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import path from "path";
 import { ContractState } from "@midnight-ntwrk/compact-runtime";
 import { getDeployment } from "./deployments.js";

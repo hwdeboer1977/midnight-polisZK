@@ -2788,3 +2788,21 @@ In order:
 The tax-and-vault appendix describes a four-contract version of this with
 separate tax and contribution vaults. It is superseded — see **What the compiler
 would not do** for why that shape cannot be built.
+
+## License
+
+This project is licensed under the Apache License, Version 2.0.
+
+See [LICENSE](./LICENSE) for details, and [NOTICE](./NOTICE) for attribution.
+
+Original source files carry a short SPDX header:
+
+```
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+```
+
+Applied to `contracts/*.compact`, `src/**`, and `frontend/src/**` — **excluding
+`frontend/src/generated/`**, which is copied from the Compact compiler's output
+by `npm run frontend:config` and is not original work. Third-party dependencies
+keep their own licenses.

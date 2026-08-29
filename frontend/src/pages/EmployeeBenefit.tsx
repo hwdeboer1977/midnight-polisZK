@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { Link } from "react-router-dom";
 import { periodName } from "../generated/roster";
 import { useWallet } from "../wallet/WalletContext";

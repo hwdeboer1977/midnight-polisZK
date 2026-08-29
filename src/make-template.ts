@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import path from "path";
 import { ROSTER_COLUMNS, writeRosterTemplate } from "./utils/roster.js";
 

@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 // Must stay first: it installs Buffer and friends before any Midnight module
 // that assumes Node globals is evaluated.
 import "./shims/node-globals";

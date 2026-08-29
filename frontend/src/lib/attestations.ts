@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { fetchContractState } from "./chain";
 import { decodePayrollLedger, loadContract } from "./contracts";
 import { forNetwork, loadDeployments } from "./deployments";

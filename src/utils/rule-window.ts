@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { getDeployment } from "./deployments.js";
 import { loadCompiledContract } from "./contract.js";
 import { DUTCH_V1 } from "./tax-params.js";

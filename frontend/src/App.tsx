@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Landing } from "./pages/Landing";
 import { Public } from "./pages/Public";

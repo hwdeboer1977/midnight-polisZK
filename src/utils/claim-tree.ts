@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 // Imported from the COMMITTED copy under `frontend/`, not `contracts/managed/`.
 //
 // `contracts/managed/` is gitignored build output, so it does not exist on a

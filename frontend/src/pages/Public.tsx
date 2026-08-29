@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
 import { EXPLORERS } from "../lib/chain";

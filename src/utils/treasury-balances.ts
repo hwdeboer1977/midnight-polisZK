@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { EnvironmentManager } from "./environment.js";
 import { benefitTokenColour, treasurySecret, type TreasuryName } from "./fund-deposit.js";

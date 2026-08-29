@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
 import { connect, contractLeaves, readLedger } from "./contract.js";
 import { EnvironmentManager } from "./environment.js";

@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { useState } from "react";
 import { FilePicker } from "./FilePicker";
 import { useServiceJob } from "../lib/useServiceJob";

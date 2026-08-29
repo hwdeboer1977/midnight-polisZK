@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import fs from "fs";
 import { contractVersion } from "./contract-version.js";
 import { EnvironmentManager } from "./environment.js";

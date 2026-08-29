@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";

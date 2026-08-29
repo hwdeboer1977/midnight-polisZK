@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import type { ConnectedAPI } from "@midnight-ntwrk/dapp-connector-api";
 import { fetchContractState } from "./chain";
 import { decodePayrollLedger, loadContract, type PayrollLedger } from "./contracts";

@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from "react";
 import { useWallet } from "../wallet/WalletContext";
 import { readPublishedClaimKeys } from "../lib/publishedClaimKeys";
