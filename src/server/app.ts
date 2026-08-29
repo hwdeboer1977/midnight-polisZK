@@ -20,7 +20,16 @@ import {
 } from "../utils/funding.js";
 import { parsePeurAmount } from "../utils/constructor-args.js";
 import { EnvironmentManager } from "../utils/environment.js";
-import { findRegistration, listRegistrations, setStatus } from "../utils/registry.js";
+import {
+  getSealedRoster,
+  putSealedRoster,
+  findClaimKeyHash,
+  findRegistration,
+  listClaimKeyHashes,
+  listRegistrations,
+  publishClaimKeyHash,
+  setStatus,
+} from "../utils/registry.js";
 import { listDeployments } from "../utils/deployments.js";
 import { dataDir } from "../utils/data-dir.js";
 
@@ -166,6 +175,159 @@ export function createApp(config: ServerConfig): Express {
    * company buy the service, and does that still stand" — not "who controls
    * this payroll", which only the contract can answer.
    */
+  /**
+   * Claim-key hashes, published by employees and read by their employer.
+   *
+   * ── Why this is not authenticated ──────────────────────────────────────────
+   *
+   * Nothing here is a secret and nothing here is a capability. The value is
+   * `persistentHash(claimKey)` over 32 random bytes: it cannot be reversed, has
+   * no dictionary to guess against, and cannot claim — `claim` binds to
+   * `ownPublicKey()` separately, so holding every row in this table gets nobody
+   * a payment. A coin public key is likewise an address people hand out to be
+   * paid.
+   *
+   * What an unauthenticated WRITE could do is publish a hash under somebody
+   * else's coin public key. That is worth stating plainly rather than defending
+   * against with a login this app has no way to issue: the employer's form is
+   * pre-filled from here and stays editable, the employee is shown what this
+   * table holds for them, and the write-once anchor is still the employer's
+   * deliberate act. So a spoofed row is a wrong suggestion an employer can
+   * overwrite and an employee can spot — not a silent redirection.
+   *
+   * Rate-limited on the same bucket shape as the other public routes, because
+   * the cost of abuse here is rows in a table rather than money.
+   */
+  app.get("/api/claim-keys", async (req: Request, res: Response) => {
+    try {
+      const network = EnvironmentManager.getNetworkConfig();
+      const networkId = String(req.query.networkId ?? network.networkId);
+      const coinPublicKey = req.query.coinPublicKey
+        ? String(req.query.coinPublicKey)
+        : null;
+
+      if (coinPublicKey) {
+        res.json({ claimKey: await findClaimKeyHash(networkId, coinPublicKey) });
+        return;
+      }
+      res.json({ claimKeys: await listClaimKeyHashes(networkId) });
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      // A service with no database configured is a normal deployment, not a
+      // fault: the direct hand-over still works and the employer's paste field
+      // is untouched. Answering empty keeps that path clear of an error banner.
+      res.json({ claimKeys: [], claimKey: null, unavailable: detail });
+    }
+  });
+
+  app.post(
+    "/api/claim-keys",
+    rateLimit({ ...config.workLimit, bucket: "claim-keys", noun: "claim-key publications" }),
+    async (req: Request, res: Response) => {
+      const body = req.body ?? {};
+      const coinPublicKey = String(body.coinPublicKey ?? "").trim();
+      const claimKeyHash = String(body.claimKeyHash ?? "").trim().replace(/^0x/, "");
+      const networkId =
+        String(body.networkId ?? "") || EnvironmentManager.getNetworkConfig().networkId;
+
+      if (!coinPublicKey) {
+        res.status(400).json({ error: "coinPublicKey is required" });
+        return;
+      }
+      // Checked here rather than trusted, because a malformed hash pre-fills an
+      // employer's form with something that cannot possibly be right and fails
+      // only when a claim is attempted, months later.
+      if (!/^[0-9a-f]{64}$/i.test(claimKeyHash)) {
+        res.status(400).json({ error: "claimKeyHash must be 64 hex characters" });
+        return;
+      }
+
+      try {
+        await publishClaimKeyHash(networkId, coinPublicKey, claimKeyHash);
+        res.json({ ok: true });
+      } catch (cause) {
+        res.status(503).json({
+          error:
+            "This service has no registration database, so the hash could not be " +
+            "published. Send it to your employer directly — the field on their " +
+            "side takes it either way. (" +
+            (cause instanceof Error ? cause.message : String(cause)) +
+            ")",
+        });
+      }
+    }
+  );
+
+  /**
+   * The employer's roster, sealed under their payroll passphrase.
+   *
+   * This service stores and returns an opaque blob and can do nothing else with
+   * it — see the table comment in `registry.ts` for why a plaintext roster is
+   * the one thing this system must not hold. Reading is therefore harmless and
+   * unauthenticated: the ciphertext is useless without a passphrase that never
+   * leaves the employer's browser.
+   *
+   * Writing is bounded by size and rate rather than by a token, on the same
+   * reasoning as `/api/claim-keys`: the worst an attacker achieves is replacing
+   * a blob with junk, which costs the employer the convenience and not the data
+   * — the workbook is still the source of truth and the local record still
+   * works. That is a nuisance, not a loss, and it is the honest trade for a
+   * demo with no employer login.
+   */
+  app.get("/api/sealed-roster", async (req: Request, res: Response) => {
+    try {
+      const network = EnvironmentManager.getNetworkConfig();
+      const networkId = String(req.query.networkId ?? network.networkId);
+      const contractAddress = String(req.query.contractAddress ?? "");
+      if (!contractAddress) {
+        res.status(400).json({ error: "contractAddress is required" });
+        return;
+      }
+      res.json({ roster: await getSealedRoster(networkId, contractAddress) });
+    } catch {
+      // No database is a normal deployment: the workbook still carries the
+      // roster, which is how this worked before.
+      res.json({ roster: null });
+    }
+  });
+
+  app.post(
+    "/api/sealed-roster",
+    rateLimit({ ...config.workLimit, bucket: "sealed-roster", noun: "roster uploads" }),
+    async (req: Request, res: Response) => {
+      const body = req.body ?? {};
+      const contractAddress = String(body.contractAddress ?? "").trim();
+      const sealed = String(body.sealed ?? "");
+      const networkId =
+        String(body.networkId ?? "") || EnvironmentManager.getNetworkConfig().networkId;
+
+      if (!/^[0-9a-f]{64}$/i.test(contractAddress.replace(/^0x/, ""))) {
+        res.status(400).json({ error: "contractAddress must be 64 hex characters" });
+        return;
+      }
+      // Base64 only, and bounded. This is an opaque blob to the server, so the
+      // one thing it can check is that it looks like one and is not being used
+      // as free storage.
+      if (!/^[A-Za-z0-9+/=]+$/.test(sealed) || sealed.length > 512_000) {
+        res.status(400).json({ error: "sealed must be base64 and under 512 KB" });
+        return;
+      }
+
+      try {
+        await putSealedRoster(networkId, contractAddress.replace(/^0x/, ""), sealed);
+        res.json({ ok: true });
+      } catch (cause) {
+        res.status(503).json({
+          error:
+            "This service has no registration database, so the roster was not " +
+            "stored. Nothing is lost — your workbook is still the source of it. (" +
+            (cause instanceof Error ? cause.message : String(cause)) +
+            ")",
+        });
+      }
+    }
+  );
+
   app.get("/api/registrations", async (req: Request, res: Response) => {
     try {
       const network = EnvironmentManager.getNetworkConfig();
@@ -238,7 +400,7 @@ export function createApp(config: ServerConfig): Express {
    */
   app.post(
     "/api/relay",
-    rateLimit({ ...config.signupLimit, bucket: "relay", noun: "relay runs" }),
+    rateLimit({ ...config.workLimit, bucket: "relay", noun: "relay runs" }),
     (req: Request, res: Response) => {
       const body = req.body ?? {};
       const period = Number(body.period);

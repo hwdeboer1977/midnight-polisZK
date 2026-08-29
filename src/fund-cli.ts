@@ -23,6 +23,7 @@ import {
   evolveChangeNonce,
   freshNonce,
   listDeposits,
+  markSpent,
   poolFile,
   recordDerived,
   recordPending,
@@ -706,6 +707,10 @@ async function reconcile(
         ...coin,
         ordinal: poolOrdinal,
       });
+      // The coin this change came from is gone. Recording only the change left
+      // the spent parent looking spendable — and it is usually the LARGEST
+      // record, so every consumer that picks by value picked it first.
+      markSpent(network.networkId, contractAddress, Number(parent.ordinal));
       console.log(
         chalk.green("   ✅ Verified — its commitment matches the one on chain.")
       );

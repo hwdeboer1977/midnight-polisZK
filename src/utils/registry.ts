@@ -101,6 +101,169 @@ export async function initSchema(): Promise<void> {
       UNIQUE (network_id, instance)
     )
   `);
+
+  /**
+   * Claim-key hashes an employee has published for their employer to anchor.
+   *
+   * ⚠️ **Only the HASH.** The key itself is 32 random bytes that exist in one
+   * downloaded file and nowhere else — not here, not on chain, not in any
+   * browser. What is stored is `persistentHash(claimKey)`, which cannot be
+   * reversed, cannot be guessed (the preimage is random, so there is no
+   * dictionary to run), and cannot claim anything: `claim` binds separately to
+   * `ownPublicKey()`, so possession of the hash gives no one a route to a
+   * payment.
+   *
+   * It exists to remove a courier step that was failing in practice — an
+   * employee had to send this to their employer out of band, and the whole
+   * flow is unrecoverable if they do not, because the employer anchors it in a
+   * write-once statement.
+   *
+   * ⚠️ **What it does NOT become: authoritative.** The employer's form is
+   * pre-filled from here and stays editable, and the employee is shown what
+   * this table holds for them, because a wrong value anchored into a
+   * termination is only detectable at claim time — after the statement can be
+   * changed. A convenience that can strand someone silently is not a
+   * convenience.
+   *
+   * Keyed on the coin public key, which is the same thing the employer's roster
+   * is keyed on, so a row can be matched to a person without storing a name.
+   */
+  await getPool().query(`
+    CREATE TABLE IF NOT EXISTS claim_key_hashes (
+      id              SERIAL PRIMARY KEY,
+      network_id      TEXT        NOT NULL,
+      coin_public_key TEXT        NOT NULL,
+      claim_key_hash  TEXT        NOT NULL,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (network_id, coin_public_key)
+    )
+  `);
+
+  /**
+   * The employer's roster, sealed under their payroll passphrase.
+   *
+   * ⚠️ **This service cannot read it, and that is the whole design.** The chain
+   * deliberately stores `payeeHash(coinPublicKey, period, instance)` and never
+   * the key, so that no public artefact maps people to employers. A plaintext
+   * roster here would rebuild exactly that map off chain and hand it to the
+   * platform — which for a payroll platform is arguably worse than publishing
+   * it, because nobody would think to look.
+   *
+   * So what is stored is AES-GCM ciphertext under a key derived from the
+   * employer's payroll passphrase, which this service never sees. The same
+   * passphrase already seals every opening on chain; this is that pattern
+   * applied to the one thing an employer otherwise has to carry between
+   * browsers in a spreadsheet.
+   *
+   * **Names and public keys only — never salaries.** Those stay in the
+   * workbook. The worst case for this blob if the encryption were broken is
+   * "who works here", and it should not also be "and what they earn".
+   */
+  await getPool().query(`
+    CREATE TABLE IF NOT EXISTS sealed_rosters (
+      network_id       TEXT        NOT NULL,
+      contract_address TEXT        NOT NULL,
+      sealed           TEXT        NOT NULL,
+      updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (network_id, contract_address)
+    )
+  `);
+}
+
+/** Stores or replaces one employer's sealed roster. Base64 in, base64 out. */
+export async function putSealedRoster(
+  networkId: string,
+  contractAddress: string,
+  sealed: string
+): Promise<void> {
+  await initSchema();
+  await getPool().query(
+    `INSERT INTO sealed_rosters (network_id, contract_address, sealed)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (network_id, contract_address)
+     DO UPDATE SET sealed = EXCLUDED.sealed, updated_at = now()`,
+    [networkId, contractAddress.toLowerCase(), sealed]
+  );
+}
+
+/** The ciphertext, for a browser that holds the passphrase to open. */
+export async function getSealedRoster(
+  networkId: string,
+  contractAddress: string
+): Promise<{ sealed: string; updatedAt: Date } | null> {
+  await initSchema();
+  const { rows } = await getPool().query(
+    `SELECT sealed, updated_at FROM sealed_rosters
+      WHERE network_id = $1 AND contract_address = $2`,
+    [networkId, contractAddress.toLowerCase()]
+  );
+  if (rows.length === 0) return null;
+  return { sealed: rows[0].sealed, updatedAt: new Date(rows[0].updated_at) };
+}
+
+export interface PublishedClaimKey {
+  coinPublicKey: string;
+  claimKeyHash: string;
+  createdAt: Date;
+}
+
+/**
+ * Records — or replaces — the hash one employee publishes.
+ *
+ * Replacing is deliberate and is the honest behaviour: an employee who creates
+ * a second key has a different hash, and the old one is worthless to them the
+ * moment they do. Refusing the update would leave the employer pre-filling a
+ * hash whose key nobody holds, which is the exact failure this table is meant
+ * to reduce. The page that creates a second key already warns that it only
+ * works while no termination has been filed.
+ */
+export async function publishClaimKeyHash(
+  networkId: string,
+  coinPublicKey: string,
+  claimKeyHash: string
+): Promise<void> {
+  await initSchema();
+  await getPool().query(
+    `INSERT INTO claim_key_hashes (network_id, coin_public_key, claim_key_hash)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (network_id, coin_public_key)
+     DO UPDATE SET claim_key_hash = EXCLUDED.claim_key_hash, created_at = now()`,
+    [networkId, coinPublicKey.toLowerCase(), claimKeyHash.toLowerCase()]
+  );
+}
+
+/** Every published hash on a network, for an employer to match against a roster. */
+export async function listClaimKeyHashes(networkId: string): Promise<PublishedClaimKey[]> {
+  await initSchema();
+  const { rows } = await getPool().query(
+    `SELECT coin_public_key, claim_key_hash, created_at
+       FROM claim_key_hashes WHERE network_id = $1`,
+    [networkId]
+  );
+  return rows.map((row: Record<string, any>) => ({
+    coinPublicKey: row.coin_public_key,
+    claimKeyHash: row.claim_key_hash,
+    createdAt: new Date(row.created_at),
+  }));
+}
+
+/** What this table holds for one person, so they can check it against their file. */
+export async function findClaimKeyHash(
+  networkId: string,
+  coinPublicKey: string
+): Promise<PublishedClaimKey | null> {
+  await initSchema();
+  const { rows } = await getPool().query(
+    `SELECT coin_public_key, claim_key_hash, created_at
+       FROM claim_key_hashes WHERE network_id = $1 AND coin_public_key = $2`,
+    [networkId, coinPublicKey.toLowerCase()]
+  );
+  if (rows.length === 0) return null;
+  return {
+    coinPublicKey: rows[0].coin_public_key,
+    claimKeyHash: rows[0].claim_key_hash,
+    createdAt: new Date(rows[0].created_at),
+  };
 }
 
 function toRegistration(row: Record<string, any>): Registration {

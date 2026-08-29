@@ -6,6 +6,7 @@ import { parseBundle, submitClaim, type ClaimBundle, type ClaimResult } from "..
 import { deriveLegacyClaimKey, parseClaimKeyFile } from "../lib/claimKey";
 import { decodePayslip, type Payslip } from "../lib/payslip";
 import { periodName } from "../generated/roster";
+import { explainError } from "../lib/explainError";
 import { formatPeur } from "../lib/format";
 import { walletCanProve } from "../lib/submitPayroll";
 import { useWallet } from "../wallet/WalletContext";
@@ -250,6 +251,17 @@ export function ClaimForm() {
         and what reaches the chain discloses only the period and that a claim was
         made — not who you are, not your salary, not the amount.
       </p>
+      {/* Said once, above, because the three lines below each say it for a
+          DIFFERENT reason and a reader who meets them cold will assume the
+          usual one — that a file is a password to their money. None of them is:
+          a claim needs the wallet as well, and the contract checks that on its
+          own. What these files cost if they go astray is privacy, plus one
+          nuisance the bundle can cause. */}
+      <p className="note">
+        Keep all three to yourself. Not because any of them lets somebody take
+        your benefit — claiming needs your wallet too, and the contract checks
+        that separately — but because of what each would give away.
+      </p>
 
       {/* Numbered, because the three inputs come from three different places and
           that is the part people get stuck on — not the form. Each row says who
@@ -272,6 +284,17 @@ export function ClaimForm() {
             alongside everyone else's — which is what keeps you anonymous inside
             it, and why you cannot build it yourself.
           </p>
+          {/* The one of the three whose sensitivity is not obvious. It reads as
+              routing data, so nothing on this page previously suggested keeping
+              it — and it is the file that names your employer and your final
+              month, and carries one of the fund's coins. */}
+          <p className="note keep-private">
+            <span aria-hidden="true">🔒</span> Keep it to yourself. It names the
+            employer you left, your final month and how long you worked there,
+            and it carries one of the fund's coins — someone else holding it
+            cannot take your benefit, but they can spend that coin first and
+            make this claim fail.
+          </p>
         </li>
 
         <li>
@@ -291,6 +314,10 @@ export function ClaimForm() {
             commitment — the nonce inside it comes from your employer's payroll
             key, so there is no other route to it.
           </p>
+          <p className="note keep-private">
+            <span aria-hidden="true">🔒</span> Keep it to yourself. This is the
+            one with your actual salary in it.
+          </p>
         </li>
 
         <li>
@@ -309,6 +336,16 @@ export function ClaimForm() {
             The file you downloaded when you first connected, named something
             like <code>claim-key-1a2b3c4d.json</code>. It is not
             uploaded anywhere — the proof is built here.
+          </p>
+          {/* Precise about which risk. "Someone could claim with it" would be
+              the intuitive warning and is wrong for this contract: `claim` binds
+              to `ownPublicKey()` independently, so the key alone buys nobody a
+              payment. What it buys is the ability to recompute her nullifiers
+              and read the public spent set — her claim history. */}
+          <p className="note keep-private">
+            <span aria-hidden="true">🔒</span> Keep it to yourself. Nobody can
+            claim with it — that needs your wallet too — but anyone who has it
+            can work out which months you claimed.
           </p>
 
           {/* Answered as soon as both files are open, because this is the
@@ -373,7 +410,20 @@ export function ClaimForm() {
         </p>
       ) : null}
 
-      {error ? <p className="problems">{error}</p> : null}
+      {/* Explained rather than echoed. A bare "Rate limited" in a red box under
+          a claim form reads as the claim being refused, when it is the indexer
+          throttling a connection and nothing was attempted. */}
+      {error
+        ? (() => {
+            const { text, retryable } = explainError(error);
+            return (
+              <p className={retryable ? "note keep-private" : "problems"}>
+                {retryable ? <span aria-hidden="true">⏳</span> : null}
+                <span>{text}</span>
+              </p>
+            );
+          })()
+        : null}
 
       {/* Where the proof is generated.
           

@@ -21,7 +21,8 @@ import { buildWallet, makeWalletProviders, waitForSync } from "./wallet.js";
 import { MidnightProviders } from "../providers/midnight-providers.js";
 import { contractLeaves, contractModulePath, loadCompiledContract } from "./contract.js";
 import { buildTree, type ClaimLeafInput } from "./claim-tree.js";
-import { PUBLISHED } from "./benefit-params.js";
+import { BASIS_POINTS, PUBLISHED } from "./benefit-params.js";
+import { formatPeur } from "./constructor-args.js";
 import { listDeposits } from "./fund-pool.js";
 
 /**
@@ -137,6 +138,47 @@ let payrollModule: Promise<any> | null = null;
 function payroll(): Promise<any> {
   payrollModule ??= import(contractModulePath("payroll"));
   return payrollModule;
+}
+
+let fundModule: Promise<any> | null = null;
+function fund(): Promise<any> {
+  fundModule ??= import(contractModulePath("fund"));
+  return fundModule;
+}
+
+/**
+ * The fund's public counters, for the reconciliation check below.
+ *
+ * Returns null rather than throwing on anything: this is a warning's evidence,
+ * and a fund that cannot be read should not stop bundles being built for a
+ * payroll contract that can.
+ */
+async function fetchFundLedger(
+  indexer: string,
+  record: { contractAddress: string }
+): Promise<{ claimsPaid: number; coinsReceived: number } | null> {
+  try {
+    const response = await fetch(indexer, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        query: CONTRACT_STATE_QUERY,
+        variables: { address: record.contractAddress },
+      }),
+    });
+    const body: any = await response.json();
+    const encoded = body.data?.contractAction?.state;
+    if (!encoded) return null;
+    const ledger = (await fund()).ledger(
+      ContractState.deserialize(Buffer.from(encoded, "hex")).data
+    );
+    return {
+      claimsPaid: Number(ledger.claimsPaid ?? 0),
+      coinsReceived: Number(ledger.coinsReceived ?? 0),
+    };
+  } catch {
+    return null;
+  }
 }
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
@@ -344,6 +386,46 @@ export async function runRelay(options: {
     .map((d) => ({ deposit: d, mtIndex: fundLeaves[d.ordinal as number] }))
     .filter((c) => c.mtIndex !== undefined);
 
+  /**
+   * Whether the pool file has caught up with the claims the chain has settled.
+   *
+   * ⚠️ The failure this exists to prevent: a claim spends a pool coin and
+   * `sendShielded` returns the remainder as a NEW coin owned by the fund. The
+   * pool file does not learn about it on its own — the change's value cannot be
+   * derived from the chain, only checked against a commitment, so recording it
+   * is `npm run fund -- reconcile --value <EUR>` and nothing else.
+   *
+   * Until that runs, the file still lists the coin that was spent. This relay
+   * then hands it to the next claimant, whose claim fails at the node with the
+   * catch-all `103` — a code that will not say which of four causes it was, so
+   * the trail leads back here only if somebody already knows to look.
+   *
+   * `coinsReceived` counts every coin the fund has taken in — deposits and
+   * change alike — so it is exactly how many records this file should hold. A
+   * shortfall is a change coin nobody has recovered yet.
+   *
+   * Counted over records with an ordinal REGARDLESS of status, because a spent
+   * coin is still a coin the fund once received; filtering to spendable ones
+   * would make every reconciliation look overdue the moment it succeeded.
+   */
+  const fundLedger = fundRecord ? await fetchFundLedger(network.indexer, fundRecord) : null;
+  if (fundLedger && fundRecord) {
+    const settled = fundLedger.claimsPaid;
+    const known = listDeposits(network.networkId, fundRecord.contractAddress).filter(
+      (d) => d.ordinal !== null
+    ).length;
+    const missing = fundLedger.coinsReceived - known;
+    if (settled > 0 && missing > 0) {
+      warnings.push(
+        `The fund has received ${fundLedger.coinsReceived} coin(s) and this pool file records ` +
+          `${known}. ${settled} claim(s) have settled, and the change each one left behind is not ` +
+          "recorded automatically — run `npm run fund -- reconcile --value <EUR>` before handing " +
+          "out more bundles, or a claimant will be given a coin that has already been spent " +
+          "(node error 103, which does not say so)."
+      );
+    }
+  }
+
   if (recorded.length > coins.length) {
     warnings.push(
       `${recorded.length - coins.length} recorded fund coin(s) have no visible leaf — the indexer may be behind.`
@@ -366,6 +448,42 @@ export async function runRelay(options: {
       `${accepted.length} claimant(s) but only ${coins.length} recorded fund coin(s). ` +
         "Deposit more before they claim, or they will be handed the same coin and race."
     );
+  }
+
+  /**
+   * The largest benefit the published rules can produce, in minor units.
+   *
+   * Knowable WITHOUT the salary, which is the point: `cap × rate` bounds every
+   * benefit under this version, so a coin at or above it can never be too
+   * small. That is the strongest statement this code is entitled to make — the
+   * actual figure follows from a private salary and the relay has never seen
+   * one, which is also why `claim` splits the coin rather than demanding an
+   * exact one.
+   *
+   * Deliberately an upper bound rather than a guess. A smaller coin MIGHT be
+   * enough and usually is; saying so as a warning is honest, while sizing coins
+   * to real benefits would mean learning the thing the fund exists to hide.
+   */
+  const ceiling = applicable
+    ? (applicable.maxMonthlyGross * BigInt(applicable.rate)) / BASIS_POINTS
+    : null;
+
+  if (ceiling !== null) {
+    const short = coins.filter((c) => BigInt(c.deposit.value) < ceiling);
+    if (short.length === coins.length && coins.length > 0) {
+      warnings.push(
+        `Every fund coin is below €${formatPeur(ceiling)}, the most a benefit can be under rule ` +
+          `set v${applicable!.version}. A claim whose benefit exceeds its coin fails on chain with ` +
+          '"the pool coin cannot cover the benefit" — the relay cannot tell in advance, because ' +
+          "the amount follows from a salary it never sees."
+      );
+    } else if (short.length > 0) {
+      warnings.push(
+        `${short.length} of ${coins.length} fund coin(s) are below €${formatPeur(ceiling)} and may ` +
+          "not cover the claimant they are handed to. Coins are assigned largest first, so this " +
+          "bites the claimants at the end of the list."
+      );
+    }
   }
 
   const bundles: ClaimBundle[] = accepted.map((entry, index) => {

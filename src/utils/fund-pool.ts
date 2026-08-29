@@ -56,7 +56,22 @@ export interface DepositRecord {
    * confirmed to this process. It may still have landed: check `fund pool`
    * against the contract's `coinsReceived` before assuming either way.
    */
-  status: "pending" | "confirmed";
+  /**
+   * Where this coin is.
+   *
+   * ⚠️ `spent` was missing, and its absence cost a claim. A claim consumes a
+   * pool coin and `sendShielded` returns the remainder as a NEW coin —
+   * `reconcile` records that change and, until now, left the coin it came from
+   * marked `confirmed`. The relay hands out coins largest first, so a spent
+   * €400 outranked its own €305 change and was offered to the next claimant,
+   * whose transaction was refused by the node as `103` — a catch-all that will
+   * not say "already spent".
+   *
+   * A record is never deleted: the ordinal and nonce are the only description
+   * of a coin that ever existed, and a spent coin still has to be recognisable
+   * when reading history back.
+   */
+  status: "pending" | "confirmed" | "spent";
   depositedAt: string;
 }
 
@@ -135,6 +150,26 @@ export function recordPending(
 }
 
 /** Fills in what only exists after the transaction landed. */
+/**
+ * Marks the coin a claim consumed, so nothing offers it again.
+ *
+ * Called by `reconcile`, which is the only place that knows: it recovers the
+ * change coin by rebuilding its commitment from the SPENT coin's nonce, so
+ * identifying the parent is a by-product of succeeding.
+ */
+export function markSpent(
+  networkId: string,
+  contractAddress: string,
+  ordinal: number
+): void {
+  const all = read();
+  const k = key(networkId, contractAddress);
+  const record = all[k]?.deposits.find((d) => d.ordinal === ordinal);
+  if (!record) return;
+  record.status = "spent";
+  write(all);
+}
+
 export function confirmDeposit(
   networkId: string,
   contractAddress: string,

@@ -64,6 +64,22 @@ export interface ServerConfig {
   signupCode: string | null;
   /** How many signups one address may start, and over what window. */
   signupLimit: { windowMs: number; max: number };
+  /**
+   * The looser bound, for work an employer legitimately repeats.
+   *
+   * Separated from `signupLimit` because the two are protecting against
+   * different things. Onboarding, the faucet and the starter allowance spend
+   * the PLATFORM'S money — a deploy, a mint — so three an hour is generous.
+   * Building a claim bundle, publishing a claim-key hash and storing a sealed
+   * roster spend nothing: the relay verifies every opening against the chain
+   * and refuses what does not match, publishing is permissionless anyway, and
+   * the other two write one row.
+   *
+   * Sharing the signup bound made a rebuild after a failed claim hit "try again
+   * in 34 minutes" — a limit protecting nothing, applied to the recovery path
+   * for the failure it was blocking.
+   */
+  workLimit: { windowMs: number; max: number };
 }
 
 export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -129,6 +145,13 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
       // signup is never blocked, low enough that bulk deployment on the
       // platform's fees is not worth the wait.
       max: Number(env.SIGNUP_LIMIT_PER_HOUR ?? 3),
+    },
+    workLimit: {
+      windowMs: 60 * 60 * 1000,
+      // Thirty an hour: an employer correcting a month, rebuilding a bundle and
+      // re-storing a roster in one sitting is ordinary, and none of it is
+      // expensive to refuse.
+      max: Number(env.WORK_LIMIT_PER_HOUR ?? 30),
     },
   };
 }

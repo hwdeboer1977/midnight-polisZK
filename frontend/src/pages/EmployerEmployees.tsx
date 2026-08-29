@@ -3,11 +3,14 @@ import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
 import { ClaimKeyCollection } from "../components/ClaimKeyCollection";
 import { EndEmployment } from "../components/EndEmployment";
+import { RelayPanel } from "../components/RelayPanel";
 import { StageGate } from "../components/StageGate";
 import { ROSTER_COLUMNS, ROSTER_SIZE, periodName } from "../generated/roster";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { bytesToHex, keyToHex } from "../lib/keys";
-import { collectedFor } from "../lib/collected";
+import { collectedFor, recordRoster } from "../lib/collected";
+import { fetchSealedRoster, openRoster } from "../lib/sealedRoster";
+import { readPublishedClaimKeys } from "../lib/publishedClaimKeys";
 import { fromHex } from "../lib/payslip";
 import { loadContract } from "../lib/contracts";
 import { usePayrollInstances } from "../lib/usePayrollInstances";
@@ -68,6 +71,20 @@ export function EmployerEmployees() {
   const [names, setNames] = useState<Record<string, { fullName: string; coinPublicKey: string }>>(
     {}
   );
+  /**
+   * Opening the sealed roster, when this browser has never seen the workbook.
+   *
+   * The names on this page come from `collectedFor` — what a workbook load left
+   * behind locally — so a different machine shows slot numbers and cannot act
+   * on anybody. The sealed copy fixes that without the platform learning who
+   * works here: it holds ciphertext, and the passphrase that opens it is the
+   * one the employer already types to file a period.
+   */
+  const [sealed, setSealed] = useState<string | null>(null);
+  const [unlockPass, setUnlockPass] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+
   /** Which row has its management panel open. One at a time, by payee hash. */
   const [managing, setManaging] = useState<string | null>(null);
   /**
@@ -80,10 +97,59 @@ export function EmployerEmployees() {
    * stayed until the page was reloaded.
    */
   const [collectedNonce, setCollectedNonce] = useState(0);
+
+  /**
+   * Claim-key hashes employees published to the service.
+   *
+   * Read HERE as well as inside the collection form, because the status column
+   * is what an employer looks at to decide whether anything is outstanding —
+   * and it was answering from this browser's local record alone, so a hash the
+   * employee had sent showed as Missing.
+   */
+  const [published, setPublished] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    void readPublishedClaimKeys(networkId).then((rows) => {
+      if (!cancelled) setPublished(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId, collectedNonce]);
   const address = mine[0]?.deployment.contractAddress ?? null;
   const periodKey = mine[0]?.state
     ? [...mine[0].state.periods].map(String).sort().join(",")
     : "";
+
+  useEffect(() => {
+    if (!address) return;
+    let cancelled = false;
+    void fetchSealedRoster(networkId, address).then((row) => {
+      if (!cancelled) setSealed(row?.sealed ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId, address]);
+
+  async function unlock() {
+    if (!address || !sealed) return;
+    setUnlocking(true);
+    setUnlockError(null);
+    try {
+      const rows = await openRoster(unlockPass, address, sealed);
+      // Straight into the same local store a workbook load writes, so every
+      // page that already reads it — names, the claim-key column, the
+      // termination form — starts working with no further wiring.
+      recordRoster(address, rows);
+      setUnlockPass("");
+      setCollectedNonce((n) => n + 1);
+    } catch (cause) {
+      setUnlockError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setUnlocking(false);
+    }
+  }
 
   useEffect(() => {
     if (!address || !periodKey) return;
@@ -143,7 +209,28 @@ export function EmployerEmployees() {
   // Deliberately no salary column. A worker belongs to the roster; what they
   // earn belongs to a period. Putting an amount here would undo the separation
   // the two pages exist to draw.
-  const seen = new Map<string, { first: bigint; onLatest: boolean; slot: number }>();
+  /**
+   * One row per PERSON, not per person per period.
+   *
+   * ⚠️ This grouped by payee hash, on a comment claiming "the same person keeps
+   * the same one month to month". They do not: `payeeHash` takes
+   * `(coinPublicKey, period, instance)`, so the period is an input and the hash
+   * is different every month by construction — which is the point of it, since
+   * a stable hash would let anyone link a worker across periods.
+   *
+   * The visible cost was a roster that grew by its own headcount every month:
+   * two employees over two periods rendered as four rows, each with its own
+   * status and its own Manage panel.
+   *
+   * So the identity is the coin public key wherever this browser recognises
+   * one, and the per-period hash only for a payee it cannot name — where there
+   * is nothing better to group by, and the duplication is at least honest about
+   * being an unrecognised slot rather than a person.
+   */
+  const seen = new Map<
+    string,
+    { first: bigint; onLatest: boolean; slot: number; hash: string }
+  >();
   if (state) {
     for (const period of [...state.periods].sort((a, b) => (a < b ? -1 : 1))) {
       if (!state.payeeFor.member(period)) continue;
@@ -155,36 +242,85 @@ export function EmployerEmployees() {
         const key = BigInt(i);
         if (!payees.member(key)) continue;
         const hash = bytesToHex(payees.lookup(key));
-        const existing = seen.get(hash);
+        const identity = names[hash]?.coinPublicKey ?? hash;
+        const existing = seen.get(identity);
         if (existing) {
           existing.onLatest = period === latest;
           existing.slot = i;
+          existing.hash = hash;
         } else {
-          seen.set(hash, { first: period, onLatest: period === latest, slot: i });
+          seen.set(identity, {
+            first: period,
+            onLatest: period === latest,
+            slot: i,
+            hash,
+          });
         }
       }
     }
   }
-  // Who has sent a claim-key hash, from this browser's own record. Nothing on
-  // chain answers it until a termination is written, and by then it is too late
-  // to ask — which is why it belongs beside the person rather than in a setup
-  // checklist: it is a fact about an employee, not a step in configuring a
-  // company.
-  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-  void collectedNonce;
+
+  /**
+   * Who has sent a claim-key hash — from this browser's record, and from what
+   * they published to the service.
+   *
+   * ⚠️ The published table was read by the collection FORM and not by this
+   * column, so an employee who pressed "Send to my employer" still showed as
+   * Missing here and in the warning above the table. The employer had no way to
+   * see the thing that had arrived.
+   */
+  /**
+   * The period each employee's termination was attested for, if any.
+   *
+   * Read from `terminationFor`, which is keyed by period and slot — the same
+   * place `endEmployment` writes it. It answers the question the row needs: is
+   * there a claim bundle that could be rebuilt for this person, and for which
+   * month.
+   */
+  const endedIn = new Map<string, number>();
+  if (state) {
+    for (const period of [...state.periods]) {
+      if (!state.terminationFor?.member(period)) continue;
+      const slots = state.terminationFor.lookup(period);
+      if (!state.payeeFor.member(period)) continue;
+      const payees = state.payeeFor.lookup(period);
+      const count = state.employeeCountFor.member(period)
+        ? Number(state.employeeCountFor.lookup(period))
+        : 0;
+      for (let i = 0; i < count; i += 1) {
+        const key = BigInt(i);
+        if (!slots.member(key) || !payees.member(key)) continue;
+        const hash = bytesToHex(payees.lookup(key));
+        const identity = names[hash]?.coinPublicKey ?? hash;
+        endedIn.set(identity, Number(period));
+      }
+    }
+  }
+
   const collected = address ? collectedFor(address) : {};
+  const hashFor = (coinPublicKey: string | null): boolean | null => {
+    if (!coinPublicKey) return null;
+    if (collected[coinPublicKey]?.claimKeyHash) return true;
+    try {
+      return Boolean(published[keyToHex(coinPublicKey)]);
+    } catch {
+      return Boolean(published[coinPublicKey.toLowerCase()]);
+    }
+  };
+
   const employees = [...seen.entries()]
     .sort((a, b) => a[1].slot - b[1].slot)
-    .map(([hash, meta], i) => {
-      const known = names[hash];
+    .map(([identity, meta], i) => {
+      const known = names[meta.hash];
       return {
         label: known?.fullName ?? `Employee ${String(i + 1).padStart(3, "0")}`,
         named: Boolean(known),
         coinPublicKey: known?.coinPublicKey ?? null,
         // `null` is "this browser does not recognise them", which is not the
         // same as "they have not sent one" and must not render as a warning.
-        claimKey: known ? Boolean(collected[known.coinPublicKey]?.claimKeyHash) : null,
-        hash,
+        claimKey: hashFor(known?.coinPublicKey ?? null),
+        endedIn: endedIn.get(identity) ?? null,
+        hash: identity,
         since: meta.first,
         active: meta.onLatest,
       };
@@ -231,6 +367,44 @@ export function EmployerEmployees() {
               Add / import employees
             </Link>
           </div>
+        </section>
+      ) : null}
+
+      {/* Only when this browser cannot name anybody and a sealed copy exists.
+          An employer whose workbook is already loaded should never see it. */}
+      {sealed && employees.length > 0 && employees.every((e) => !e.named) ? (
+        <section className="card">
+          <h2>Unlock your roster</h2>
+          <p className="note" style={{ marginTop: 0 }}>
+            This browser has not seen your workbook, so the people below show as
+            slot numbers. Your roster is stored sealed under your payroll
+            passphrase — the same one you file periods with. This service holds
+            only ciphertext and cannot read it.
+          </p>
+          <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
+            <input
+              type="password"
+              value={unlockPass}
+              disabled={unlocking}
+              placeholder="Payroll passphrase"
+              autoComplete="off"
+              style={{ minWidth: 260 }}
+              onChange={(event) => setUnlockPass(event.target.value)}
+            />
+            <button
+              type="button"
+              className="primary"
+              disabled={unlocking || !unlockPass}
+              onClick={() => void unlock()}
+            >
+              {unlocking ? "Opening…" : "Unlock"}
+            </button>
+          </div>
+          {unlockError ? <p className="status error">{unlockError}</p> : null}
+          <p className="note">
+            Names and public keys only — salaries are not stored anywhere but
+            your workbook.
+          </p>
         </section>
       ) : null}
 
@@ -413,6 +587,8 @@ function EmployeeRow({
     named: boolean;
     coinPublicKey: string | null;
     claimKey: boolean | null;
+    /** The period their termination was attested for, or null. */
+    endedIn: number | null;
     hash: string;
     since: bigint;
     active: boolean;
@@ -453,7 +629,12 @@ function EmployeeRow({
           )}
         </td>
         <td>
-          {employee.active ? (
+          {/* A termination outranks "on the latest period": someone can be
+              attested as leaving in the very month they were last paid, and
+              showing that as Active contradicts the panel below it. */}
+          {employee.endedIn !== null ? (
+            <span className="pill warn">Ended</span>
+          ) : employee.active ? (
             <span className="pill ok">Active</span>
           ) : (
             <span className="pill neutral">Past</span>
@@ -493,11 +674,27 @@ function EmployeeRow({
                     <div>
                       <dt>On the payroll</dt>
                       <dd>
-                        <span className={employee.active ? "pill ok" : "pill neutral"}>
-                          {employee.active ? "Active" : "Past"}
+                        {/* Agrees with the row's pill. It said "Active" beside a
+                            disclosure announcing the employment had ended. */}
+                        <span
+                          className={
+                            employee.endedIn !== null
+                              ? "pill warn"
+                              : employee.active
+                                ? "pill ok"
+                                : "pill neutral"
+                          }
+                        >
+                          {employee.endedIn !== null
+                            ? "Ended"
+                            : employee.active
+                              ? "Active"
+                              : "Past"}
                         </span>{" "}
                         <span className="muted">
-                          since {periodName(Number(employee.since))}
+                          {employee.endedIn !== null
+                            ? `${periodName(employee.endedIn)} was their final period`
+                            : `since ${periodName(Number(employee.since))}`}
                         </span>
                       </dd>
                     </div>
@@ -536,6 +733,32 @@ function EmployeeRow({
                       onSaved={onChanged}
                       compact
                     />
+                  ) : null}
+
+                  {/* Available whenever a termination exists, not only after a
+                      failed run.
+                      
+                      A bundle goes stale for reasons that have nothing to do
+                      with failure: the fund's pool coin it names can be spent
+                      by an earlier claimant, the file can be lost, or a second
+                      claim window can need a fresh one. Hiding the rebuild
+                      behind a failure left the only route through the CLI. */}
+                  {employee.endedIn !== null ? (
+                    <details className="details">
+                      <summary>Rebuild their claim bundle</summary>
+                      <p className="note">
+                        Employment ended {periodName(employee.endedIn)}. Upload the
+                        termination opening you downloaded then, and this rebuilds
+                        the bundle against the fund's coins as they are now — which
+                        is what a bundle naming a coin some other claimant has
+                        since spent needs.
+                      </p>
+                      <p className="note">
+                        The root for that month is already on chain and the same
+                        opening reproduces it, so publishing again is not needed.
+                      </p>
+                      <RelayPanel period={employee.endedIn} defaultPublish={false} bare />
+                    </details>
                   ) : null}
 
                   <div className="employee-action">

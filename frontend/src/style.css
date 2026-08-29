@@ -1656,8 +1656,14 @@ button.ghost.manage:hover:not(:disabled) { color: var(--accent); border-color: v
    a button rather than a value, so it sits right where the eye expects an
    action. */
 .employees-card table.roster td { padding-top: 9px; padding-bottom: 9px; }
+/* The Manage button, right where the eye expects an action.
+   
+   ⚠️ Scoped to the ROW cells. The expanded detail row is a single
+   `td colSpan=6`, which is also a last child — so an unqualified rule
+   right-aligned an entire panel of prose, inputs and buttons. */
 .employees-card table.roster th:last-child,
-.employees-card table.roster td:last-child { text-align: right; }
+.employees-card table.roster tr:not(.row-detail) > td:last-child { text-align: right; }
+.employees-card table.roster tr.row-detail > td { text-align: left; }
 
 /* ── History: a record, and a tool ───────────────────────────────────────────
    Both were identical white boxes, which said the archive and the retrieval
@@ -1835,3 +1841,102 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
   padding-top: 8px; border-top: 1px solid var(--line-soft);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── One action, two destinations ────────────────────────────────────────────
+   Creating a benefit key produces a file that must never travel and a hash that
+   must. Both are hex-looking artefacts of the same press, so the layout has to
+   carry the distinction the prose was carrying badly: one panel keeps, one
+   sends. */
+.key-outputs {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin-top: 12px;
+}
+.key-output {
+  padding: 14px 16px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--card);
+}
+.key-output h4 {
+  font-size: 12px; font-weight: 660; letter-spacing: 0.04em; text-transform: uppercase;
+  margin: 0 0 8px; display: flex; align-items: center; gap: 6px;
+}
+.key-output p { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; line-height: 1.5; }
+.key-output .key-file {
+  display: block; font-size: 12px; word-break: break-all; color: var(--text);
+}
+/* Private: the one that must not travel. Amber rather than red — nothing has
+   gone wrong, it is a thing to look after. */
+.key-output.keep { background: var(--warn-soft); border-color: var(--warn-line); }
+.key-output.keep h4 { color: var(--warn); }
+/* Public: safe to send, and it should look safe. */
+.key-output.share { background: var(--ok-soft); border-color: var(--ok-soft); }
+.key-output.share h4 { color: var(--ok); }
+.key-output .row { padding: 0; border: 0; }
+
+@media (max-width: 720px) {
+  .key-outputs { grid-template-columns: 1fr; }
+}
+/* The two outputs, previewed before the button that makes them. */
+.key-preview { list-style: none; margin: 8px 0 12px; padding: 0; }
+.key-preview li {
+  display: flex; gap: 10px; align-items: flex-start;
+  font-size: 13px; line-height: 1.55; color: var(--muted);
+  padding: 4px 0;
+}
+.key-preview strong { color: var(--text); }
+/* A value the employee published, distinguished from one the employer typed.
+   The employer signs a write-once statement with it, so where it came from is
+   part of what they are agreeing to. */
+.from-employee {
+  display: inline-block; margin-left: 8px;
+  font-size: 10.5px; font-weight: 640; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--ok); background: var(--ok-soft);
+  border-radius: 999px; padding: 1px 7px;
+}
+/* Per-file: what this one costs if it goes astray. Set apart from the note
+   above it, which explains what the file is FOR — the two answer different
+   questions and ran together as one grey paragraph. */
+.note.keep-private {
+  display: flex; gap: 7px; align-items: flex-start;
+  margin-top: 6px; padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--warn-soft); color: var(--warn);
+  font-size: 12px; line-height: 1.5;
+}
+
+/* ── Work in progress, said loudly ───────────────────────────────────────────
+   Everything expensive here proves for minutes, and the instruction that
+   matters — do not close this tab — was grey body text under a row of ticks.
+   A closed tab does not lose a view: it abandons a transaction part way through
+   a sequence the ledger requires in order. */
+.run-warning {
+  display: flex; gap: 10px; align-items: flex-start;
+  margin: 10px 0; padding: 11px 14px;
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  background: var(--accent-soft); color: var(--text);
+  font-size: 13.5px; line-height: 1.55;
+}
+.run-warning strong { color: var(--accent); }
+/* Something moving, because proving reports no intermediate progress and a
+   static panel reads as a hung one. */
+.run-dot {
+  flex: none; width: 9px; height: 9px; margin-top: 5px;
+  border-radius: 50%; background: var(--accent);
+  animation: run-pulse 1.2s ease-in-out infinite;
+}
+@keyframes run-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-dot { animation: none; }
+}
+/* Elapsed time: the only honest signal that a proof is still running. */
+.run-elapsed {
+  font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 600;
+}
+/* The stage currently running, in the ticked list. */
+.flow-steps li.running,
+.month-run-steps li.running { color: var(--accent); font-weight: 620; }
+/* The relay, embedded in a row rather than standing as its own card. */
+.relay-bare { margin-top: 8px; }
+.relay-bare .actions { margin-top: 8px; }

@@ -16,6 +16,9 @@ import { loadDeployments } from "../lib/deployments";
 import { recordRoster } from "../lib/collected";
 import { FilePicker } from "./FilePicker";
 import { MonthSteps } from "./MonthSteps";
+import { sealRoster, putSealedRoster } from "../lib/sealedRoster";
+import { useElapsed, useUnloadGuard } from "../lib/useRunGuard";
+import { explainError } from "../lib/explainError";
 import {
   runMonth,
   MONTH_STAGES,
@@ -134,6 +137,7 @@ export function RosterUpload({
    * moment somebody needs to perform one stage by hand.
    */
   const [manual, setManual] = useState(false);
+
   const [submitted, setSubmitted] = useState<SubmitResult | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
@@ -320,6 +324,12 @@ export function RosterUpload({
     !statusUnknown &&
     (!needsConfirmation || confirmation === passphrase);
   const submitting = step !== null;
+
+  // The orchestrated run is three signatures and two chain waits, so the tab
+  // has to survive all of it. Guarded for the individual steps too: each one
+  // proves for minutes on its own.
+  useUnloadGuard(monthRun !== null || step !== null || payStep !== null);
+  const monthElapsed = useElapsed(monthRun !== null);
   // Filing a month that is already on chain replaces its commitments with fresh
   // nonces and resets its payment flags — so a month that was paid would read
   // as unpaid, against commitments the old openings no longer match. It is a
@@ -613,6 +623,33 @@ export function RosterUpload({
     }
   }
 
+  /**
+   * Stores this workbook's people, sealed, so another browser can name them.
+   *
+   * Best effort on purpose: a service without a database is a normal
+   * deployment, and the workbook remains the source of truth either way. A
+   * failure here must not look like a failed filing, so it is logged and not
+   * surfaced — the filing it follows has already succeeded.
+   */
+  async function sealAndStoreRoster() {
+    if (!roster || !target || !passphrase) return;
+    try {
+      const sealed = await sealRoster(
+        passphrase,
+        target.contractAddress,
+        roster.rows.map((row) => ({
+          fullName: row.fullName,
+          coinPublicKey: row.coinPublicKey,
+          encryptionPublicKey: row.encryptionPublicKey,
+        }))
+      );
+      const failure = await putSealedRoster(networkId, target.contractAddress, sealed);
+      if (failure) console.warn(`[roster] not stored: ${failure}`);
+    } catch (cause) {
+      console.warn(`[roster] could not be sealed: ${String(cause)}`);
+    }
+  }
+
   async function onSubmit() {
     if (!roster || roster.period === null || !target || !api) return;
 
@@ -634,6 +671,11 @@ export function RosterUpload({
         onProgress: setStep,
       });
       setSubmitted(result);
+      // Seal the roster while the passphrase is still in hand. Names and public
+      // keys only — never salaries — so this browser stops being the only place
+      // that can turn a payee hash back into a person. The service holds
+      // ciphertext it cannot read; see `sealedRoster.ts`.
+      void sealAndStoreRoster();
       // Held no longer than it takes to derive one key.
       setPassphrase("");
       setConfirmation("");
@@ -1124,16 +1166,23 @@ export function RosterUpload({
           {/* The inner step, verbatim. Proving takes minutes and a generic
               "working…" is what makes someone close the tab. */}
           <p className="month-run-detail">{monthRun.detail}</p>
-          <p className="note" style={{ margin: 0 }}>
-            Each stage is signed separately and has to be visible on chain before
-            the next can start — the contract requires it. Keep this tab open.
+          <p className="run-warning">
+            <span className="run-dot" aria-hidden="true" />
+            <span>
+              <strong>Still working — do not close this tab.</strong> Each stage
+              is signed separately and has to be visible on chain before the next
+              can start; closing now abandons the month part way through.
+              {monthElapsed ? (
+                <span className="run-elapsed"> {monthElapsed}</span>
+              ) : null}
+            </span>
           </p>
         </div>
       ) : null}
 
       {monthError ? (
         <p className="status error" style={{ marginBottom: 12 }}>
-          {monthError}
+          {explainError(monthError).text}
         </p>
       ) : null}
 

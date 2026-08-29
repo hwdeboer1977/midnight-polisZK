@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "./CopyRow";
+import { useWallet } from "../wallet/WalletContext";
+import {
+  publishClaimKeyHash,
+  readMyClaimKeyHash,
+} from "../lib/publishedClaimKeys";
 import {
   claimKeyFilename,
   createClaimIdentity,
@@ -103,6 +108,44 @@ export function ClaimKey({
   const [identity, setIdentity] = useState<ClaimIdentity | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Sending the hash to the employer, without the employee being the courier.
+   *
+   * The step this removes was failing in practice and failing unrecoverably:
+   * the employer anchors this value in a write-once statement, so an employee
+   * who never got round to sending it cannot be helped afterwards.
+   *
+   * Only the hash goes, and it is neither secret nor a capability — see
+   * `publishedClaimKeys.ts`. The manual path stays right beside it, because a
+   * deployment with no database is a normal deployment.
+   */
+  const { networkId } = useWallet();
+  const [publishing, setPublishing] = useState(false);
+  const [publishedHash, setPublishedHash] = useState<string | null>(null);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
+  // What the service already holds for this wallet, so a mismatch with the file
+  // in hand is visible NOW rather than at claim time — which is after the
+  // termination statement has fixed it and is too late to matter.
+  useEffect(() => {
+    let cancelled = false;
+    void readMyClaimKeyHash(networkId, coinPublicKey).then((row) => {
+      if (!cancelled) setPublishedHash(row?.claimKeyHash ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId, coinPublicKey]);
+
+  async function send(hash: string) {
+    setPublishing(true);
+    setPublishError(null);
+    const failure = await publishClaimKeyHash(networkId, coinPublicKey, hash);
+    if (failure) setPublishError(failure);
+    else setPublishedHash(hash.toLowerCase());
+    setPublishing(false);
+  }
   const [saved, setSaved] = useState(false);
   /** Whether this browser has seen her create one before. */
   const [known, setKnown] = useState<string | null>(null);
@@ -181,18 +224,39 @@ export function ClaimKey({
           The cryptography has not changed and has not gone away — it is one
           disclosure down, for whoever wants it. What is left here is the only
           sentence that changes what anybody does. */}
+      {/* Both outputs, named before the button rather than after it.
+      
+          This said "One file to keep" and stopped there — which is true of half
+          of what the press produces. The other half is a hash that has to reach
+          an employer, and it is the half with a DEADLINE: once the termination
+          statement is written the hash is fixed, so an employee who did not
+          know they had something to send is the one who finds out too late.
+          The amber warning below already referred to "the hash" as though it
+          had been introduced. Now it has. */}
       <p className="note" style={{ marginTop: 0 }}>
-        <strong>One file to keep.</strong> Download it, store it wherever you
-        keep your wallet's recovery phrase, and you will not need to think about
-        it again unless you ever claim an unemployment benefit — at which point
-        it is the one thing nobody can reissue for you.
+        This creates <strong>two things</strong>:
       </p>
-      {/* Kept, and shortened. The two artefacts look alike, go to different
-          places, and neither works in the other's slot — but the reason lives
-          in the disclosure now rather than in the second thing anyone reads. */}
+      <ul className="key-preview">
+        <li>
+          <span aria-hidden="true">🔒</span>
+          <span>
+            <strong>A file you keep.</strong> Store it wherever you keep your
+            wallet's recovery phrase. You will not need it again unless you ever
+            claim an unemployment benefit — at which point it is the one thing
+            nobody can reissue for you.
+          </span>
+        </li>
+        <li>
+          <span aria-hidden="true">↗</span>
+          <span>
+            <strong>A hash you send to your employer.</strong> Public and safe to
+            share; it cannot be used to claim anything.
+          </span>
+        </li>
+      </ul>
       <p className="note">
-        It is not your wallet, and it does not replace your recovery phrase. If
-        you lose the phrase, this file cannot bring anything back.
+        The file is not your wallet and does not replace your recovery phrase. If
+        you lose the phrase, it cannot bring anything back.
       </p>
       {ended ? (
         <p className="note" style={{ marginTop: 0 }}>
@@ -220,7 +284,7 @@ export function ClaimKey({
           disabled={busy}
           onClick={() => void create()}
         >
-          {busy ? "Preparing…" : "Download my benefit key"}
+          {busy ? "Preparing…" : "Create my benefit key"}
         </button>
       </div>
 
@@ -228,43 +292,124 @@ export function ClaimKey({
 
       {identity ? (
         <>
-          <p className="ok-line">
-            ✓ Created and downloaded as <code>{claimKeyFilename(coinPublicKey)}</code>
+          <p className="ok-line" style={{ marginTop: 14 }}>
+            ✓ Benefit key created
           </p>
-          <p className="problems" style={{ marginTop: 12 }}>
+
+          {/* Two outputs, two destinations, and the split is the point.
+          
+              One press produces a file that must never travel and a hash that
+              must. They are both hex-looking artefacts of the same operation,
+              and the page used to present them as a run of paragraphs — leaving
+              an employee to work out which was which from the prose. Now the
+              layout says it: one panel keeps, one panel sends. */}
+          <div className="key-outputs">
+            <div className="key-output keep">
+              <h4>
+                <span aria-hidden="true">🔒</span> Keep private
+              </h4>
+              <code className="key-file">{claimKeyFilename(coinPublicKey)}</code>
+              <p>
+                Contains your claim key. Needed later to prove a claim is yours.
+              </p>
+              {saved ? (
+                <button type="button" className="ghost" onClick={() => void download(identity)}>
+                  Download again
+                </button>
+              ) : null}
+            </div>
+
+            <div className="key-output share">
+              <h4>
+                <span aria-hidden="true">↗</span> Share with your employer
+              </h4>
+              <CopyRow label="Claim-key hash" value={identity.claimKeyHash} />
+              <p>Public hash only. Safe to send — it cannot be used to claim.</p>
+              {/* One press instead of an out-of-band message. The copy row above
+                  stays: a service without a database is a normal deployment, and
+                  the employer's field takes a pasted hash either way. */}
+              {publishedHash === identity.claimKeyHash.toLowerCase() ? (
+                <p className="ok-line" style={{ marginTop: 8 }}>
+                  ✓ Sent — your employer can pick it up
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  className="primary"
+                  style={{ marginTop: 8 }}
+                  disabled={publishing}
+                  onClick={() => void send(identity.claimKeyHash)}
+                >
+                  {publishing ? "Sending…" : "Send to my employer"}
+                </button>
+              )}
+              {publishError ? (
+                <p className="note" style={{ marginTop: 6 }}>
+                  {publishError} Copy it above and send it yourself.
+                </p>
+              ) : null}
+              {/* The check that keeps this from being a way to strand someone:
+                  what the service holds, against what is in the file just
+                  created. Wrong here is fixable; wrong after the termination is
+                  not. */}
+              {publishedHash && publishedHash !== identity.claimKeyHash.toLowerCase() ? (
+                <p className="problems" style={{ marginTop: 8 }}>
+                  <strong>This is not the hash on file for you.</strong> Your
+                  employer would pick up an older one, and a termination anchored
+                  to it could never be claimed with this key. Press{" "}
+                  <strong>Send to my employer</strong> to replace it.
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          {/* Precise about WHICH risk, because the obvious framing is wrong for
+              this contract. Losing confidentiality does not let anyone take the
+              benefit — `claim` binds to `ownPublicKey()` independently — it lets
+              them link the claim history. Saying "secret because someone could
+              claim with it" would be a false reason for a true instruction. */}
+          <p className="problems" style={{ marginTop: 14 }}>
             <strong>That file is the only copy.</strong> It is not stored on this
-            page, not on the chain, and not anywhere we could send it to you
-            again — nobody can reissue it or reset it. Back it up now, somewhere
-            you will still have in a year: a password manager, or a second device.
-            Lose it and the anchor your employer publishes becomes one you cannot
-            open.
+            page, not on the chain, and nowhere anyone could send it to you
+            again. Back it up somewhere you will still have in a year — a
+            password manager, or a second device. Lose it and the anchor your
+            employer publishes becomes one you cannot open.
           </p>
-          {!saved ? null : (
-            <button type="button" className="ghost" onClick={() => void download(identity)}>
-              Download it again
-            </button>
-          )}
-          <p className="ok-line" style={{ marginTop: 16 }}>
-            Send the hash below to your employer
-          </p>
-          <CopyRow label="Benefit key hash" value={identity.claimKeyHash} />
-          <p className="note">
-            Safe to send: it is a hash, and it gives your employer no way to
-            claim anything. They write it into the statement that ends your
-            employment, so they need it <strong>before</strong> that statement
-            is made — it cannot be added afterwards.
-          </p>
+
+          <details className="details">
+            <summary>Why are there two?</summary>
+            <p className="note">
+              The file holds a claim key: thirty-two random bytes. The hash is
+              what those bytes hash to. Your employer writes the <em>hash</em>
+              into the statement that ends your employment, and a claim proves
+              you know the <em>bytes</em> behind it — which is how a claim can be
+              yours without naming you.
+            </p>
+            <p className="note">
+              They need the hash <strong>before</strong> that statement is made.
+              It is write-once, so a hash sent afterwards is one no claim can
+              use.
+            </p>
+            <p className="note">
+              <strong>What a leaked key actually costs.</strong> Not your
+              benefit: claiming also requires your wallet, and the contract
+              checks that separately, so nobody can redirect or take a payment
+              with the key alone. What it costs is privacy — the key is what
+              makes each claim unlinkable, so anyone who learns it can work out
+              which months you claimed. That is the thing this file protects,
+              and it is why it is worth keeping properly rather than merely
+              keeping.
+            </p>
+          </details>
         </>
       ) : null}
 
       <details className="details" style={{ marginTop: 12 }}>
-        <summary>What is actually in this file, and why not a password?</summary>
+        <summary>Why random bytes rather than a password?</summary>
         <p className="note">
-          Thirty-two random bytes, and the hash of them. The bytes are what a
-          claim proves you know; the hash is what your employer writes down, and
-          it gives them no way to claim anything. They are unrelated to your
-          wallet keys on purpose — precisely so that nobody who has ever paid you
-          can recognise a benefit claim as yours.
+          Thirty-two random bytes, and the hash of them. They are unrelated to
+          your wallet keys on purpose — precisely so that nobody who has ever
+          paid you can recognise a benefit claim as yours.
         </p>
         <p className="note">
           It was a password until we looked at what protects it. The hash your
@@ -325,6 +470,43 @@ export function ClaimKey({
           </p>
         )}
         <CopyRow label="Benefit key hash" value={known} />
+
+        {/* Sending needs the HASH, not the key — and the hash is remembered
+            here, which is the whole reason this panel can show it. The button
+            was only in the just-created block, so anyone who had already
+            downloaded their key on a previous visit could not use it without
+            making a second key: a destructive answer to a problem that was
+            purely a missing control. */}
+        {employerOf || ended ? null : publishedHash === known.toLowerCase() ? (
+          <p className="ok-line" style={{ marginTop: 8 }}>
+            ✓ Sent — your employer can pick it up
+          </p>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="primary"
+              style={{ marginTop: 8 }}
+              disabled={publishing}
+              onClick={() => void send(known)}
+            >
+              {publishing ? "Sending…" : "Send to my employer"}
+            </button>
+            {publishedHash ? (
+              <p className="problems" style={{ marginTop: 8 }}>
+                <strong>A different hash is on file for you.</strong> Your
+                employer would pick that one up, and a termination anchored to it
+                could not be claimed with the key you hold. Sending replaces it.
+              </p>
+            ) : null}
+          </>
+        )}
+        {publishError ? (
+          <p className="note" style={{ marginTop: 6 }}>
+            {publishError} Copy the hash above and send it yourself.
+          </p>
+        ) : null}
+
         {employerOf ? (
           <p className="note" style={{ marginTop: 8 }}>
             This wallet is the employer of <strong>{employerOf}</strong>, so it
@@ -390,11 +572,14 @@ export function ClaimKey({
   return (
     <section className={known || identity || ended ? "callout" : "callout claim-key-todo"}>
       <h2>
+        {/* "file" was in every version of this heading, which quietly framed
+            the whole operation as being about one artefact. The key is the
+            thing; the file is where half of it goes. */}
         {identity || known
-          ? "Your benefit key file"
+          ? "Your benefit key"
           : ended
-            ? "Your benefit key file — needed for the claim below"
-            : "Your benefit key file — not downloaded yet"}
+            ? "Your benefit key — needed for the claim below"
+            : "Your benefit key — not created yet"}
       </h2>
       {body}
     </section>

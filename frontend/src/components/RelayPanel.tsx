@@ -46,9 +46,26 @@ export interface RelayResult {
   txHash: string | null;
 }
 
-export function RelayPanel({ period }: { period: number | null }) {
+export function RelayPanel({
+  period,
+  defaultPublish = true,
+  bare,
+}: {
+  period: number | null;
+  /**
+   * Whether to publish the root as well as build the bundles.
+   *
+   * Defaulted OFF when rebuilding a bundle for a period whose root is already
+   * on chain: the same openings produce the same root, so publishing again is a
+   * transaction and a few minutes of proving that change nothing. Still a
+   * checkbox, because a period whose root was never published needs it.
+   */
+  defaultPublish?: boolean;
+  /** Rendered without its own card, for embedding in a row that supplies one. */
+  bare?: boolean;
+}) {
   const [openings, setOpenings] = useState<{ name: string; body: unknown }[]>([]);
-  const [publish, setPublish] = useState(true);
+  const [publish, setPublish] = useState(defaultPublish);
   const [error, setError] = useState<string | null>(null);
   const { job, submitting, start } = useServiceJob<RelayResult>("/api/relay");
 
@@ -65,15 +82,21 @@ export function RelayPanel({ period }: { period: number | null }) {
     URL.revokeObjectURL(url);
   }
 
+  const Frame = bare ? "div" : "section";
   return (
-    <section className="card">
-      <h2>Publish claims for this period</h2>
-      <p className="note" style={{ marginTop: 0 }}>
-        Upload the termination openings you downloaded when you ended someone's
-        employment. Each one becomes a claim bundle to hand to that person — it
-        is what lets them prove a benefit claim is theirs. Nothing here reveals a
-        salary: an opening carries a final month, months worked and a hash.
-      </p>
+    <Frame className={bare ? "relay-bare" : "card"}>
+      {bare ? null : <h2>Publish claims for this period</h2>}
+      {/* Suppressed when embedded: the row that opens this has just said the
+          same thing about one named person, and saying it twice makes the
+          second copy look like a different instruction. */}
+      {bare ? null : (
+        <p className="note" style={{ marginTop: 0 }}>
+          Upload the termination openings you downloaded when you ended someone's
+          employment. Each one becomes a claim bundle to hand to that person — it
+          is what lets them prove a benefit claim is theirs. Nothing here reveals
+          a salary: an opening carries a final month, months worked and a hash.
+        </p>
+      )}
 
       <FilePicker
         label="Add a termination opening…"
@@ -215,6 +238,6 @@ export function RelayPanel({ period }: { period: number | null }) {
           {result.txHash ? <p className="note">tx {result.txHash}</p> : null}
         </>
       ) : null}
-    </section>
+    </Frame>
   );
 }

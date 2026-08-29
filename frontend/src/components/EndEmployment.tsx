@@ -6,9 +6,12 @@ import {
   type TerminationResult,
 } from "../lib/endEmployment";
 import { collectedFor, recordClaimKeyHash } from "../lib/collected";
+import { readPublishedClaimKeys } from "../lib/publishedClaimKeys";
+import { keyToHex } from "../lib/keys";
 import { filenameSlug } from "../lib/payslip";
 import { walletCanProve } from "../lib/submitPayroll";
 import { useServiceJob } from "../lib/useServiceJob";
+import { useElapsed, useUnloadGuard } from "../lib/useRunGuard";
 import { RelayPanel, type RelayResult } from "./RelayPanel";
 import { useWallet } from "../wallet/WalletContext";
 
@@ -92,6 +95,7 @@ export function EndEmployment({
   const relayBundle = relayResult?.bundles?.[0] ?? null;
   const relaySkipped = relayResult?.skipped?.[0] ?? null;
   const finished = done !== null && relay.job?.status !== "running" && !relay.submitting;
+
   useEffect(() => {
     if (finished) onEnded?.();
   }, [finished, onEnded]);
@@ -125,8 +129,51 @@ export function EndEmployment({
    * Derived once and used by the field, the button and the submit, so the three
    * cannot disagree again.
    */
+  /**
+   * Hashes employees published to this service, for whoever the row is about.
+   *
+   * The third source, and the one that removes the paste. `collectedFor` is
+   * this browser's own record and knows nothing an employer did on another
+   * machine; the published table is what the employee sent, so it is available
+   * wherever the employer signs in.
+   */
+  const [publishedHashes, setPublishedHashes] = useState<Record<string, string>>({});
+  // The published table is keyed on the hex key; `payee` may be either form.
+  const hexPayee = (() => {
+    try {
+      return payee ? keyToHex(payee) : "";
+    } catch {
+      return payee.toLowerCase();
+    }
+  })();
+  useEffect(() => {
+    let cancelled = false;
+    void readPublishedClaimKeys(networkId).then((rows) => {
+      if (!cancelled) setPublishedHashes(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId]);
+
+  /**
+   * The hash that is actually going to be sent, from three sources in order of
+   * authority: typed, then this browser's record, then what the employee
+   * published.
+   *
+   * Typed wins because the employer signs a write-once statement with it. The
+   * published value is a suggestion — the same rule the collection panel
+   * follows — so a service holding a stale row cannot quietly anchor one.
+   */
   const effectiveClaimKeyHash =
-    claimKeyHash || collectedFor(contractAddress)[payee]?.claimKeyHash || "";
+    claimKeyHash ||
+    collectedFor(contractAddress)[payee]?.claimKeyHash ||
+    publishedHashes[hexPayee] ||
+    "";
+  const hashFromEmployee =
+    !claimKeyHash &&
+    !collectedFor(contractAddress)[payee]?.claimKeyHash &&
+    Boolean(publishedHashes[hexPayee]);
 
   /**
    * Who this employer can pick from, by name.
@@ -167,6 +214,29 @@ export function EndEmployment({
   if (periods.length === 0) return null;
 
   const busy = step !== null;
+
+  // Every stage of this proves for minutes: the attestation, then the relay.
+  // The guard covers both, so it is on from the first signature to the last.
+  const running = busy || relay.submitting || relay.job?.status === "running";
+  useUnloadGuard(running);
+  const elapsed = useElapsed(running);
+
+  /**
+   * Looks the employee up as soon as there is nothing left to ask.
+   *
+   * Opened from their row, the employee is already known and the period
+   * defaults to the newest filed one — so "Look up" was a button whose inputs
+   * were both already decided, standing between the employer and the only
+   * question this form actually has. It stays for the standalone case, where a
+   * key has to be pasted and the click marks the end of typing.
+   */
+  useEffect(() => {
+    if (!employee || !period || survey || busy) return;
+    void look();
+    // `look` is stable enough for this: it reads the same three values named
+    // here, and adding it would re-run on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee, period, survey, busy]);
 
   async function look() {
     if (!period || !payee) return;
@@ -286,25 +356,34 @@ export function EndEmployment({
             not. */}
         <ul className="flow-steps">
           <li className="ok-line">✓ Termination record created</li>
-          <li className={relayBusy ? "muted" : relayFailed ? "warn-inline" : "ok-line"}>
-            {relayBusy ? "· Preparing claim data…" : relayFailed ? "! Claim data not prepared" : "✓ Claim data prepared"}
+          <li className={relayBusy ? "running" : relayFailed ? "warn-inline" : "ok-line"}>
+            {relayBusy ? "Preparing claim data…" : relayFailed ? "! Claim data not prepared" : "✓ Claim data prepared"}
           </li>
           <li
             className={
-              relayBusy ? "muted" : relayResult?.published ? "ok-line" : "warn-inline"
+              relayBusy ? "running" : relayResult?.published ? "ok-line" : "warn-inline"
             }
           >
             {relayBusy
-              ? `· Publishing ${periodName(done.opening.finalPeriod)} claim root…`
+              ? `Publishing ${periodName(done.opening.finalPeriod)} claim root…`
               : relayResult?.published
                 ? `✓ ${periodName(done.opening.finalPeriod)} claim root published`
                 : `! ${periodName(done.opening.finalPeriod)} claim root not published`}
           </li>
         </ul>
 
+        {/* Loud, because this is the only instruction that matters while a
+            proof runs — and it was grey body text under a row of ticks. A
+            closed tab does not lose a view; it abandons a transaction part way
+            through a sequence. */}
         {relayBusy ? (
-          <p className="note" style={{ marginTop: 0 }}>
-            One transaction and a few minutes of proving. Keep this tab open.
+          <p className="run-warning">
+            <span className="run-dot" aria-hidden="true" />
+            <span>
+              <strong>Still working — do not close this tab.</strong> One
+              transaction and a few minutes of proving.
+              {elapsed ? <span className="run-elapsed"> {elapsed}</span> : null}
+            </span>
           </p>
         ) : null}
 
@@ -465,9 +544,19 @@ export function EndEmployment({
             }}
           />
         )}
-        <button type="button" className="ghost" disabled={busy || !payee} onClick={() => void look()}>
-          Look up
-        </button>
+        {/* Only where it still asks something. With the employee named by the
+            row, the lookup runs on its own — a button whose two inputs are both
+            already decided is a step, not a choice. */}
+        {employee ? null : (
+          <button
+            type="button"
+            className="ghost"
+            disabled={busy || !payee}
+            onClick={() => void look()}
+          >
+            Look up
+          </button>
+        )}
       </div>
       {employee ? null : (
         <p className="note">
@@ -490,11 +579,18 @@ export function EndEmployment({
             not typed in — the attestation carries this number.
           </p>
 
+          {hashFromEmployee ? (
+            <p className="ok-line" style={{ marginTop: 0 }}>
+              ✓ Claim-key hash supplied by the employee
+            </p>
+          ) : null}
+
           <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
-            {/* Prefilled from what was collected for this employee, if
-                anything was — the hash is the same value either way, and
+            {/* Prefilled from what was collected for this employee, or from
+                what they published — the hash is the same value either way, and
                 retyping it is one more chance to anchor a termination against a
-                key nobody holds. */}
+                key nobody holds. Editable regardless: this goes into a
+                write-once statement, so the employer keeps the last word. */}
             <input
               value={effectiveClaimKeyHash}
               disabled={busy}

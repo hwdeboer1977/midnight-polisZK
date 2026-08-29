@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useWallet } from "../wallet/WalletContext";
+import { readPublishedClaimKeys } from "../lib/publishedClaimKeys";
+import { keyToHex } from "../lib/keys";
 import {
   collectionStatus,
   forgetClaimKeyHash,
@@ -47,6 +50,45 @@ export function ClaimKeyCollection({
 }) {
   const [, bump] = useState(0);
   const [entry, setEntry] = useState<Record<string, string>>({});
+
+  /**
+   * Hashes employees have published, ready to pick up.
+   *
+   * A SUGGESTION, never a source of truth. The employer anchors this value in a
+   * write-once statement and a wrong one is only detectable at claim time — so
+   * it pre-fills the field and the field stays editable, and a pasted value
+   * always wins. The employee sees the same row on their own page, which is
+   * where a mismatch gets caught while it can still be fixed.
+   */
+  const { networkId } = useWallet();
+  const [published, setPublished] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    void readPublishedClaimKeys(networkId).then((rows) => {
+      if (!cancelled) setPublished(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId]);
+  /**
+   * What a row's field shows: what the employer typed, else what the employee
+   * published. Typed always wins — the employer is the one signing.
+   */
+  /** Bech32m or hex in, hex out — the two sides of this store the same key
+      differently, and a bech32 string never equals a hex one. */
+  const hexKey = (key: string): string => {
+    try {
+      return keyToHex(key);
+    } catch {
+      return key.toLowerCase();
+    }
+  };
+  const valueFor = (coinPublicKey: string): string =>
+    entry[coinPublicKey] ?? published[hexKey(coinPublicKey)] ?? "";
+  const isSuggested = (coinPublicKey: string): boolean =>
+    entry[coinPublicKey] === undefined && Boolean(published[hexKey(coinPublicKey)]);
+
   const status = collectionStatus(contractAddress, rows);
 
   if (status.total === null) {
@@ -71,9 +113,14 @@ export function ClaimKeyCollection({
       <div className="collect">
         {status.missing.map((row) => (
           <div className="collect-row" key={row.coinPublicKey}>
-            <span className="collect-who">Claim-key hash</span>
+            <span className="collect-who">
+              Claim-key hash
+              {isSuggested(row.coinPublicKey) ? (
+                <span className="from-employee">sent by them</span>
+              ) : null}
+            </span>
             <input
-              value={entry[row.coinPublicKey] ?? ""}
+              value={valueFor(row.coinPublicKey)}
               placeholder="paste the 64-character hash they sent you"
               onChange={(event) =>
                 setEntry((was) => ({ ...was, [row.coinPublicKey]: event.target.value.trim() }))
@@ -82,12 +129,12 @@ export function ClaimKeyCollection({
             <button
               type="button"
               className="primary"
-              disabled={!/^[0-9a-f]{64}$/i.test(entry[row.coinPublicKey] ?? "")}
+              disabled={!/^[0-9a-f]{64}$/i.test(valueFor(row.coinPublicKey))}
               onClick={() => {
                 recordClaimKeyHash(
                   contractAddress,
                   row.coinPublicKey,
-                  (entry[row.coinPublicKey] ?? "").toLowerCase()
+                  valueFor(row.coinPublicKey).toLowerCase()
                 );
                 setEntry((was) => ({ ...was, [row.coinPublicKey]: "" }));
                 bump((n) => n + 1);
@@ -133,9 +180,14 @@ export function ClaimKeyCollection({
           </p>
           {status.missing.map((row) => (
             <div className="collect-row" key={row.coinPublicKey}>
-              <span className="collect-who">{row.fullName || row.coinPublicKey.slice(0, 12)}</span>
+              <span className="collect-who">
+                {row.fullName || row.coinPublicKey.slice(0, 12)}
+                {isSuggested(row.coinPublicKey) ? (
+                  <span className="from-employee">sent by them</span>
+                ) : null}
+              </span>
               <input
-                value={entry[row.coinPublicKey] ?? ""}
+                value={valueFor(row.coinPublicKey)}
                 placeholder="paste their claim-key hash"
                 onChange={(event) =>
                   setEntry((was) => ({ ...was, [row.coinPublicKey]: event.target.value.trim() }))
@@ -144,12 +196,12 @@ export function ClaimKeyCollection({
               <button
                 type="button"
                 className="ghost"
-                disabled={!/^[0-9a-f]{64}$/i.test(entry[row.coinPublicKey] ?? "")}
+                disabled={!/^[0-9a-f]{64}$/i.test(valueFor(row.coinPublicKey))}
                 onClick={() => {
                   recordClaimKeyHash(
                     contractAddress,
                     row.coinPublicKey,
-                    (entry[row.coinPublicKey] ?? "").toLowerCase()
+                    valueFor(row.coinPublicKey).toLowerCase()
                   );
                   setEntry((was) => ({ ...was, [row.coinPublicKey]: "" }));
                   bump((n) => n + 1);
