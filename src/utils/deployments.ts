@@ -40,6 +40,14 @@ const BASELINE: { env: string; contractName: string }[] = [
   { env: "peur_address", contractName: "peur" },
   { env: "taxparams_address", contractName: "taxparams" },
   { env: "fund_address", contractName: "fund" },
+  // ⚠️ Missing until 2026-08-29, and only harmless locally. `deployment.json`
+  // is gitignored and, on a managed host, lives under DATA_DIR — so a fresh
+  // disk has no record of any contract and this table is the ONLY source of
+  // addresses there. Every other contract could be recovered from the
+  // environment and the tax vault could not: `fund-deposit.ts` resolves it with
+  // `getDeployment(networkId, "taxvault")` and would report "No fund deployed
+  // on preview" for a vault that is deployed and holds money.
+  { env: "taxvault_address", contractName: "taxvault" },
 ];
 
 /**

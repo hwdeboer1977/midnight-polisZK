@@ -143,54 +143,66 @@ export async function readNationalTotals(networkId: string): Promise<NationalTot
   const vaultDeployment = here.find(([, d]) => d.contractName === "taxvault")?.[1] ?? null;
   const unreadable: string[] = [];
 
-  const read = async (contractName: "fund" | "taxvault", address: string) => {
+  /**
+   * Reads one contract and extracts what is wanted, INSIDE the try.
+   *
+   * ⚠️ This used to return the ledger and let the caller read fields off it,
+   * which looked equivalent and was not. A generated ledger is lazy: `ledger()`
+   * succeeds on any state, and each getter decodes its own field on access. So
+   * a mismatch between the module and the deployed contract throws from the
+   * property read — outside the try — as an unhandled promise rejection.
+   *
+   * The cost was not just a console error. `totals` was never set, so the page
+   * sat on "reading…" forever and both cards showed a dash: the exact failure
+   * `unreadable` exists to report, reported as nothing at all.
+   */
+  const read = async <T>(
+    contractName: "fund" | "taxvault",
+    address: string,
+    extract: (ledger: Record<string, any>) => T
+  ): Promise<T | null> => {
     try {
       const contract = await loadContract(contractName);
       const state = await fetchContractState(networkId, address);
       if (!state) return null;
-      return contract.ledger(state.data) as Record<string, any>;
+      return extract(contract.ledger(state.data) as Record<string, any>);
     } catch {
-      // An instance predating this build, or an indexer that did not answer.
-      // Reported as unreadable rather than as zeroes — a contract that cannot
-      // be read and one holding nothing are not the same fact.
+      // An instance predating this build, an address pointing at a DIFFERENT
+      // contract, or an indexer that did not answer. Reported as unreadable
+      // rather than as zeroes — a contract that cannot be read and one holding
+      // nothing are not the same fact.
       return null;
     }
   };
 
-  const [fundLedger, vaultLedger] = await Promise.all([
-    fundDeployment ? read("fund", fundDeployment.contractAddress) : Promise.resolve(null),
-    vaultDeployment ? read("taxvault", vaultDeployment.contractAddress) : Promise.resolve(null),
+  const [fund, taxvault] = await Promise.all([
+    fundDeployment
+      ? read("fund", fundDeployment.contractAddress, (l) => ({
+          address: fundDeployment.contractAddress,
+          contributedMinor: (l.contributedTotal ?? 0n) as bigint,
+          contributionCount: Number(l.contributionCount ?? 0),
+          claimsPaid: Number(l.claimsPaid ?? 0),
+          taxHeldMinor: (l.taxPool ?? 0n) as bigint,
+          taxRemittedMinor: (l.taxRemitted ?? 0n) as bigint,
+          socialHeldMinor: (l.socialPool ?? 0n) as bigint,
+          socialRemittedMinor: (l.socialRemitted ?? 0n) as bigint,
+        }))
+      : Promise.resolve(null),
+    vaultDeployment
+      ? read("taxvault", vaultDeployment.contractAddress, (l) => ({
+          address: vaultDeployment.contractAddress,
+          heldMinor: (l.heldTotal ?? 0n) as bigint,
+          receivedMinor: (l.receivedTotal ?? 0n) as bigint,
+          withdrawnMinor: (l.withdrawnTotal ?? 0n) as bigint,
+          depositCount: Number(l.depositCount ?? 0),
+          withdrawalCount: Number(l.withdrawalCount ?? 0),
+          authority: bytesToHex(l.authority?.bytes ?? new Uint8Array()),
+        }))
+      : Promise.resolve(null),
   ]);
 
-  if (fundDeployment && !fundLedger) unreadable.push("benefit fund");
-  if (vaultDeployment && !vaultLedger) unreadable.push("tax vault");
+  if (fundDeployment && !fund) unreadable.push("benefit fund");
+  if (vaultDeployment && !taxvault) unreadable.push("tax vault");
 
-  return {
-    fund:
-      fundDeployment && fundLedger
-        ? {
-            address: fundDeployment.contractAddress,
-            contributedMinor: fundLedger.contributedTotal ?? 0n,
-            contributionCount: Number(fundLedger.contributionCount ?? 0),
-            claimsPaid: Number(fundLedger.claimsPaid ?? 0),
-            taxHeldMinor: fundLedger.taxPool ?? 0n,
-            taxRemittedMinor: fundLedger.taxRemitted ?? 0n,
-            socialHeldMinor: fundLedger.socialPool ?? 0n,
-            socialRemittedMinor: fundLedger.socialRemitted ?? 0n,
-          }
-        : null,
-    taxvault:
-      vaultDeployment && vaultLedger
-        ? {
-            address: vaultDeployment.contractAddress,
-            heldMinor: vaultLedger.heldTotal ?? 0n,
-            receivedMinor: vaultLedger.receivedTotal ?? 0n,
-            withdrawnMinor: vaultLedger.withdrawnTotal ?? 0n,
-            depositCount: Number(vaultLedger.depositCount ?? 0),
-            withdrawalCount: Number(vaultLedger.withdrawalCount ?? 0),
-            authority: bytesToHex(vaultLedger.authority?.bytes ?? new Uint8Array()),
-          }
-        : null,
-    unreadable,
-  };
+  return { fund, taxvault, unreadable };
 }
