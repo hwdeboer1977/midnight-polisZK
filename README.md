@@ -43,59 +43,62 @@ never leaving the employer's machine. The transaction hashes are in
 
 ```mermaid
 flowchart TB
-    OP(["Operator"])
-    EM(["Employer"])
-    EE(["Employee"])
-    PU(["Public"])
+    PU["Public"]
+    EE["Employee"]
+    EM["Employer"]
+    OP["Operator"]
 
     subgraph FE["Frontend — Vite + React, in the browser"]
-        direction LR
-        PUS["/app<br/><i>no wallet needed</i>"]
-        OPS["/operator<br/>settlement · employer access"]
-        EMS["/employer<br/>Payroll · Employees · History · Settings"]
-        EES["/employee<br/>Salary · Unemployment benefit"]
+        PUS["/app"]
+        EES["/employee"]
+        EMS["/employer"]
+        OPS["/operator"]
     end
 
-    WAL["Wallet extension<br/><i>signs, and may prove</i>"]
+    WAL["Wallet extension<br/>signs, and may prove"]
 
-    subgraph SVC["Service — Express, :8787"]
+    subgraph SVC["Service — Express, port 8787"]
         API["/api routes"]
         KEYS["platform wallet seed<br/>treasury seeds<br/>fund-pool.json"]
-        DB[("Postgres<br/>registrations<br/>claim_key_hashes<br/>sealed_rosters")]
+        DB[("Postgres")]
     end
 
     subgraph CH["Midnight preview"]
-        direction LR
-        PAY["payroll<br/><i>per employer</i>"]
+        PAY["payroll"]
         TAXP["taxparams"]
         PEUR["peur"]
         FUND["fund"]
         VAULT["taxvault"]
     end
 
-    OP --> OPS
-    EM --> EMS
-    EE --> EES
     PU --> PUS
+    EE --> EES
+    EM --> EMS
+    OP --> OPS
 
-    OPS -- "platform token" --> API
-    EMS -- "relay · sealed roster" --> API
-    EES -- "claim-key hash" --> API
-    EMS --> WAL
+    PUS -->|public reads only| CH
     EES --> WAL
+    EMS --> WAL
 
-    API --> KEYS
+    EES -->|claim-key hash| API
+    EMS -->|relay, sealed roster| API
+    OPS -->|platform token| API
+
+    WAL -->|file, pay, remit, terminate| PAY
+    WAL -->|claim| FUND
+
     API --> DB
-    KEYS -- "treasury → contracts" --> FUND
-    KEYS -- "treasury → contracts" --> VAULT
-    API -- "publishRoot" --> FUND
+    API --> KEYS
+    API -->|publishRoot| FUND
+    KEYS -->|treasury spends| FUND
+    KEYS --> VAULT
 
-    WAL -- "file · pay · remit · terminate" --> PAY
-    WAL -- "claim" --> FUND
-    PAY -. "reads the rules in force" .-> TAXP
-    PAY -. "settles in" .-> PEUR
-    PUS -- "public reads only" --> CH
+    PAY -.->|reads the rules| TAXP
+    PAY -.->|settles in| PEUR
 ```
+
+The dotted lines are reads, not calls: `payroll` looks up the rule set in force
+for a period, and settles in `peur`. Everything else is a transaction.
 
 **Who touches what, and why it is split that way:**
 
