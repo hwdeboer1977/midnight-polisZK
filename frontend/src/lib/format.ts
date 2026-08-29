@@ -77,3 +77,37 @@ export function truncate(value: string, head = 14, tail = 10): string {
     ? value
     : `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
+
+/**
+ * A typed pEUR figure -> minor units, or `null` when it is not one.
+ *
+ * The inverse of `formatPeur`, and the reason a field can say "100" and mean a
+ * hundred euros. The wire still carries minor units — `parsePeurAmount` on the
+ * service is the one authority on what a valid amount is — so this only decides
+ * where the decimal point goes, and refuses rather than rounds: an amount with
+ * a seventh decimal is a figure the token cannot represent, and silently
+ * dropping it would deposit something other than what was read on screen.
+ *
+ * A comma is accepted as the decimal separator, since this is a euro amount and
+ * half of Europe types one. Grouping separators are not, because "1,000" would
+ * then be ambiguous between a thousand and one.
+ */
+export function parsePeurInput(raw: string): bigint | null {
+  const match = /^(\d*)(?:[.,](\d{1,6}))?$/.exec(raw.trim());
+  if (!match || (!match[1] && !match[2])) return null;
+  const minor = BigInt(match[1] || "0") * PEUR_SCALE + BigInt((match[2] ?? "").padEnd(6, "0"));
+  return minor > 0n ? minor : null;
+}
+
+/**
+ * Minor units -> a string this app's own pEUR fields accept.
+ *
+ * Not `formatPeur`: that groups thousands for reading, and a grouped figure put
+ * back into an input is no longer parseable. Exact to the minor unit, with
+ * trailing zeros dropped so a whole amount reads as "100" rather than
+ * "100.000000".
+ */
+export function toPeurInput(minor: bigint): string {
+  const fraction = (minor % PEUR_SCALE).toString().padStart(PEUR_DECIMALS, "0").replace(/0+$/, "");
+  return fraction ? `${minor / PEUR_SCALE}.${fraction}` : String(minor / PEUR_SCALE);
+}

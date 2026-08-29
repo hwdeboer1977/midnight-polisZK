@@ -1159,3 +1159,13 @@ button.primary.secondary-action {
    lines read as two independent actions; the destructive one needs its way out
    sitting next to it, at the same weight, so neither is the obvious click. */
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* The operator's two-column view of the receiving contracts. Stacks below the
+   card's own breakpoint rather than at a width of its own — a figure and the
+   sentence that qualifies it must never be separated by a column boundary. */
+.national-totals { margin-top: 12px; }
+.balance-head { font-size: 13px; font-weight: 600; margin: 16px 0 8px; }
+.contract-balance { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+.contract-balance h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+.contract-balance .plain { margin: 0 0 6px; }
+.contract-balance .plain li { font-size: 13px; padding: 1px 0; }

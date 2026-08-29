@@ -23,7 +23,19 @@ import { fromHex } from "./payslip";
  */
 
 export interface TerminationOpening {
+  /** The deployment's name. Kept for readability; `contractAddress` is what resolves. */
   instance: string;
+  /**
+   * The contract this termination is on, hex, 32 bytes.
+   *
+   * Written because the name alone was not enough. The relay resolved openings
+   * as `payroll:<instance>`, which is how per-company deployments are keyed —
+   * but onboarding assigns the single `payroll` deployment now, so an employer's
+   * page reports `payroll` and the relay looked for `payroll:payroll` and
+   * skipped every opening as "not deployed on this network". An address cannot
+   * drift with a naming convention, and it is what the claim leaf binds to.
+   */
+  contractAddress: string;
   slot: number;
   finalPeriod: number;
   monthsWorked: number;
@@ -190,6 +202,7 @@ export async function endEmployment(options: {
     matched: [],
     opening: {
       instance,
+      contractAddress: contractAddress.replace(/^0x/, "").toLowerCase(),
       slot,
       finalPeriod: period,
       monthsWorked,

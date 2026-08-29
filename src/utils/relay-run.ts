@@ -15,12 +15,11 @@ import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-p
 // generated — so this changes nothing at runtime. It does mean a recompile that
 // is not followed by `npm run frontend:config` leaves this reading the previous
 // module, which is the one way the two can disagree.
-import * as payrollContract from "../../frontend/src/generated/payroll/index.js";
 import { EnvironmentManager } from "./environment.js";
-import { getDeployment, listDeployments } from "./deployments.js";
+import { deploymentKey, getDeployment, listDeployments } from "./deployments.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./wallet.js";
 import { MidnightProviders } from "../providers/midnight-providers.js";
-import { contractLeaves, loadCompiledContract } from "./contract.js";
+import { contractLeaves, contractModulePath, loadCompiledContract } from "./contract.js";
 import { buildTree, type ClaimLeafInput } from "./claim-tree.js";
 import { PUBLISHED } from "./benefit-params.js";
 import { listDeposits } from "./fund-pool.js";
@@ -46,7 +45,26 @@ import { listDeposits } from "./fund-pool.js";
  */
 
 export interface TerminationOpening {
+  /**
+   * The deployment this termination was written on, by name.
+   *
+   * A NAME, and therefore the weak half of this record — see `contractAddress`
+   * below and the resolution in `runRelay`. Onboarding used to deploy one
+   * contract per company and key it `payroll:<slug>`; it now assigns the single
+   * `payroll` deployment, so the name an employer's page reports is plainly
+   * `payroll` and there is nothing under `payroll:payroll` to find.
+   */
   instance: string;
+  /**
+   * The contract this termination is on, hex, 32 bytes.
+   *
+   * Optional only because openings downloaded before this field existed do not
+   * carry it. Written by every new one, and preferred over the name whenever it
+   * is present: an address is what the leaf actually binds to, and it cannot go
+   * stale when a naming convention changes underneath it — which is exactly how
+   * `payroll:payroll` came to be looked up for a contract deployed as `payroll`.
+   */
+  contractAddress?: string;
   slot: number;
   finalPeriod: number;
   monthsWorked: number;
@@ -89,6 +107,38 @@ export interface RelayResult {
   txHash: string | null;
 }
 
+/**
+ * The payroll contract module, resolved the way every other server path
+ * resolves one.
+ *
+ * ⚠️ This used to be a static `import * as payrollContract from
+ * "../../frontend/src/generated/payroll/index.js"`, and it made the relay skip
+ * EVERY opening with **"contract state unreadable, or it predates this build"**
+ * — a message that named the contract as the suspect when the contract was
+ * fine and the import was not.
+ *
+ * The same hazard `fund-deposit.ts` documents, in the same shape. Node resolves
+ * a bare specifier from the importing FILE, so a module under
+ * `frontend/src/generated/` finds `frontend/node_modules/@midnight-ntwrk/
+ * compact-runtime` while this file finds the root one: two installs of the same
+ * version, two WASM instances. A `ContractState` deserialized here is then not
+ * an instance of THAT runtime's `ChargedState`, `ledger()` throws, and
+ * `fetchLedger`'s catch — written for a contract that genuinely predates this
+ * build — reports it as an old contract. Identical versions, so no lockfile
+ * hints at it.
+ *
+ * `contractModulePath` prefers `contracts/managed/payroll/contract/index.js`,
+ * which sits at the repo root and shares this file's runtime, and falls back to
+ * the committed copy — correct on a managed host, where `frontend/node_modules`
+ * does not exist and that copy resolves to the root runtime too. Either way
+ * there is one runtime, which is the property that matters.
+ */
+let payrollModule: Promise<any> | null = null;
+function payroll(): Promise<any> {
+  payrollModule ??= import(contractModulePath("payroll"));
+  return payrollModule;
+}
+
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const fromHex = (s: string) => Uint8Array.from(Buffer.from(s.replace(/^0x/, ""), "hex"));
 
@@ -114,7 +164,7 @@ async function fetchLedger(indexer: string, address: string): Promise<any | null
   const encoded = body.data?.contractAction?.state;
   if (!encoded) return null;
   try {
-    const ledger = (payrollContract as any).ledger(
+    const ledger = (await payroll()).ledger(
       ContractState.deserialize(Buffer.from(encoded, "hex")).data
     );
     void ledger.employerAssigned;
@@ -160,15 +210,63 @@ export async function runRelay(options: {
   const leaves: ClaimLeafInput[] = [];
   const accepted: { instance: string; slot: number }[] = [];
 
+  /**
+   * Which deployment an opening refers to.
+   *
+   * Three ways, in decreasing order of how much they can be trusted:
+   *
+   *   1. **The address the opening carries**, matched against a payroll
+   *      deployment on this network. Unambiguous — it is the value the leaf
+   *      binds to — and the only one immune to a naming convention changing.
+   *   2. **`payroll:<instance>`**, which is how per-company deployments are
+   *      keyed and how every opening written before onboarding stopped
+   *      deploying names its contract.
+   *   3. **The bare `payroll` deployment**, and only when the opening literally
+   *      names it. Onboarding now assigns that one contract, so an employer's
+   *      page reports its instance as `payroll` and rule 2 looks for
+   *      `payroll:payroll` — a key that has never existed. Every opening
+   *      written since then was skipped as "not deployed on this network",
+   *      which is a true statement about a key and a false one about a
+   *      contract that is deployed and holds the attestation.
+   *
+   * The fallback is deliberately not "try the base contract whenever the name
+   * misses": that would relay a typo'd instance against whichever payroll
+   * happens to be the default, and the attestation check below would usually —
+   * but not always — catch it. Naming the base contract is an exact match, not
+   * a guess.
+   */
+  const resolve = (opening: TerminationOpening) => {
+    const wanted = opening.contractAddress?.replace(/^0x/, "").toLowerCase();
+    if (wanted) {
+      const byAddress = Object.values(deployments).find(
+        (record) =>
+          record.networkId === network.networkId &&
+          record.contractName === "payroll" &&
+          record.contractAddress.replace(/^0x/, "").toLowerCase() === wanted
+      );
+      if (byAddress) return byAddress;
+    }
+    return (
+      deployments[deploymentKey(network.networkId, "payroll", opening.instance)] ??
+      (opening.instance === "payroll"
+        ? deployments[deploymentKey(network.networkId, "payroll")]
+        : undefined)
+    );
+  };
+
   for (const opening of openings) {
-    const record = deployments[`${network.networkId}/payroll:${opening.instance}`];
+    const record = resolve(opening);
     const skip = (reason: string) => {
       skipped.push({ instance: opening.instance, slot: opening.slot, reason });
       log(`   skipped ${opening.instance} slot ${opening.slot}: ${reason}`);
     };
 
     if (!record) {
-      skip("not deployed on this network");
+      skip(
+        opening.contractAddress
+          ? `no payroll deployment on ${network.networkId} at ${opening.contractAddress.slice(0, 16)}…`
+          : `no payroll deployment on ${network.networkId} named "${opening.instance}"`
+      );
       continue;
     }
 
@@ -191,7 +289,7 @@ export async function runRelay(options: {
     // attested to would be publishing its own claim about someone's employment.
     const attested = hex(ledger.terminationFor.lookup(p).lookup(slot));
     const recomputed = hex(
-      (payrollContract as any).pureCircuits.terminationCommitment(
+      (await payroll()).pureCircuits.terminationCommitment(
         BigInt(opening.finalPeriod),
         BigInt(opening.monthsWorked),
         fromHex(opening.claimKeyHash),

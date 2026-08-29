@@ -1,6 +1,7 @@
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Landing } from "./pages/Landing";
 import { Public } from "./pages/Public";
+import { Operator } from "./pages/Operator";
 import { EmployerOverview } from "./pages/EmployerOverview";
 import { EmployerRoster } from "./pages/EmployerRoster";
 import { EmployerSetup } from "./pages/EmployerSetup";
@@ -69,8 +70,15 @@ function Header({
 }
 
 /**
- * Three areas, in the order the privacy story reads: the public sees the
- * system, an employer sees its own payroll, an employee sees their own records.
+ * Four areas, in the order the privacy story reads: the public sees the system,
+ * the operator runs it, an employer sees its own payroll, an employee sees their
+ * own records.
+ *
+ * Operator is listed for everyone rather than revealed to the platform key,
+ * even though every card on it is. A tab that materialises for one wallet makes
+ * the shape of the system depend on who is looking, and the honest answer to
+ * "who moves the money into the national contracts" is a page anyone can open
+ * and find locked — not a page that does not appear to exist.
  *
  * Claim used to be a fourth, and moving it under Employee is a position rather
  * than tidying. There is no "unemployed" area because a system that has to
@@ -90,6 +98,7 @@ function Header({
  */
 const AREAS = [
   { to: "/app", label: "Public" },
+  { to: "/operator", label: "Operator" },
   { to: "/employer", label: "Employer" },
   { to: "/employee", label: "Employee" },
 ];
@@ -232,6 +241,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/app" element={<Public />} />
+        <Route path="/operator" element={<Operator />} />
 
         <Route path="/employer" element={<EmployerOverview />} />
         <Route path="/employer/payroll" element={<Payroll />} />

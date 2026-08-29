@@ -90,6 +90,36 @@ export function EndEmployment({
   const effectiveClaimKeyHash =
     claimKeyHash || collectedFor(contractAddress)[payee]?.claimKeyHash || "";
 
+  /**
+   * Who this employer can pick from, by name.
+   *
+   * The workbook when one is loaded, and otherwise **what this browser was told
+   * when a workbook was last loaded** — `recordRoster` writes a name against
+   * each coin key, for exactly this reason. Until now the fallback was a bare
+   * paste field, which is how an employer ends up hand-copying a 64-character
+   * key into a write-once attestation because they happened to open the page
+   * without the file.
+   *
+   * The local store can only undercount — a roster loaded on another machine is
+   * not here — so the paste field stays, below rather than instead. Nothing is
+   * trusted from it either: the key chosen is put through the same `surveyEmployment`
+   * lookup as a pasted one, and the chain answers whether it names anybody.
+   */
+  const remembered = Object.values(collectedFor(contractAddress)).filter(
+    (entry) => entry.fullName
+  );
+  const choices =
+    roster && roster.rows.length > 0
+      ? roster.rows.map((row) => ({
+          coinPublicKey: row.coinPublicKey,
+          fullName: row.fullName,
+        }))
+      : remembered.map((entry) => ({
+          coinPublicKey: entry.coinPublicKey,
+          fullName: entry.fullName ?? "",
+        }));
+  const fromWorkbook = Boolean(roster && roster.rows.length > 0);
+
   const canDelegate = api ? walletCanProve(api) : false;
   const [delegateProving, setDelegateProving] = useState(false);
   useEffect(() => {
@@ -158,14 +188,15 @@ export function EndEmployment({
     // opening itself was never given a matching prefix, so the pair stayed
     // confusable in the one folder where both land.
     //
-    // The name needs the roster, so it is only there when a workbook is loaded.
-    // Falling back to the slot rather than omitting the segment keeps two
-    // openings from the same period distinguishable either way.
+    // The name comes from `choices`, so it survives a page opened without the
+    // workbook — this browser remembers who was on it. Falling back to the slot
+    // rather than omitting the segment keeps two openings from the same period
+    // distinguishable when it does not.
     const fallback = `slot-${result.opening.slot + 1}`;
     const who =
       filenameSlug(
-        roster?.rows.find(
-          (row) => row.coinPublicKey.toLowerCase() === payee.toLowerCase()
+        choices.find(
+          (choice) => choice.coinPublicKey.toLowerCase() === payee.toLowerCase()
         )?.fullName ?? ""
       ) || fallback;
     anchor.download =
@@ -244,9 +275,12 @@ export function EndEmployment({
             </option>
           ))}
         </select>
-        {roster && roster.rows.length > 0 ? (
+        {choices.length > 0 ? (
           <select
-            value={payee}
+            // `payee` may hold a pasted key that is in no list — rendering that
+            // as a selected option would be a lie, and rendering it as the empty
+            // choice would suggest nobody is chosen while Look up is enabled.
+            value={choices.some((c) => c.coinPublicKey === payee) ? payee : ""}
             disabled={busy}
             style={{ minWidth: 260 }}
             onChange={(event) => {
@@ -255,32 +289,36 @@ export function EndEmployment({
             }}
           >
             <option value="">Choose an employee…</option>
-            {roster.rows.map((row) => (
-              <option key={row.coinPublicKey} value={row.coinPublicKey}>
-                {row.fullName || row.coinPublicKey.slice(0, 12)}
+            {choices.map((choice) => (
+              <option key={choice.coinPublicKey} value={choice.coinPublicKey}>
+                {choice.fullName || choice.coinPublicKey.slice(0, 12)}
               </option>
             ))}
           </select>
-        ) : (
-          <input
-            value={payee}
-            disabled={busy}
-            placeholder="Employee's coin public key"
-            style={{ minWidth: 320 }}
-            onChange={(event) => {
-              setPayee(event.target.value.trim());
-              setSurvey(null);
-            }}
-          />
-        )}
+        ) : null}
+        {/* Always available, not only when there is no list. A name is missing
+            from the list whenever the roster was loaded on another machine, and
+            that is precisely the case where an employer needs to proceed. */}
+        <input
+          value={payee}
+          disabled={busy}
+          placeholder={choices.length > 0 ? "…or paste a coin public key" : "Employee's coin public key"}
+          style={{ minWidth: 320 }}
+          onChange={(event) => {
+            setPayee(event.target.value.trim());
+            setSurvey(null);
+          }}
+        />
         <button type="button" className="ghost" disabled={busy || !payee} onClick={() => void look()}>
           Look up
         </button>
       </div>
       <p className="note">
-        {roster && roster.rows.length > 0
+        {fromWorkbook
           ? "From the workbook you loaded above. Only you can turn a key into the hash the chain publishes, which is why the months below can be counted here and nowhere else."
-          : "Load this contract's workbook above and this becomes a list of names. Until then the key has to be pasted — the chain holds only a hash of it, so there is nowhere else to read one from."}
+          : choices.length > 0
+            ? "From what this browser remembers of a workbook loaded earlier — names and public keys only, never a salary. Load the workbook above for the current list, or paste a key for anyone missing from it."
+            : "Load this contract's workbook above and this becomes a list of names. Until then the key has to be pasted — the chain holds only a hash of it, so there is nowhere else to read one from."}
       </p>
 
       {survey ? (

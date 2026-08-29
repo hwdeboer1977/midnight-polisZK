@@ -1,15 +1,8 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
-import { FundDeposit } from "../components/FundDeposit";
-import { ServiceReset } from "../components/ServiceReset";
-import { DeployerRegistry } from "../components/DeployerRegistry";
-import { EmployerRevoke } from "../components/EmployerRevoke";
 import { EXPLORERS } from "../lib/chain";
-import { loadDeployments, type Deployments } from "../lib/deployments";
 import { formatPeur, formatPeurTile, group } from "../lib/format";
 import { useNetworkStats } from "../lib/useNetworkStats";
-import { usePayrollInstances } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
@@ -19,26 +12,14 @@ import { useWallet } from "../wallet/WalletContext";
  * here is anyone's private business.
  */
 export function Public() {
-  const { networkId, account } = useWallet();
+  const { networkId } = useWallet();
   const { stats, loading, error } = useNetworkStats(networkId);
 
-  // Asked of the contracts, not of a config value naming a "the deployer".
-  //
-  // `platform` is written by the constructor and readable on every instance, so
-  // the question "is the connected wallet the one that deployed these" has an
-  // on-chain answer — and using it means a rotated or second platform key needs
-  // no code change to be recognised, while an impostor pasting the key into a
-  // setting recognises nothing.
-  const [deployments, setDeployments] = useState<Deployments>({});
-  useEffect(() => {
-    void loadDeployments().then(setDeployments);
-  }, []);
-  const { instances, refresh: refreshInstances } = usePayrollInstances(
-    networkId,
-    deployments,
-    account?.coinPublicKey ?? null
-  );
-  const isDeployer = instances.some((instance) => instance.isPlatform);
+  // No wallet read here any more. This page used to load every payroll
+  // instance and ask whether the connected key was their `platform`, purely to
+  // decide whether to render the operator's cards at the bottom. Those live on
+  // /operator now, and with them gone the public page needs no wallet at all —
+  // which is what it always claimed: nothing here is anyone's private business.
   const explorer = EXPLORERS[networkId] ?? "";
   const peurContract = stats.deployed.find((d) => d.deployment.contractName === "peur");
   const payrollContracts = stats.deployed.filter(
@@ -379,28 +360,17 @@ export function Public() {
         </p>
       </section>
 
-      {/* Directly under the sentence that explains why it cannot do more.
-          Anywhere else and the card would read as the console that sentence
-          says does not exist. */}
-      {/* Above the registry, not below it. The registry is one card per
-          onboarded company and grows without bound, so anything after it is
-          off-screen on a service with any history — which is exactly the
-          service most likely to want a reset. */}
-      {isDeployer ? <FundDeposit networkId={networkId} /> : null}
-      {isDeployer ? <ServiceReset /> : null}
-      {/* Before the registry, for the reason stated two comments up: the registry
-          is one card per onboarded company and grows without bound, so anything
-          after it is off-screen. Revoke was placed after it and promptly went
-          missing — the card rendered, the button sat below the fold, and the
-          honest report was "there is no revoke button".
-
-          Still its own card rather than a row in the registry. Deactivating a
-          registration and revoking a contract are one click apart in effect and
-          a world apart in consequence; adjacent is fine, merged is not. */}
-      {isDeployer ? (
-        <EmployerRevoke instances={instances} onRevoked={refreshInstances} />
-      ) : null}
-      {isDeployer ? <DeployerRegistry networkId={networkId} /> : null}
+      {/* The operator's controls used to be four cards here, each rendered only
+          when the connected wallet turned out to be the deployer. They are on
+          /operator now — this page is what the network publishes about itself,
+          and a console that appears for one reader is not that. The link is
+          shown to everyone, for the same reason the tab is: which party moves
+          the money into the national contracts is part of the description. */}
+      <p className="note">
+        Moving the collected withholding into these contracts, and assigning the
+        payroll contract to a company, are the platform's own steps —{" "}
+        <Link to="/operator">Operator</Link>.
+      </p>
 
       {/* Its own section rather than a row in the contract list: which asset
           salaries settle in is a property of the system, and the caveats that

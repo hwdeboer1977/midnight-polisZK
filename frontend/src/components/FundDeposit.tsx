@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { apiUrl } from "../lib/origin";
 import { loadDeployments } from "../lib/deployments";
-import { formatPeur } from "../lib/format";
+import { formatPeur, parsePeurInput, toPeurInput } from "../lib/format";
+import { readNationalDeposits, type NationalDeposits } from "../lib/nationalDeposits";
+import { NationalArrivals } from "./NationalArrivals";
+import { NationalTotals } from "./NationalTotals";
 
 type TreasuryName = "social-treasury" | "tax-treasury" | "platform";
 
@@ -45,38 +48,19 @@ const WALLET_LABEL: Record<TreasuryName, string> = {
  * panel look locked when it was not. `/api/health` says which case this is, and
  * the field appears only in the guarded one.
  */
-export function FundDeposit({
-  networkId,
-  bare,
-  defaultPeriod,
-  defaultSource,
-  onDeposited,
-}: {
-  networkId: string;
+export function FundDeposit({ networkId }: { networkId: string }) {
   /**
-   * Rendered without its own card and heading, for embedding in the employer's
-   * month stepper — which supplies both. The same prop `PayslipRecovery` takes,
-   * for the same reason: a card inside a step draws a box around a box.
-   */
-  bare?: boolean;
-  /**
-   * The month the embedding context is working on, used as the initial value.
+   * What the operator typed, in pEUR rather than in minor units.
    *
-   * Seeded rather than controlled. Depositing for an earlier month is a real
-   * operation — a period can be remitted long after the calendar moved on — so
-   * the field stays editable and this only saves the retype in the ordinary
-   * case.
+   * The field used to take minor units, which meant a deposit of a hundred
+   * euros was typed as 100000000 and a deposit of a hundred was typed by
+   * mistake — the same nine-digit figure the treasury balance is quoted in, and
+   * a factor of a million from what it looked like. `parsePeurInput` converts
+   * before the request is sent, so the wire still carries minor units and the
+   * service's parser stays the authority on what is valid.
    */
-  defaultPeriod?: number | null;
-  /** The payroll contract the money came from, seeded the same way. */
-  defaultSource?: string;
-  /**
-   * Fired once a deposit has landed, so an embedding step can re-read the
-   * receiving contract rather than waiting for a reload to notice.
-   */
-  onDeposited?: () => void;
-}) {
   const [amount, setAmount] = useState("");
+  const amountMinor = parsePeurInput(amount);
   /**
    * What is being sent, which decides BOTH ends of the transfer.
    *
@@ -100,9 +84,40 @@ export function FundDeposit({
     : target === "taxvault"
       ? "tax-treasury"
       : "social-treasury";
-  const [period, setPeriod] = useState(defaultPeriod ? String(defaultPeriod) : "");
-  const [source, setSource] = useState(defaultSource ?? "");
+  const [period, setPeriod] = useState("");
+  const [source, setSource] = useState("");
   const [token, setToken] = useState("");
+
+  /**
+   * What the two receiving contracts already hold for the period being typed.
+   *
+   * Read from THEM, not from payroll: payroll's ledger stops at `remitTax`, so
+   * it cannot answer whether the second hop landed and never could. This is the
+   * only confirmation the operation has — a deposit reports a tx hash, and a tx
+   * hash is not the same claim as "the fund recorded €400 against October".
+   *
+   * It also answers the question that comes before pressing anything: whether
+   * this period has already been deposited. `contributedFor` is cumulative
+   * rather than write-once, so a second deposit is added rather than refused —
+   * the contract will not stop a month being paid twice, and this is what shows
+   * it before it happens.
+   */
+  const shownPeriod = /^\d{6}$/.test(period.trim()) ? Number(period.trim()) : null;
+  const [national, setNational] = useState<NationalDeposits | null>(null);
+  const [nationalNonce, setNationalNonce] = useState(0);
+  useEffect(() => {
+    if (shownPeriod === null) {
+      setNational(null);
+      return;
+    }
+    let cancelled = false;
+    void readNationalDeposits(networkId, shownPeriod).then((result) => {
+      if (!cancelled) setNational(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId, shownPeriod, nationalNonce]);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -150,22 +165,12 @@ export function FundDeposit({
   // depositing on behalf of an earlier instance.
   useEffect(() => {
     if (source) return;
-    if (defaultSource) {
-      setSource(defaultSource);
-      return;
-    }
     void loadDeployments().then((all) => {
       const payroll = all[`${networkId}/payroll`];
       if (payroll && !source) setSource(payroll.contractAddress);
     });
-  }, [networkId, source, defaultSource]);
+  }, [networkId, source]);
 
-  // Only while the operator has not typed one. A month arriving from the page
-  // above must not overwrite a period being entered by hand — the field would
-  // then reset under the cursor every time the stepper re-read the chain.
-  useEffect(() => {
-    if (defaultPeriod && !period) setPeriod(String(defaultPeriod));
-  }, [defaultPeriod, period]);
 
   const authHeader = (): Record<string, string> =>
     token.trim() ? { authorization: `Bearer ${token.trim()}` } : {};
@@ -271,14 +276,19 @@ export function FundDeposit({
     setLog([]);
     setBusy(true);
     try {
+      if (amountMinor === null) throw new Error("An amount in pEUR, e.g. 200.20");
       const result = await runJob<{ txHash: string; ordinal: number }>(
         "/api/fund/deposit",
-        { amount, from, target, period, source },
+        // Minor units on the wire, as the service expects — the euro figure
+        // above is a display convention of this field and nothing else.
+        { amount: String(amountMinor), from, target, period, source },
         setLog
       );
       if (result) {
         setDone(result);
-        onDeposited?.();
+        // The point of the arrivals line above: what the receiving contract now
+        // records, rather than the tx hash this returns.
+        setNationalNonce((n) => n + 1);
         // What was just spent is no longer there. Leaving the old figure on
         // screen beside a Max button would offer an amount the wallet cannot
         // cover any more.
@@ -294,23 +304,17 @@ export function FundDeposit({
   const working = busy || reading || funding;
   /** A wallet holding money it cannot move: pEUR, no NIGHT. */
   const stranded = balances?.some((b) => b.minor !== "0" && b.nightMinor === "0") ?? false;
-  const Frame = bare ? "div" : "section";
 
   return (
-    <Frame className={bare ? "fund-deposit" : "card"}>
-      {bare ? null : (
-        <>
-          <h2>Send withholding to the national contracts</h2>
-          <p className="lead-sm">
-            The last hop. <code>remitTax</code> and <code>remitSocial</code> leave
-            each period's withholding in the two treasury wallets; this moves it
-            into the contracts that govern it. Contributions go to the benefit
-            fund, which pays claims from them; tax goes to the vault, which
-            records it per period and can only pay out to the authority frozen at
-            its deploy.
-          </p>
-        </>
-      )}
+    <section className="card">
+      <h2>Send withholding to the national contracts</h2>
+      <p className="lead-sm">
+        The last hop. <code>remitTax</code> and <code>remitSocial</code> leave
+        each period's withholding in the two treasury wallets; this moves it into
+        the contracts that govern it. Contributions go to the benefit fund, which
+        pays claims from them; tax goes to the vault, which records it per period
+        and can only pay out to the authority frozen at its deploy.
+      </p>
 
       <div className="actions" style={{ flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <select
@@ -339,6 +343,20 @@ export function FundDeposit({
         </label>
       </div>
 
+      {shownPeriod === null ? null : (
+        <div style={{ marginTop: 8 }}>
+          <NationalArrivals deposits={national} period={shownPeriod} />
+          <button
+            type="button"
+            className="ghost"
+            disabled={working}
+            onClick={() => setNationalNonce((n) => n + 1)}
+          >
+            Re-check the national contracts
+          </button>
+        </div>
+      )}
+
       <p className="note" style={{ marginTop: 6 }}>
         Paying from <strong>{WALLET_LABEL[from]}</strong>.
         {topUp
@@ -346,6 +364,13 @@ export function FundDeposit({
           : " Each destination is paid by the treasury that was remitted for it, so the pairing is not a choice."}
       </p>
 
+      {/* Both ends of the hop, in the order the money travels: what the two
+          treasury wallets are holding, then what the two contracts they pay
+          into have recorded. Together they are the answer to "is there anything
+          to send, and did the last send arrive" — which is the question an
+          operator actually opens this page with, and which used to need a
+          block explorer and a CLI to answer. */}
+      <h3 className="balance-head">Where the money is</h3>
       <TreasuryBalances
         balances={balances}
         reading={reading}
@@ -355,6 +380,7 @@ export function FundDeposit({
         onFund={() => void fundWithNight()}
         disabled={working}
       />
+      <NationalTotals networkId={networkId} />
 
       <div
         className="actions"
@@ -363,13 +389,11 @@ export function FundDeposit({
         <input
           value={amount}
           disabled={working}
-          // Minor units, NOT euros, and it used to say "Amount in EUR, e.g.
-          // 3000". `parsePeurAmount` takes whole minor units and pEUR has six
-          // decimals, so that example was an instruction to deposit €0.003 —
-          // the label and the parser disagreed by a factor of a million. The
-          // euro value is echoed under the field so the figure can be read
-          // rather than counted.
-          placeholder="Amount in minor units, e.g. 200200000"
+          inputMode="decimal"
+          // Euros, as they are read everywhere else on this page. The minor-unit
+          // figure is echoed under the field, because that is what goes on the
+          // wire and what an operator comparing this against a log will see.
+          placeholder="Amount in pEUR, e.g. 200.20"
           style={{ minWidth: 200 }}
           onChange={(e) => setAmount(e.target.value)}
         />
@@ -385,7 +409,7 @@ export function FundDeposit({
               ? "Check the balances first — a shielded balance cannot be guessed"
               : `The most the ${WALLET_LABEL[from]} can send in one transaction`
           }
-          onClick={() => maxMinor && setAmount(maxMinor)}
+          onClick={() => maxMinor && setAmount(toPeurInput(BigInt(maxMinor)))}
         >
           Max
         </button>
@@ -403,14 +427,19 @@ export function FundDeposit({
         <button
           type="button"
           className="primary"
-          disabled={working || !amount.trim() || !period.trim() || !source.trim()}
+          disabled={working || amountMinor === null || !period.trim() || !source.trim()}
           onClick={() => void deposit()}
         >
           {busy ? "Depositing…" : "Deposit"}
         </button>
       </div>
 
-      <AmountEcho amount={amount} maxMinor={maxMinor} wallet={WALLET_LABEL[from]} />
+      <AmountEcho
+        typed={amount}
+        minor={amountMinor}
+        maxMinor={maxMinor}
+        wallet={WALLET_LABEL[from]}
+      />
 
       <input
         value={source}
@@ -452,7 +481,7 @@ export function FundDeposit({
           ✓ Deposited — pool coin #{done.ordinal}, tx {done.txHash}
         </p>
       ) : null}
-    </Frame>
+    </section>
   );
 }
 
@@ -555,38 +584,39 @@ function TreasuryBalances({
 }
 
 /**
- * The typed figure, in euros, beside what the wallet holds.
+ * The typed figure in minor units, beside what the wallet holds.
  *
- * Six decimals is enough digits that a mistyped amount is a factor of ten no
- * one sees. Echoing it as money is the cheapest possible check, and comparing
- * it against the balance catches the other half — an amount the wallet cannot
- * cover, which the service would otherwise refuse only after the operator had
- * waited for a sync.
+ * The field takes euros; the chain, the service and every log line carry minor
+ * units. Echoing the conversion is the cheapest possible check that the two
+ * agree, and comparing it against the balance catches the other half — an
+ * amount the wallet cannot cover, which the service would otherwise refuse only
+ * after the operator had waited for a sync.
  */
 function AmountEcho({
-  amount,
+  typed,
+  minor,
   maxMinor,
   wallet,
 }: {
-  amount: string;
+  typed: string;
+  minor: bigint | null;
   maxMinor: string | null;
   wallet: string;
 }) {
-  const trimmed = amount.trim();
-  if (!trimmed) return null;
-  if (!/^\d+$/.test(trimmed)) {
+  if (!typed.trim()) return null;
+  if (minor === null) {
     return (
       <p className="note" style={{ marginTop: 4 }}>
-        Whole minor units only — no decimal point, no separators.
+        An amount in pEUR greater than zero, with at most 6 decimal places and no
+        thousands separators.
       </p>
     );
   }
 
-  const minor = BigInt(trimmed);
   const over = maxMinor !== null && minor > BigInt(maxMinor);
   return (
     <p className={over ? "status error" : "note"} style={{ marginTop: 4 }}>
-      €{formatPeur(minor)}
+      €{formatPeur(minor)} = {String(minor)} minor units
       {over ? ` — more than the ${wallet} holds, so this would be refused.` : ""}
     </p>
   );
