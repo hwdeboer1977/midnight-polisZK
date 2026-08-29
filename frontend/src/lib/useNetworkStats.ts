@@ -66,6 +66,19 @@ export interface NetworkStats {
     claimsPaid: number;
     ruleSets: number;
     claimTrees: number;
+    /**
+     * Every contribution that has actually REACHED the fund, over how many
+     * deposits. Money in — never a balance.
+     *
+     * The figure the public page leads its social-protection section with, and
+     * the one that answers "what happened to the contributions?". `socialFiled`
+     * cannot answer it: that is what payroll ASSESSED, and it sits in an
+     * employer's wallet until two separate hops move it. What is left after
+     * benefits have been paid is not published and cannot be — see the note on
+     * this interface.
+     */
+    contributed: bigint;
+    contributionCount: number;
     /** Withheld from benefits, held and remitted. Public by design. */
     taxHeld: bigint;
     taxRemitted: bigint;
@@ -163,6 +176,8 @@ export function useNetworkStats(networkId: string) {
                 claimsPaid: Number(ledger.claimsPaid),
                 ruleSets: Number(ledger.latestVersion),
                 claimTrees: [...ledger.rootFor].length,
+                contributed: ledger.contributedTotal ?? 0n,
+                contributionCount: Number(ledger.contributionCount ?? 0),
                 taxHeld: ledger.taxPool ?? 0n,
                 taxRemitted: ledger.taxRemitted ?? 0n,
                 socialHeld: ledger.socialPool ?? 0n,

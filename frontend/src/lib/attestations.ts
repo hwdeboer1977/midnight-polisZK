@@ -56,8 +56,18 @@ export interface AttestationScan {
   employerOf: string | null;
 }
 
+/**
+ * What to call the payroll contract a period was filed on.
+ *
+ * ⚠️ This returned an EMPTY STRING for the base deployment, which is now the
+ * only one onboarding ever assigns: `instance` is undefined there, and
+ * stripping `payroll` off a name that is exactly "payroll" leaves nothing. The
+ * `?? name` fallback never fired, because `""` is not nullish — so the employee
+ * page rendered a blank column and looked like it had lost the data.
+ */
 function employerLabel(name: string, instance?: string): string {
-  return instance ?? name.replace(/^.*payroll:?/, "") ?? name;
+  const stripped = name.replace(/^.*payroll:?/, "");
+  return instance || stripped || name;
 }
 
 export async function findAttestations(

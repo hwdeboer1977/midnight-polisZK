@@ -159,16 +159,29 @@ export function EmployeeBenefit() {
       )}
 
       {ended ? (
-        <section className="callout">
-          <h2>Your employment ended — you can claim</h2>
+        <section className="callout outcome">
+          {/* The result first, and named as a result. "Your employment ended —
+              you can claim" leads with the loss and buries the entitlement in a
+              subclause; what someone opening this page wants is the answer. */}
+          <h2>You're eligible for unemployment benefit</h2>
+          <p className="outcome-figure">
+            <strong>{PILOT_DURATION_MONTHS}</strong> monthly payments available
+          </p>
           <p className="lead-sm" style={{ margin: "0 0 12px" }}>
             {rows
               .filter((row) => row.ended)
               .map((row) => periodName(row.period))
               .join(", ")}{" "}
-            was attested on chain as a final period. You are entitled to{" "}
-            {PILOT_DURATION_MONTHS} monthly payments, and you will need three
-            things for each:
+            was attested on chain as your final employment period.
+          </p>
+          {/* "You will need three things for each" read as "upload all three
+              every month", which would be alarming: two of the three cannot be
+              obtained again. Verified against the contract — the nullifier is
+              `hash(claimKey, window, fund)`, so what changes month to month is
+              the WINDOW and nothing else. The files are collected once. */}
+          <p className="note" style={{ marginTop: 0 }}>
+            Each payment is a separate claim against a different month, made
+            with the <em>same</em> three files every time. You collect them once:
           </p>
           <ul className="needs">
             <li>
@@ -320,9 +333,14 @@ function Eligibility({ rows }: { rows: Attestation[] | null }) {
                     ? "nothing found for this wallet"
                     : req.found}
               </span>
-              <p className="note" style={{ margin: "4px 0 0" }}>
-                {req.body}
-              </p>
+              {/* The mechanics, folded. Four requirements each followed by a
+                  paragraph of circuit explanation made the page read as a
+                  specification — and the thing an employee needs from this
+                  panel is four ticks. */}
+              <details className="details req-why">
+                <summary>How this is verified</summary>
+                <p className="note">{req.body}</p>
+              </details>
             </div>
           </li>
         ))}

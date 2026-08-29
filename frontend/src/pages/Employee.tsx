@@ -161,6 +161,8 @@ export function Employee() {
     : 0n;
 
   const paid = rows.filter((row) => row.paid);
+  /** Whether naming the contract per row distinguishes anything. */
+  const manyEmployers = new Set(rows.map((row) => row.employer)).size > 1;
   const walletName = wallet?.name || wallet?.rdns || null;
 
   return (
@@ -293,9 +295,14 @@ export function Employee() {
             <div className="headline-value" title={`Exactly €${formatPeur(balance)}`}>
               €{formatPeurTile(balance)}
             </div>
-            <div className="headline-label">
-              pEUR in your wallet ·{" "}
-              {paid.length === 1 ? "1 period" : `${paid.length} periods`} received
+            {/* Named, not inferred. A payslip reading €134.75 above a figure
+                of €1,016.40 invites exactly one question, and "pEUR in your
+                wallet" answered it only if you already knew the difference
+                between a month's pay and a running balance. */}
+            <div className="headline-label">Current pEUR balance</div>
+            <div className="headline-sub">
+              across {paid.length === 1 ? "1 period" : `${paid.length} periods`}{" "}
+              received
             </div>
             <p className="ok-line" style={{ margin: "10px 0 0" }}>
               ✓ Received privately
@@ -307,19 +314,29 @@ export function Employee() {
               lives on the benefit tab, along with the claim key, the status
               check and the form. One link beats a second copy that drifts. */}
           {rows.some((row) => row.ended) ? (
-            <section className="callout">
-              <h2>Your employment ended</h2>
+            // Amber, not lavender. Lavender on this page means "your private
+            // financial information"; this is a state transition with something
+            // to do about it, and giving it the salary card's treatment made a
+            // life event look like one more row of pay data. Amber says
+            // attention without implying anything went wrong.
+            <section className="card event-card">
+              <h2>
+                <span className="pill warn">Employment ended</span>
+              </h2>
               <p className="lead-sm" style={{ margin: "0 0 12px" }}>
                 {rows
                   .filter((row) => row.ended)
                   .map((row) => periodName(row.period))
                   .join(", ")}{" "}
-                was attested on chain as a final period. You may be entitled to
-                an unemployment benefit.
+                was attested on chain as your final period. You may be eligible
+                for an unemployment benefit.
               </p>
               <div className="actions">
+                {/* "Check", not "Go to": nobody knows yet whether they
+                    qualify, and a button that assumes the answer is a button
+                    that disappoints. */}
                 <Link className="button" to="/employee/benefit">
-                  Go to unemployment benefit
+                  Check unemployment benefit →
                 </Link>
               </div>
             </section>
@@ -327,11 +344,15 @@ export function Employee() {
 
           <section className="card">
             <h2>Payroll periods</h2>
-            <table className="roster">
+            <table className="roster periods">
               <thead>
                 <tr>
                   <th>Period</th>
-                  <th>Employer</th>
+                  {/* Only when it tells the reader something. Most people work
+                      for one employer, and a column repeating the same name
+                      down every row is a column that costs width and answers
+                      nothing. It returns the moment there are two. */}
+                  {manyEmployers ? <th>Employer</th> : null}
                   <th>Net</th>
                   <th>Status</th>
                 </tr>
@@ -340,7 +361,7 @@ export function Employee() {
                 {rows.map((row) => (
                   <tr key={`${row.contractAddress}-${row.period}-${row.slot}`}>
                     <td>{periodName(row.period)}</td>
-                    <td className="muted">{row.employer}</td>
+                    {manyEmployers ? <td className="muted">{row.employer}</td> : null}
                     <td className="num">
                       {opened &&
                       opened.slip.period === row.period &&
@@ -357,18 +378,18 @@ export function Employee() {
                     </td>
                     <td>
                       {row.paid ? (
-                        <span className="ok-line">✓ Received</span>
+                        <span className="pill ok">✓ Received</span>
                       ) : row.funded ? (
-                        <span className="muted">Awaiting payday</span>
+                        <span className="pill info">Awaiting payday</span>
                       ) : (
-                        <span className="muted">Filed</span>
+                        <span className="pill neutral">Filed</span>
                       )}
                       {/* Alongside the payment status, not instead of it: a
                           final period is usually also a paid one, and replacing
                           the tick would lose the answer to the question this
                           column exists for. */}
                       {row.ended ? (
-                        <div className="note" style={{ margin: "2px 0 0" }}>
+                        <div className="note" style={{ margin: "3px 0 0" }}>
                           final period
                         </div>
                       ) : null}
@@ -394,14 +415,19 @@ export function Employee() {
             </p>
           </section>
 
-          <section className="callout">
-            <h2>Private by design</h2>
-            <p className="note" style={{ marginTop: 0 }}>
-              Your individual salary and payment history are visible to your
-              wallet, but are not published on chain. What anyone else can see is
-              that a period had a payee — never who, and never for how much.
-            </p>
-          </section>
+          {/* Quiet. It was a lavender panel the size of the salary card,
+              which spent the page's strongest colour on the one block carrying
+              no figures — and left lavender meaning both "your money" and "a
+              note about privacy". */}
+          <p className="privacy-note">
+            <span aria-hidden="true">🛡</span>
+            <span>
+              <strong>Private by design.</strong> Your individual salary and
+              payment history are visible to your wallet, but are not published
+              on chain. What anyone else can see is that a period had a payee —
+              never who, and never for how much.
+            </span>
+          </p>
 
           <details className="details">
             <summary>Why do I need a payslip to see the amount?</summary>
@@ -486,7 +512,7 @@ function PayslipCheck({
       ["Social contribution", BigInt(slip.social)],
     ];
     return (
-      <section className="callout">
+      <section className="callout payslip-detail">
         <h2>
           {periodName(slip.period)}
           {slip.employee ? ` — ${slip.employee}` : ""}
@@ -518,7 +544,10 @@ function PayslipCheck({
             wallet than the one connected — so the pay went somewhere else.
           </p>
         )}
-        <table className="roster">
+        {/* Gross and the two deductions are what the net is made of; the net
+            is what actually arrived. A four-row table of equal weight made an
+            employee read all four to find the one they came for. */}
+        <table className="roster amounts">
           <tbody>
             {amounts.map(([label, amount]) => (
               <tr key={label}>
@@ -526,13 +555,9 @@ function PayslipCheck({
                 <td className="num">{formatPeur(amount)} pEUR</td>
               </tr>
             ))}
-            <tr>
-              <td>
-                <strong>Net paid to you</strong>
-              </td>
-              <td className="num">
-                <strong>{formatPeur(BigInt(slip.net))} pEUR</strong>
-              </td>
+            <tr className="net-row">
+              <td>Net paid to you</td>
+              <td className="num">{formatPeur(BigInt(slip.net))} pEUR</td>
             </tr>
             <tr>
               <td className="muted">Weeks worked</td>

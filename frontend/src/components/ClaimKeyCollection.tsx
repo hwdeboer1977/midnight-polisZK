@@ -21,10 +21,29 @@ import {
 export function ClaimKeyCollection({
   contractAddress,
   rows,
+  onSaved,
+  compact,
 }: {
   contractAddress: string;
   /** The roster currently loaded, or null when none is. */
   rows: { fullName: string; coinPublicKey: string }[] | null;
+  /**
+   * Fired after a hash is stored, so a caller reading the same store re-reads.
+   *
+   * The store is `localStorage`, which nothing subscribes to — this component's
+   * own `bump` re-renders itself and nothing else, so a row rendering the status
+   * beside this field kept showing "Missing" until the page was reloaded.
+   */
+  onSaved?: () => void;
+  /**
+   * One person, in their own row's panel.
+   *
+   * The roster form says "Ask these employees" over a counted header, which is
+   * right for a whole payroll and absurd beside one name — "0 of 1 collected"
+   * restates the status word already in that person's row, and the plural
+   * instruction is addressed to a group of one.
+   */
+  compact?: boolean;
 }) {
   const [, bump] = useState(0);
   const [entry, setEntry] = useState<Record<string, string>>({});
@@ -44,6 +63,49 @@ export function ClaimKeyCollection({
   }
 
   const done = status.missing.length === 0;
+
+  if (compact) {
+    // No counter and no plural instruction: the row above already showed the
+    // status, and there is exactly one field.
+    return done ? null : (
+      <div className="collect">
+        {status.missing.map((row) => (
+          <div className="collect-row" key={row.coinPublicKey}>
+            <span className="collect-who">Claim-key hash</span>
+            <input
+              value={entry[row.coinPublicKey] ?? ""}
+              placeholder="paste the 64-character hash they sent you"
+              onChange={(event) =>
+                setEntry((was) => ({ ...was, [row.coinPublicKey]: event.target.value.trim() }))
+              }
+            />
+            <button
+              type="button"
+              className="primary"
+              disabled={!/^[0-9a-f]{64}$/i.test(entry[row.coinPublicKey] ?? "")}
+              onClick={() => {
+                recordClaimKeyHash(
+                  contractAddress,
+                  row.coinPublicKey,
+                  (entry[row.coinPublicKey] ?? "").toLowerCase()
+                );
+                setEntry((was) => ({ ...was, [row.coinPublicKey]: "" }));
+                bump((n) => n + 1);
+                onSaved?.();
+              }}
+            >
+              Save
+            </button>
+          </div>
+        ))}
+        <p className="note" style={{ marginTop: 6 }}>
+          They create it on their own Employee page and send it to you. It is
+          public and gives you no way to claim anything. Stored in this browser
+          only.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -91,6 +153,9 @@ export function ClaimKeyCollection({
                   );
                   setEntry((was) => ({ ...was, [row.coinPublicKey]: "" }));
                   bump((n) => n + 1);
+                  // After the write, never before: the caller re-reads the same
+                  // store and would otherwise read it one save behind.
+                  onSaved?.();
                 }}
               >
                 Save

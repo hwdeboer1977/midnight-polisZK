@@ -201,7 +201,7 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
         ) : (
           <p className="note">
             No payroll contract is registered to this signing key.{" "}
-            <Link to="/employer/setup">Register your company</Link> to get one.
+            <Link to="/employer/settings">Register your company</Link> to get one.
           </p>
         )}
       </section>
@@ -209,7 +209,11 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
       ) : null}
 
       {showFunding && myPayroll.length > 0 ? (
-        <section className="card">
+        // An operational act, not configuration — getting tokens into a wallet
+        // is something you DO, and it happens to live on Settings only because
+        // a fifth tab for it would be overkill on a testnet. The border says so
+        // rather than a heading claiming it is a setting.
+        <section className="card funding-card">
           <h2>Get funded</h2>
           <ol className="next">
             <li>

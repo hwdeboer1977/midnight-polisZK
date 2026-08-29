@@ -5,9 +5,11 @@ import {
   surveyEmployment,
   type TerminationResult,
 } from "../lib/endEmployment";
-import { collectedFor } from "../lib/collected";
+import { collectedFor, recordClaimKeyHash } from "../lib/collected";
 import { filenameSlug } from "../lib/payslip";
 import { walletCanProve } from "../lib/submitPayroll";
+import { useServiceJob } from "../lib/useServiceJob";
+import { RelayPanel, type RelayResult } from "./RelayPanel";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
@@ -27,12 +29,25 @@ export function EndEmployment({
   networkId,
   periods,
   roster,
+  employee,
+  onEnded,
 }: {
   contractAddress: string;
   instance: string;
   networkId: string;
   /** Filed periods, newest first. */
   periods: number[];
+  /**
+   * The person this is about, when it was opened from their row.
+   *
+   * With it there is no employee to choose — the row already said who — so the
+   * picker and the paste field disappear and the form is one question: which
+   * month was their last. Without it the component keeps its standalone
+   * behaviour, which is what the operator-style flow needed.
+   */
+  employee?: { fullName: string; coinPublicKey: string };
+  /** Fired once the whole workflow has finished, so a list can re-read. */
+  onEnded?: () => void;
   /**
    * The workbook loaded on this page, if one has been.
    *
@@ -46,7 +61,7 @@ export function EndEmployment({
 }) {
   const { api } = useWallet();
   const [period, setPeriod] = useState<number | null>(periods[0] ?? null);
-  const [payee, setPayee] = useState("");
+  const [payee, setPayee] = useState(employee?.coinPublicKey ?? "");
   const [claimKeyHash, setClaimKeyHash] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [survey, setSurvey] = useState<{
@@ -57,6 +72,29 @@ export function EndEmployment({
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<TerminationResult | null>(null);
+
+  /**
+   * Publishing the claim tree, as part of ending employment rather than after it.
+   *
+   * The employer used to be walked through five separate acts: attest, download
+   * the opening, go to another panel, upload it back, publish. Every one of
+   * those is a real technical step and none of them is a decision — the opening
+   * this component just produced is the only input the relay wants, and it is
+   * already in memory, so the download-and-re-upload round trip existed purely
+   * because two panels could not talk to each other.
+   *
+   * The download stays. It is the only copy of a file that cannot be
+   * reconstructed, and a service that is down must not cost an employer the
+   * opening as well as the publish.
+   */
+  const relay = useServiceJob<RelayResult>("/api/relay");
+  const relayResult = relay.job?.status === "done" ? relay.job.result : null;
+  const relayBundle = relayResult?.bundles?.[0] ?? null;
+  const relaySkipped = relayResult?.skipped?.[0] ?? null;
+  const finished = done !== null && relay.job?.status !== "running" && !relay.submitting;
+  useEffect(() => {
+    if (finished) onEnded?.();
+  }, [finished, onEnded]);
 
   /**
    * Whether the wallet can prove, and whether it is being asked to.
@@ -163,8 +201,24 @@ export function EndEmployment({
         onProgress: setStep,
       });
       setDone({ ...result, matched: survey.matched });
+      // The hash is demonstrably collected — it is inside an attestation that
+      // is now on chain and write-once. Recording it here closes the gap that
+      // made the setup line read "0/2 claim keys" for an employer who had
+      // already used one: the collection panel's Save button was the only
+      // thing that ever wrote to the store, so a hash pasted straight into
+      // this form was used and forgotten. The counter then reported
+      // outstanding work against people whose employment had already ended.
+      recordClaimKeyHash(contractAddress, payee, effectiveClaimKeyHash);
       // Held no longer than the derivation needs it.
       setPassphrase("");
+      // Straight on to the publish, with the opening this run produced. The
+      // employer is not asked to do anything between the two: they are one
+      // action as far as anyone outside this code is concerned.
+      void relay.start({
+        period: result.opening.finalPeriod,
+        openings: [result.opening],
+        publish: true,
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -206,43 +260,140 @@ export function EndEmployment({
     URL.revokeObjectURL(url);
   }
 
+  function downloadBundle(bundle: NonNullable<typeof relayBundle>) {
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `claim-bundle-${bundle.instance}-${bundle.period}-slot-${bundle.slot + 1}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   if (done) {
+    const relayBusy = relay.submitting || relay.job?.status === "running";
+    const relayFailed =
+      relay.job?.status === "failed" || relay.unavailable || Boolean(relaySkipped);
     return (
       <section className="callout" id="end-employment">
-        <h2>Employment ended — {periodName(done.opening.finalPeriod)}</h2>
-        <p className="ok-line" style={{ marginTop: 0 }}>
-          ✓ Attested on chain, and it cannot be revised
-        </p>
-        <ul className="problems">
-          <li>tx {done.txHash}</li>
-          <li>
-            {done.opening.monthsWorked} months on this payroll
-            {done.matched.length > 0
-              ? ` — ${done.matched.map(periodName).join(", ")}`
-              : ""}
+        <h2>
+          {employee ? `${employee.fullName} — employment ended` : "Employment ended"}
+        </h2>
+
+        {/* Three technical acts, reported as one outcome. Each is a separate
+            proof and a separate transaction, and an employer has no decision to
+            make between them — so the progress is shown and the architecture is
+            not. */}
+        <ul className="flow-steps">
+          <li className="ok-line">✓ Termination record created</li>
+          <li className={relayBusy ? "muted" : relayFailed ? "warn-inline" : "ok-line"}>
+            {relayBusy ? "· Preparing claim data…" : relayFailed ? "! Claim data not prepared" : "✓ Claim data prepared"}
+          </li>
+          <li
+            className={
+              relayBusy ? "muted" : relayResult?.published ? "ok-line" : "warn-inline"
+            }
+          >
+            {relayBusy
+              ? `· Publishing ${periodName(done.opening.finalPeriod)} claim root…`
+              : relayResult?.published
+                ? `✓ ${periodName(done.opening.finalPeriod)} claim root published`
+                : `! ${periodName(done.opening.finalPeriod)} claim root not published`}
           </li>
         </ul>
-        <p className="note">
-          The chain now holds a hash of this statement and nothing else. The
-          opening below is what a claim is checked against, and it has to reach
-          the fund's relay — download it and hand it over. It is not stored here,
-          and it cannot be recovered from the page once you leave.
-        </p>
-        <button type="button" className="primary" onClick={() => download(done)}>
-          Download the opening
-        </button>{" "}
+
+        {relayBusy ? (
+          <p className="note" style={{ marginTop: 0 }}>
+            One transaction and a few minutes of proving. Keep this tab open.
+          </p>
+        ) : null}
+
+        {relayBundle ? (
+          <>
+            <p className="note">
+              The claim bundle below is what{" "}
+              {employee ? employee.fullName : "this person"} needs to claim. Hand
+              it over — nothing here can rebuild it for them later.
+            </p>
+            <button type="button" className="primary" onClick={() => downloadBundle(relayBundle)}>
+              Download claim bundle
+            </button>{" "}
+          </>
+        ) : null}
+
         <button
           type="button"
-          className="ghost"
-          onClick={() => {
-            setDone(null);
-            setSurvey(null);
-            setPayee("");
-            setClaimKeyHash("");
-          }}
+          className={relayBundle ? "ghost" : "primary"}
+          onClick={() => download(done)}
         >
-          End another
+          Download the opening
         </button>
+        {employee ? null : (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setDone(null);
+                setSurvey(null);
+                setPayee("");
+                setClaimKeyHash("");
+                relay.reset();
+              }}
+            >
+              End another
+            </button>
+          </>
+        )}
+
+        {relayFailed ? (
+          <>
+            <p className="status error">
+              {relaySkipped
+                ? `The relay would not publish this opening: ${relaySkipped.reason}`
+                : relay.unavailable
+                  ? "The service is not reachable, so the claim root was not published."
+                  : relay.job?.status === "failed"
+                    ? relay.job.error
+                    : ""}
+            </p>
+            <p className="note">
+              The termination itself is on chain and is not affected — it is
+              write-once and it landed. Publishing is permissionless and can be
+              redone by anyone at any time, so nothing is lost: download the
+              opening above and publish it below once the cause is fixed.
+            </p>
+            <details className="details">
+              <summary>Publish it manually</summary>
+              <RelayPanel period={done.opening.finalPeriod} />
+            </details>
+          </>
+        ) : null}
+
+        <details className="details">
+          <summary>Technical details</summary>
+          <ul className="problems">
+            <li>Attestation tx {done.txHash}</li>
+            <li>
+              {done.opening.monthsWorked} months on this payroll
+              {done.matched.length > 0
+                ? ` — ${done.matched.map(periodName).join(", ")}`
+                : ""}
+            </li>
+            {relayResult?.txHash ? <li>Claim root tx {relayResult.txHash}</li> : null}
+            {relayResult?.root ? <li>Root {relayResult.root}</li> : null}
+          </ul>
+          <p className="note">
+            Three separate proofs and two transactions. The chain holds a hash of
+            the termination statement and nothing else; the opening is what a
+            claim is checked against, and it is not stored anywhere but the file
+            you download. The claim root is a tree over everyone terminated in
+            that month across every employer here — which is what keeps each
+            claimant anonymous inside it, and why one person cannot build their
+            own.
+          </p>
+        </details>
       </section>
     );
   }
@@ -275,7 +426,7 @@ export function EndEmployment({
             </option>
           ))}
         </select>
-        {choices.length > 0 ? (
+        {employee ? null : choices.length > 0 ? (
           <select
             // `payee` may hold a pasted key that is in no list — rendering that
             // as a selected option would be a lie, and rendering it as the empty
@@ -296,30 +447,37 @@ export function EndEmployment({
             ))}
           </select>
         ) : null}
-        {/* Always available, not only when there is no list. A name is missing
-            from the list whenever the roster was loaded on another machine, and
-            that is precisely the case where an employer needs to proceed. */}
-        <input
-          value={payee}
-          disabled={busy}
-          placeholder={choices.length > 0 ? "…or paste a coin public key" : "Employee's coin public key"}
-          style={{ minWidth: 320 }}
-          onChange={(event) => {
-            setPayee(event.target.value.trim());
-            setSurvey(null);
-          }}
-        />
+        {/* Always available when nobody was named, not only when there is no
+            list. A name is missing from the list whenever the roster was loaded
+            on another machine, and that is precisely the case where an employer
+            needs to proceed. */}
+        {employee ? null : (
+          <input
+            value={payee}
+            disabled={busy}
+            placeholder={
+              choices.length > 0 ? "…or paste a coin public key" : "Employee's coin public key"
+            }
+            style={{ minWidth: 320 }}
+            onChange={(event) => {
+              setPayee(event.target.value.trim());
+              setSurvey(null);
+            }}
+          />
+        )}
         <button type="button" className="ghost" disabled={busy || !payee} onClick={() => void look()}>
           Look up
         </button>
       </div>
-      <p className="note">
-        {fromWorkbook
-          ? "From the workbook you loaded above. Only you can turn a key into the hash the chain publishes, which is why the months below can be counted here and nowhere else."
-          : choices.length > 0
-            ? "From what this browser remembers of a workbook loaded earlier — names and public keys only, never a salary. Load the workbook above for the current list, or paste a key for anyone missing from it."
-            : "Load this contract's workbook above and this becomes a list of names. Until then the key has to be pasted — the chain holds only a hash of it, so there is nowhere else to read one from."}
-      </p>
+      {employee ? null : (
+        <p className="note">
+          {fromWorkbook
+            ? "From the workbook you loaded above. Only you can turn a key into the hash the chain publishes, which is why the months below can be counted here and nowhere else."
+            : choices.length > 0
+              ? "From what this browser remembers of a workbook loaded earlier — names and public keys only, never a salary. Load the workbook for the current list, or paste a key for anyone missing from it."
+              : "Load this contract's workbook and this becomes a list of names. Until then the key has to be pasted — the chain holds only a hash of it, so there is nowhere else to read one from."}
+        </p>
+      )}
 
       {survey ? (
         <>

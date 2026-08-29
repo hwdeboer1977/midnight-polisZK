@@ -59,12 +59,62 @@ export interface MonthStep {
 
 export function MonthSteps({ steps }: { steps: MonthStep[] }) {
   return (
-    <ol className="month-steps">
+    <>
+      <StepStrip steps={steps} />
+      <ol className="month-steps">
+        {steps.map((step, index) => (
+          <MonthStepRow key={step.title} step={step} index={index} />
+        ))}
+      </ol>
+    </>
+  );
+}
+
+/**
+ * The whole month on one line, above the steps themselves.
+ *
+ * The list below already collapses a finished step to a row, which was the
+ * right fix for "the riskiest button is the most prominent one" and did nothing
+ * for the question asked first: how far through am I. Five collapsed rows still
+ * have to be read one at a time to answer it.
+ *
+ * So the shape of the month comes first and the detail second. The titles are
+ * shortened here — "Load this month's figures" becomes "Figures" — because this
+ * is a position indicator, not a second set of instructions, and the full title
+ * is one line down.
+ */
+function StepStrip({ steps }: { steps: MonthStep[] }) {
+  return (
+    <ol className="step-strip">
       {steps.map((step, index) => (
-        <MonthStepRow key={step.title} step={step} index={index} />
+        <li key={step.title} className={`step-pip ${step.state}`}>
+          <span className="step-pip-n">{step.state === "done" ? "✓" : index + 1}</span>
+          <span className="step-pip-t">{shortTitle(step.title)}</span>
+        </li>
       ))}
     </ol>
   );
+}
+
+/**
+ * A step's name at strip length.
+ *
+ * Matched on the distinguishing word rather than by index, because the list is
+ * not fixed: the withholding-repair step only appears when a period was funded
+ * the old way, so position 4 is not always the same step. An unmatched title
+ * falls back to its first two words rather than to a number.
+ */
+function shortTitle(title: string): string {
+  const rules: [RegExp, string][] = [
+    [/^Load/, "Figures"],
+    [/^File/, "Filed"],
+    [/^Fund and pay/, "Paid"],
+    [/^Move withholding/, "Withheld"],
+    [/withholding to the treasuries/, "Remitted"],
+    [/^Send payslips/, "Payslips"],
+  ];
+  for (const [pattern, short] of rules) if (pattern.test(title)) return short;
+  return title.split(" ").slice(0, 2).join(" ");
 }
 
 /**

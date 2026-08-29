@@ -131,22 +131,28 @@ export function Register() {
   if (registered && !job) {
     return (
       <>
-        <section className="card">
-          <h2>Your company is already registered</h2>
-          <p className="lead-sm">
-            This signing key controls a payroll contract on {networkId}. Registration
-            happens once per company — registering again would deploy a second,
-            unrelated contract and split your salaries across the two.
-          </p>
+        {/* A status, not a settings card.
+        
+            This was a headed panel with two paragraphs and a copy row, sized
+            like the configuration it sat beside — which said "here is something
+            to set up" about the one thing on the page that is already finished.
+            Registration happens once and then stays true forever, so it earns a
+            line, and the caveat that matters — registering again splits your
+            salaries across two contracts — is the small print under it. */}
+        <div className="status-strip ok">
+          <span className="pill ok">✓ Company registered</span>
           <CopyRow
-            badge={registered.deployment.instance ?? "payroll"}
+            label="Payroll contract"
             value={registered.deployment.contractAddress}
           />
-          <p className="note">
-            Manage employees on the <Link to="/employer/roster">Roster page</Link>. To register a
-            different company, connect that company's signing key instead.
-          </p>
-        </section>
+        </div>
+        <p className="note status-strip-note">
+          Registration happens once per company — registering again would deploy
+          a second, unrelated contract and split your salaries across the two. To
+          register a different company, connect that company's signing key
+          instead. People are managed on{" "}
+          <Link to="/employer/employees">Employees</Link>.
+        </p>
 
         {/* The keys are not repeated here. `Keys and addresses` at the top of
             this page lists them and `Keys to receive pEUR` below explains the
@@ -211,7 +217,7 @@ export function Register() {
             <CopyRow label="Contract" value={job.result.contractAddress} />
             <p className="note">
               Only your key can set salaries on it — not ours. Go to the{" "}
-              <Link to="/employer">Overview</Link>, where it is now the only contract
+              <Link to="/employer">Payroll</Link>, where it is now the only contract
               you can see.
             </p>
           </>

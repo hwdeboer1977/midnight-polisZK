@@ -56,9 +56,10 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
   };
 
   return (
-    <section className="card">
+    <section className="card record-card">
       <h2>
-        <span className="badge">{deployment.instance ?? name}</span>
+        <span className="badge">Payroll</span>
+        <span className="tag">{deployment.instance ?? name}</span>
         {role === "platform" ? <span className="tag">you deployed this</span> : null}
       </h2>
 
@@ -87,23 +88,23 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
                   <tr key={String(period)}>
                     <td>{periodName(period)}</td>
                     <td className="num">{workers}</td>
-                    <td className="num">€{formatPeur(grossFor(period))}</td>
+                    <td className="num strong">€{formatPeur(grossFor(period))}</td>
                     <td className="num muted">
                       €{formatPeur(columnFor(state?.totalTaxFor, period))}
                     </td>
                     <td className="num muted">
                       €{formatPeur(columnFor(state?.totalSocialFor, period))}
                     </td>
-                    <td className="num">
+                    <td className="num strong">
                       €{formatPeur(columnFor(state?.totalNetFor, period))}
                     </td>
                     <td>
                       {workers > 0 && paid === workers ? (
-                        <span className="ok-line">Settled</span>
+                        <span className="pill ok">✓ Settled</span>
                       ) : funded === workers && workers > 0 ? (
-                        <span className="muted">Funded</span>
+                        <span className="pill info">Funded</span>
                       ) : (
-                        <span className="muted">Filed</span>
+                        <span className="pill neutral">Filed</span>
                       )}
                     </td>
                   </tr>
@@ -164,7 +165,7 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
   );
 }
 
-export function Payroll() {
+export function EmployerHistory() {
   const { account, networkId } = useWallet();
   const [deployments, setDeployments] = useState<Deployments>({});
 
@@ -196,7 +197,7 @@ export function Payroll() {
         One row per month filed, and the payslips for them. The private figures
         behind each row never left your machine — what is on chain is the
         aggregate and one opaque commitment per worker. To run a month, go to{" "}
-        <Link to="/employer">Overview</Link>.
+        <Link to="/employer">Payroll</Link>.
       </p>
     </section>
   );
@@ -206,10 +207,10 @@ export function Payroll() {
       <>
         {head}
         <StageGate
-          title="Setup first"
+          title="Register first"
           needs="Filing a period needs your company signing key, and you will only ever see contracts that key controls. Connect and register on Setup."
-          to="/employer/setup"
-          action="Go to Setup"
+          to="/employer/settings"
+          action="Go to Settings"
         />
       </>
     );
@@ -235,10 +236,10 @@ export function Payroll() {
       <>
         {head}
         <StageGate
-          title="Setup first"
+          title="Register first"
           needs={`This signing key does not control a payroll contract on ${networkId}. Register your organization to be assigned one.`}
-          to="/employer/setup"
-          action="Go to Setup"
+          to="/employer/settings"
+          action="Go to Settings"
         />
         {error ? <p className="status error">{error}</p> : null}
       </>

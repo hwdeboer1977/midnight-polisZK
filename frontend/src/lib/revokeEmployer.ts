@@ -21,7 +21,8 @@ import { connectContract, type ProvingMode } from "./submitPayroll";
  * `provingMode` defaults to `local` to match every other caller, but this is the
  * one circuit where `wallet` costs nothing: it takes no arguments and reads no
  * witness, so there is no private input for the wallet to see. The caller
- * decides; `EmployerRevoke` defaults it to `wallet` and explains why there.
+ * decides; `EmployerTable`'s revoke action defaults it to `wallet` and explains
+ * why there.
  */
 export async function revokeEmployer(options: {
   api: ConnectedAPI;

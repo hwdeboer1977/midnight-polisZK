@@ -298,7 +298,9 @@ export function ClaimKey({
   // should stop being the loudest thing the moment it is not.
   if (known && !identity && !reopened) {
     return (
-      <section className="callout claim-key-done">
+      // Compact: a confirmation, not a panel. What matters here is one
+      // line and one hash.
+      <section className="callout claim-key-done compact-ok">
         {/* The employer case has to be handled here too, not only before a key
             exists. A wallet that has already created one falls straight through
             to this panel — which is how it came to tell an employer to send

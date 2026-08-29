@@ -111,14 +111,6 @@ export function PayslipRecovery({
 
   const body = (
     <>
-      {bare ? null : (
-        <p className="note" style={{ marginTop: 0 }}>
-          Rebuilt from the openings your filing sealed on chain — no transaction,
-          and nothing here disturbs a period that has already been paid. Use this
-          rather than re-filing a month: re-filing replaces its commitments and
-          marks every employee unpaid.
-        </p>
-      )}
 
       <div className="actions" style={{ alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <select
@@ -164,11 +156,29 @@ export function PayslipRecovery({
         </button>
       </div>
 
+      {/* The instruction, and then the reason it is slow — which is a fact
+          about PBKDF2 rather than about payslips, so it folds away. Explaining
+          the derivation on every render is the page talking about itself. */}
       <p className="note">
         {inherited
-          ? "Rebuilt from the sealed openings on chain, using the passphrase this session already has. Deriving the key from it is deliberately slow, so this takes a moment."
-          : "The one you filed that month with. Deriving the key from it is deliberately slow, so this takes a moment."}
+          ? "Rebuilt from the sealed openings on chain, using the passphrase this session already has."
+          : "The one you filed that month with."}
       </p>
+      <details className="details">
+        <summary>Why this takes a moment</summary>
+        <p className="note">
+          The key is derived from the passphrase deliberately slowly, so a
+          guessed passphrase costs the guesser the same wait it costs you. The
+          openings are sealed under that key and nothing else can open them —
+          which is also why a forgotten passphrase cannot be reset.
+        </p>
+        <p className="note">
+          Rebuilt from the openings your filing sealed on chain — no
+          transaction, and nothing here disturbs a period that has already been
+          paid. Use this rather than re-filing a month: re-filing replaces its
+          commitments and marks every employee unpaid.
+        </p>
+      </details>
 
       {error ? <p className="status error">{error}</p> : null}
 
@@ -197,8 +207,17 @@ export function PayslipRecovery({
   return bare ? (
     body
   ) : (
-    <section className="card">
-      <h2>Payslips</h2>
+    <section className="card payslip-card">
+      {/* A pill, matching the payroll record's badge above it. The two are
+          different functional areas — a record and a tool — and plain grey
+          uppercase beside a purple badge read as a heading that had lost its
+          styling rather than as a deliberate second kind of thing. */}
+      <h2>
+        <span className="badge neutral">Payslips</span>
+      </h2>
+      <p className="note" style={{ marginTop: 0 }}>
+        Retrieve payslips for a filed period.
+      </p>
       {body}
     </section>
   );

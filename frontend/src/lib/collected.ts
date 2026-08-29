@@ -91,6 +91,16 @@ export function recordRoster(
   write(store);
 }
 
+/**
+ * Records a hash against one employee, keeping whatever else is known of them.
+ *
+ * ⚠️ This used to REPLACE the entry, which quietly discarded the `fullName`
+ * that `recordRoster` had put there. Two things read that name — the employee
+ * picker on the termination form and `namesBySlot`, which is the only way a
+ * page rebuilt from chain can show a person instead of a slot number — so
+ * collecting a hash made its owner anonymous, and only for the employees
+ * furthest along in the process.
+ */
 export function recordClaimKeyHash(
   contractAddress: string,
   coinPublicKey: string,
@@ -100,6 +110,7 @@ export function recordClaimKeyHash(
   const key = contractAddress.toLowerCase();
   const forContract = store[key] ?? {};
   forContract[coinPublicKey] = {
+    ...forContract[coinPublicKey],
     coinPublicKey,
     claimKeyHash,
     at: new Date().toISOString(),

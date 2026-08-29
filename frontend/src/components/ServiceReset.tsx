@@ -76,13 +76,12 @@ export function ServiceReset() {
     }
   }
 
+  // No card of its own any more. It lives inside the operator page's Testing
+  // tools disclosure, which supplies the frame and the warning that this is not
+  // part of normal operation — a card inside a disclosure inside a band drew
+  // three boxes around one button.
   return (
-    <section className="card">
-      <h2>Reset this service</h2>
-      <p className="lead-sm">
-        Forgets every contract this service has deployed and every employer key
-        that has signed up. For testing.
-      </p>
+    <div className="reset-block">
 
       {done ? (
         <p className="ok-line">
@@ -118,7 +117,7 @@ export function ServiceReset() {
             />
             <button
               type="button"
-              className="primary"
+              className="danger"
               disabled={busy}
               onClick={() => void reset()}
             >
@@ -135,12 +134,16 @@ export function ServiceReset() {
           </div>
         </>
       ) : (
-        <button type="button" className="ghost" onClick={() => setConfirming(true)}>
-          Reset the service
+        <button
+          type="button"
+          className="ghost danger-text"
+          onClick={() => setConfirming(true)}
+        >
+          Reset local operator state
         </button>
       )}
 
       {error ? <p className="status error">{error}</p> : null}
-    </section>
+    </div>
   );
 }

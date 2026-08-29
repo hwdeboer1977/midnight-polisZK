@@ -236,7 +236,10 @@ export function ClaimForm() {
   }
 
   return (
-    <section className="card">
+    // The primary action once eligibility is settled, so it takes the tint the
+    // rest of the app reserves for a workflow. It was white, level with the
+    // explanatory cards around it.
+    <section className="card claim-workflow">
       <h2>Make a claim</h2>
       {/* "None is uploaded anywhere" was unconditional and is not, once the
           proof can be delegated to the wallet. The claim about the CHAIN is

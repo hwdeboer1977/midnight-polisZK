@@ -2,10 +2,10 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-route
 import { Landing } from "./pages/Landing";
 import { Public } from "./pages/Public";
 import { Operator } from "./pages/Operator";
-import { EmployerOverview } from "./pages/EmployerOverview";
-import { EmployerRoster } from "./pages/EmployerRoster";
-import { EmployerSetup } from "./pages/EmployerSetup";
-import { Payroll } from "./pages/Payroll";
+import { EmployerPayroll } from "./pages/EmployerPayroll";
+import { EmployerEmployees } from "./pages/EmployerEmployees";
+import { EmployerSettings } from "./pages/EmployerSettings";
+import { EmployerHistory } from "./pages/EmployerHistory";
 import { Employee } from "./pages/Employee";
 import { EmployeeBenefit } from "./pages/EmployeeBenefit";
 import { useEmployerStage } from "./lib/useEmployerStage";
@@ -118,13 +118,29 @@ const EMPLOYEE_TABS = [
 ];
 
 /**
- * The employer lifecycle, in order: see where you are, connect and register,
- * add the people, pay them.
+ * The four questions an employer has, one per tab.
  *
- * Each stage names its prerequisite. A new employer clicking straight to
- * Payroll used to land on another wallet-connect screen, which made four tabs
- * feel like four separate tools rather than one workflow; a locked tab says
- * what is missing instead.
+ *   Payroll   — what do I need to do this month?
+ *   Employees — who works here?
+ *   History   — what happened in previous months?
+ *   Settings  — how is my company configured?
+ *
+ * This was `Overview / Setup / Roster / History`, which named the pages after
+ * their implementation rather than their use. Two of those were actively
+ * misleading. **Overview** was not an overview — it is where the month is
+ * actually run, and calling the workspace a summary sent an employer looking
+ * elsewhere for the work. **Setup** stops being setup the moment onboarding is
+ * done; the page itself had already noticed, and re-titled its own heading
+ * "Reference", which is a page arguing with its own tab. A permanent tab named
+ * after a finished task makes a working product feel perpetually half-built.
+ *
+ * `Roster` → `Employees` for a plainer reason: it is what employers call them.
+ *
+ * The prerequisite locks stay. Each stage names what is missing rather than
+ * failing silently — a new employer clicking straight to History used to land
+ * on another wallet-connect screen, which made four tabs feel like four
+ * separate tools rather than one workflow. Settings is never locked: it is
+ * where an employer goes to fix the thing the lock is complaining about.
  */
 const EMPLOYER_TABS: {
   to: string;
@@ -133,24 +149,20 @@ const EMPLOYER_TABS: {
   needs?: "contract" | "employees";
   blocked?: string;
 }[] = [
-  { to: "/employer", label: "Overview", end: true },
-  { to: "/employer/setup", label: "Setup" },
+  { to: "/employer", label: "Payroll", end: true },
   {
-    to: "/employer/roster",
-    label: "Roster",
+    to: "/employer/employees",
+    label: "Employees",
     needs: "contract",
     blocked: "Register and get your payroll contract first",
   },
   {
-    // "History", not "Payroll": running one moved to Overview, where it sits in
-    // the month it belongs to. This page is the record — every period filed,
-    // and the payslips for them — and two tabs that both looked like the place
-    // to file was the confusion worth removing.
-    to: "/employer/payroll",
+    to: "/employer/history",
     label: "History",
     needs: "contract",
     blocked: "Register and get your payroll contract first",
   },
+  { to: "/employer/settings", label: "Settings" },
 ];
 
 function Nav() {
@@ -243,19 +255,26 @@ export function App() {
         <Route path="/app" element={<Public />} />
         <Route path="/operator" element={<Operator />} />
 
-        <Route path="/employer" element={<EmployerOverview />} />
-        <Route path="/employer/payroll" element={<Payroll />} />
-        <Route path="/employer/roster" element={<EmployerRoster />} />
-        <Route path="/employer/setup" element={<EmployerSetup />} />
+        <Route path="/employer" element={<EmployerPayroll />} />
+        <Route path="/employer/history" element={<EmployerHistory />} />
+        <Route path="/employer/employees" element={<EmployerEmployees />} />
+        <Route path="/employer/settings" element={<EmployerSettings />} />
 
         <Route path="/employee" element={<Employee />} />
         <Route path="/employee/benefit" element={<EmployeeBenefit />} />
 
         {/* The old flat routes, kept so a bookmark or a pasted link still lands
             somewhere sensible rather than on "page not found". */}
-        <Route path="/payroll" element={<Navigate to="/employer/payroll" replace />} />
-        <Route path="/register" element={<Navigate to="/employer/setup" replace />} />
-        <Route path="/peur" element={<Navigate to="/employer/setup" replace />} />
+        <Route path="/payroll" element={<Navigate to="/employer/history" replace />} />
+        {/* The previous employer IA. Every link written or bookmarked under
+            Overview / Setup / Roster still lands on the page that took its
+            job. */}
+        <Route path="/employer/overview" element={<Navigate to="/employer" replace />} />
+        <Route path="/employer/roster" element={<Navigate to="/employer/employees" replace />} />
+        <Route path="/employer/setup" element={<Navigate to="/employer/settings" replace />} />
+        <Route path="/employer/payroll" element={<Navigate to="/employer/history" replace />} />
+        <Route path="/register" element={<Navigate to="/employer/settings" replace />} />
+        <Route path="/peur" element={<Navigate to="/employer/settings" replace />} />
         {/* Claim was a top-level area until it became Employee → Unemployment
             benefit. Every link written while it was one still lands. */}
         <Route path="/claim" element={<Navigate to="/employee/benefit" replace />} />

@@ -6,7 +6,8 @@ import type { PayrollInstance } from "../lib/usePayrollInstances";
 /**
  * Filling a vacant employer seat, from the operator's side.
  *
- * The mirror of `EmployerRevoke`, and the reason the two sit together: revoking
+ * The mirror of the revoke action in `EmployerTable`, and the reason the two sit
+ * together: revoking
  * empties a seat and nothing in this app could fill it again. `/api/onboard` was
  * reachable only from the employer's own registration page, which asks the
  * person at the keyboard for their key — so an operator revoking a company had
@@ -45,7 +46,7 @@ export function EmployerAssign({
   const busy = submitting || job?.status === "running";
 
   // Seats this wallet deployed and nobody holds. An occupied one is
-  // `EmployerRevoke`'s business — `assignEmployer` asserts `!employerAssigned`
+  // the revoke action's business — `assignEmployer` asserts `!employerAssigned`
   // and would refuse after proving, which costs minutes to learn.
   const vacant = instances.filter(
     (instance) => instance.isPlatform && instance.state && !instance.state.employerAssigned

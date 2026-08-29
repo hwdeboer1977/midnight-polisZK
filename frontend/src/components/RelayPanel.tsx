@@ -28,7 +28,7 @@ import { useServiceJob } from "../lib/useServiceJob";
  * token.
  */
 
-interface RelayBundle {
+export interface RelayBundle {
   period: number;
   instance: string;
   slot: number;
@@ -36,7 +36,7 @@ interface RelayBundle {
   poolCoin: { value: string } | null;
 }
 
-interface RelayResult {
+export interface RelayResult {
   period: number;
   root: string | null;
   bundles: RelayBundle[];

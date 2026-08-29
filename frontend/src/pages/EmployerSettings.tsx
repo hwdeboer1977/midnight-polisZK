@@ -18,7 +18,7 @@ import { Register } from "./Register";
  * they are inspecting the architecture, and a nav item named after a
  * smart-contract module describes the codebase instead of the system.
  */
-export function EmployerSetup() {
+export function EmployerSettings() {
   // Only to decide whether the sections BELOW registration have anything to
   // show. `Register` asks for the signing key; until that is answered, funding
   // and balances have nothing to say, and a heading over an empty space reads
@@ -28,17 +28,31 @@ export function EmployerSetup() {
   return (
     <>
       <section className="area-head">
-        <h1>Reference</h1>
-        {/* Reference, not a checklist. Whether an organization is registered was
-            stated here, on Overview, and again inside Register — three places
-            answering one question, which is two too many. Overview owns "what do
-            I have to do"; this page owns "what are my keys and addresses". */}
+        <h1>Settings</h1>
+        {/* The page and its tab finally agree. This was the "Setup" tab whose
+            own heading read "Reference" — a page arguing with its label,
+            because setup stops being setup the moment onboarding is done and
+            the content had already become configuration. Settings is what it
+            is: how this company and its payroll infrastructure are wired.
+            
+            Not a checklist either. Whether an organization is registered was
+            stated here, on the payroll page, and again inside Register — three
+            places answering one question. Payroll owns "what do I have to do";
+            this page owns "how is it configured". */}
         <p className="lede">
-          Your keys, your contracts and your balances. What you have to{" "}
-          <em>do</em> is on <Link to="/employer">Overview</Link>.
+          How your company, wallet and payroll contract are configured. What you
+          have to <em>do</em> is on <Link to="/employer">Payroll</Link>.
         </p>
       </section>
 
+      {/* ── Company & contract ─────────────────────────────────────────
+          Configuration and reference: what this organization IS, on chain. The
+          two below it are what it HOLDS and how to top it up, which is an
+          operational question wearing the same clothes until the page says
+          otherwise. */}
+      <section className="area-sub">
+        <h2>Company &amp; contract</h2>
+      </section>
       <SetupStatus />
       <Register />
 
@@ -142,7 +156,10 @@ function SetupStatus() {
     ) : null;
 
   return (
-    <section className="card">
+    // Tinted, but only just. This is reference rather than action — the lightest
+    // signal that it is configuration, well below the lavender the pEUR key
+    // panel wears, because that one is a thing you hand to somebody.
+    <section className="card config-card">
       <h2>Keys and addresses</h2>
 
       <div className="row">

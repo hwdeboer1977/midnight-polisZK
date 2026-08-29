@@ -1,152 +1,153 @@
-import { useEffect, useState } from "react";
 import { CopyRow } from "./CopyRow";
-import { formatPeur } from "../lib/format";
-import { readNationalTotals, type NationalTotals } from "../lib/nationalDeposits";
+import { formatPeur, formatPeurTile } from "../lib/format";
+import type { NationalTotals as Totals } from "../lib/nationalDeposits";
 
 /**
- * What the two receiving contracts hold, across every period.
+ * What the two receiving contracts hold, side by side.
  *
- * Read on mount and without a button, unlike the treasury wallets above it —
- * and the asymmetry is the whole privacy story in one panel. These figures are
- * ledger fields anyone can query from the indexer, so asking costs a read. A
- * treasury's balance is a shielded coin, so nobody but the holder of its
- * spending key can decrypt it at all, and answering means building and syncing
- * a wallet.
+ * State first, plumbing second. This was a list of labelled lines with the
+ * shielded-balance argument, the withdrawal authority and two contract
+ * addresses interleaved — everything true, and reading like a log rather than a
+ * position. An operator opens this to answer "did the money arrive"; the
+ * cryptography is why the answer takes the shape it does, not the answer.
  *
- * ⚠️ One of these four boxes is deliberately not a balance. The tax vault's
- * `heldTotal` is one: everything it received less everything withdrawn, and it
- * pays out only to one frozen authority, in public. The benefit fund's is not
- * published in any form — what it holds is a shielded coin, benefits leave
- * against it privately, and successive balances would give away what each
- * claimant received. `contributedTotal` is money IN, and showing it under a
- * heading like "held" would be a solvency claim the contract does not make.
+ * The two carry different accents on purpose — indigo for the fund, slate for
+ * the vault. They were visually identical, which invited reading them as two
+ * columns of one table; they are two institutions with opposite disclosure
+ * properties, and the accent is the cheapest way to stop the eye treating them
+ * as interchangeable.
+ *
+ * ⚠️ One of these two is not a balance and says so. The tax vault's `heldTotal`
+ * is one: everything received less everything withdrawn, and it pays out only
+ * to one frozen authority, in public. The benefit fund's is not published in
+ * any form — it holds a shielded coin, benefits leave against it privately, and
+ * successive balances would give away what each claimant received.
+ * `contributedTotal` is money IN, and a heading like "held" over it would be a
+ * solvency claim the contract does not make.
  */
-export function NationalTotals({ networkId }: { networkId: string }) {
-  const [totals, setTotals] = useState<NationalTotals | null>(null);
-  const [nonce, setNonce] = useState(0);
-  const [reading, setReading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setReading(true);
-    void readNationalTotals(networkId)
-      .then((result) => {
-        if (!cancelled) setTotals(result);
-      })
-      .finally(() => {
-        if (!cancelled) setReading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [networkId, nonce]);
-
-  if (!totals) {
-    return <p className="note">Reading the national contracts…</p>;
-  }
+export function NationalTotals({
+  totals,
+  networkId,
+  reading,
+  onReRead,
+}: {
+  totals: Totals | null;
+  networkId: string;
+  reading: boolean;
+  onReRead: () => void;
+}) {
+  if (!totals) return <p className="note">Reading the national contracts…</p>;
 
   const { fund, taxvault } = totals;
+  const money = (value: bigint) => `€${formatPeurTile(value)}`;
+  const exact = (value: bigint) => `Exactly €${formatPeur(value)}`;
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
   return (
-    <div className="national-totals">
-      <div className="contract-balance">
-        <h3>Benefit fund</h3>
-        {fund === null ? (
-          <p className="muted">
-            {totals.unreadable.includes("benefit fund")
-              ? "Deployed, but its ledger does not match this build — an earlier contract shape."
-              : `No fund deployed on ${networkId}.`}
-          </p>
-        ) : (
-          <>
-            <ul className="plain">
-              <li>
-                Contributions received: <strong>€{formatPeur(fund.contributedMinor)}</strong>
-                <span className="faint">
-                  {" "}
-                  over {fund.contributionCount}{" "}
-                  {fund.contributionCount === 1 ? "deposit" : "deposits"}
-                </span>
-              </li>
-              <li>
-                Benefits paid: <strong>{fund.claimsPaid}</strong>
-                <span className="faint">
-                  {" "}
-                  {fund.claimsPaid === 1 ? "claim" : "claims"} — the count is public, the
-                  amounts are not
-                </span>
-              </li>
-              <li>
-                Withheld from those benefits: €
-                {formatPeur(fund.taxHeldMinor + fund.socialHeldMinor)} held, €
-                {formatPeur(fund.taxRemittedMinor + fund.socialRemittedMinor)} sent on
-              </li>
-            </ul>
-            {/* Stated rather than left as a gap. A panel headed "balances" that
-                simply omits one is read as a figure that failed to load. */}
-            <p className="note">
-              <strong>Balance: not published.</strong> The fund holds a shielded
-              coin, so nothing on chain says what is left — and it cannot,
-              without also revealing what each claimant received. The first line
-              is money in, not money here: benefits have left against it.
+    <>
+      <div className="contract-pair">
+        <div className="contract-card fund">
+          <h3>Social protection fund</h3>
+          {fund === null ? (
+            <p className="muted">
+              {totals.unreadable.includes("benefit fund")
+                ? "Deployed, but its ledger does not match this build."
+                : `Not deployed on ${networkId}.`}
             </p>
-            <CopyRow label="Contract" value={fund.address} />
-          </>
-        )}
+          ) : (
+            <>
+              <div className="contract-value" title={exact(fund.contributedMinor)}>
+                {money(fund.contributedMinor)}
+              </div>
+              <div className="contract-value-label">received</div>
+              <ul className="contract-lines">
+                <li>{plural(fund.contributionCount, "deposit")}</li>
+                <li>{plural(fund.claimsPaid, "claim")} settled</li>
+                <li
+                  title={exact(
+                    fund.taxHeldMinor +
+                      fund.taxRemittedMinor +
+                      fund.socialHeldMinor +
+                      fund.socialRemittedMinor
+                  )}
+                >
+                  {money(
+                    fund.taxHeldMinor +
+                      fund.taxRemittedMinor +
+                      fund.socialHeldMinor +
+                      fund.socialRemittedMinor
+                  )}{" "}
+                  withheld from benefits
+                </li>
+              </ul>
+              {/* Not a footnote. A card headed with a figure and no balance line
+                  is read as a balance that failed to load. */}
+              <p className="contract-caveat">Balance not published</p>
+            </>
+          )}
+        </div>
+
+        <div className="contract-card vault">
+          <h3>Tax vault</h3>
+          {taxvault === null ? (
+            <p className="muted">
+              {totals.unreadable.includes("tax vault")
+                ? "Deployed, but its ledger does not match this build."
+                : `Not deployed on ${networkId}.`}
+            </p>
+          ) : (
+            <>
+              <div className="contract-value" title={exact(taxvault.receivedMinor)}>
+                {money(taxvault.receivedMinor)}
+              </div>
+              <div className="contract-value-label">received</div>
+              <ul className="contract-lines">
+                <li>{plural(taxvault.depositCount, "deposit")}</li>
+                <li title={exact(taxvault.withdrawnMinor)}>
+                  {money(taxvault.withdrawnMinor)} withdrawn over{" "}
+                  {plural(taxvault.withdrawalCount, "withdrawal")}
+                </li>
+                <li title={exact(taxvault.heldMinor)}>
+                  <strong>{money(taxvault.heldMinor)} held now</strong>
+                </li>
+              </ul>
+              <p className="contract-caveat">A real balance</p>
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="contract-balance">
-        <h3>Tax vault</h3>
-        {taxvault === null ? (
-          <p className="muted">
-            {totals.unreadable.includes("tax vault")
-              ? "Deployed, but its ledger does not match this build — an earlier contract shape."
-              : `No tax vault deployed on ${networkId}.`}
-          </p>
-        ) : (
+      <details className="details">
+        <summary>Contract details</summary>
+        {fund ? <CopyRow label="Benefit fund" value={fund.address} /> : null}
+        {taxvault ? (
           <>
-            <ul className="plain">
-              <li>
-                Held now: <strong>€{formatPeur(taxvault.heldMinor)}</strong>
-              </li>
-              <li>
-                Received: €{formatPeur(taxvault.receivedMinor)}
-                <span className="faint">
-                  {" "}
-                  over {taxvault.depositCount}{" "}
-                  {taxvault.depositCount === 1 ? "deposit" : "deposits"}
-                </span>
-              </li>
-              <li>
-                Withdrawn: €{formatPeur(taxvault.withdrawnMinor)}
-                <span className="faint">
-                  {" "}
-                  over {taxvault.withdrawalCount}{" "}
-                  {taxvault.withdrawalCount === 1 ? "withdrawal" : "withdrawals"}
-                </span>
-              </li>
-            </ul>
-            {/* A real balance, and worth saying why this one can be shown when
-                the fund's cannot: the vault pays out in public, to one key. */}
-            <p className="note">
-              A genuine balance — the vault only ever pays out to the authority
-              frozen at its deploy, in public, so received less withdrawn is what
-              is there.
-            </p>
-            <CopyRow label="Contract" value={taxvault.address} />
+            <CopyRow label="Tax vault" value={taxvault.address} />
             <CopyRow label="Withdrawal authority" value={taxvault.authority} />
           </>
-        )}
-      </div>
-
-      <button
-        type="button"
-        className="ghost"
-        disabled={reading}
-        onClick={() => setNonce((n) => n + 1)}
-      >
-        {reading ? "Reading…" : "Re-read the contracts"}
-      </button>
-    </div>
+        ) : null}
+        <p className="note">
+          <strong>The fund's balance is not published at all.</strong> It holds
+          a shielded coin, so nothing on chain says what is left — and it cannot,
+          without also revealing what each claimant received, since successive
+          balances give away the differences between them. The figure above is
+          money in: benefits have left against it.
+        </p>
+        <p className="note">
+          The tax vault is the opposite case. It never pays out privately — only
+          to the authority frozen at its deploy, in public — so received less
+          withdrawn is genuinely what is there.
+        </p>
+        <p className="note">
+          The fund's own withholding runs the other way from everything else on
+          this page: it is tax and contributions taken <em>from benefits paid
+          out</em>, not contributions arriving. Public by necessity — a contract
+          that owes tax has to know how much.
+        </p>
+        <button type="button" className="ghost" disabled={reading} onClick={onReRead}>
+          {reading ? "Reading…" : "Re-read the contracts"}
+        </button>
+      </details>
+    </>
   );
 }

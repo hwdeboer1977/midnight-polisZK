@@ -598,7 +598,7 @@ export function RosterUpload({
         <summary>What goes in the workbook</summary>
         <p className="note">
           A payroll period is one month's figures for the people already on your{" "}
-          <Link to="/employer/roster">roster</Link>. Year and Month above the table,
+          <Link to="/employer/employees">roster</Link>. Year and Month above the table,
           then columns: {ROSTER_COLUMNS.join(" · ")}. The period it is for is read
           from the sheet. Parsed in your browser — the file is never uploaded
           anywhere.

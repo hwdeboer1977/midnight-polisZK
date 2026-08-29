@@ -76,7 +76,11 @@ export function ClaimStatus({
        answers it: collapsed, it is indistinguishable from the apology it
        replaced. "How many months do I have left" is a first-order question for
        someone who has just lost their job, so it renders open. */
-    <section className="callout">
+    // A utility, not a result. It wore the same lavender as the eligibility
+    // outcome above it, which gave "have you already claimed?" the same weight
+    // as "you are eligible" — one is the answer someone came for, the other is
+    // a lookup they may never need.
+    <section className="card utility">
       <h2>Have you already claimed?</h2>
 
       <p className="note" style={{ marginTop: 0 }}>

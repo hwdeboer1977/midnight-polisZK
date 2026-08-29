@@ -3,10 +3,10 @@ import { Link } from "react-router-dom";
 /**
  * Setup as a status readout, not a set of instructions.
  *
- * This lives on Overview, which is a dashboard permanently — before setup is
+ * This lives on Payroll, which is a workspace permanently — before setup is
  * finished it reports how far along you are, and afterwards it reports payroll.
  * The full instructions live on Setup, which is the navigation item for them;
- * three large explanatory cards on Overview duplicated that tab and made the
+ * three large explanatory cards on Payroll duplicated that tab and made the
  * page look like a wizard it is not.
  *
  * Note what the third step is and is not. Adding employees is an ongoing
@@ -27,7 +27,7 @@ export interface SetupState {
 }
 
 /**
- * Four steps, mapping one-to-one onto the tabs: Setup, Setup, Roster, Payroll.
+ * Four steps, mapping onto the tabs: Settings, Settings, Payroll, Payroll.
  * Step three used to say "import your roster and file a period for it", which
  * described two stages in one line and undid the separation the pages exist to
  * draw. Adding a person and paying them are different acts.
@@ -40,26 +40,29 @@ const STEPS: { title: string; blurb: string; to: string }[] = [
     // that and registration moved to step two, where the on-chain evidence is.
     title: "Connect a wallet",
     blurb: "Any Midnight wallet. This key becomes your organization's signing key.",
-    to: "/employer/setup",
+    to: "/employer/settings",
   },
   {
     title: "Register and receive a payroll contract",
     blurb: "The platform deploys one and assigns your key as its employer.",
-    to: "/employer/setup",
+    to: "/employer/settings",
   },
   {
     title: "Add first employee",
     blurb: "Create or import your private employee roster.",
-    // Overview, where RosterUpload is. Roster shows who is ON the payroll,
+    // Payroll, where RosterUpload is. Employees shows who is ON the payroll,
     // which is assembled from a filed period — so sending someone there to add
     // their first employee pointed at a page that could only ever say "none
     // yet", and whose own button pointed back here.
     to: "/employer",
   },
   {
+    // Payroll, not History. This pointed at the read-only record of past
+    // periods — a page whose only message to a new employer is "no periods
+    // filed yet", with nothing to press. Running one happens on Payroll.
     title: "Run first payroll",
     blurb: "File and settle your first private payroll period.",
-    to: "/employer/payroll",
+    to: "/employer",
   },
 ];
 

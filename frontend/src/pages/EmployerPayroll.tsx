@@ -1,19 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
-import { ClaimKeyCollection } from "../components/ClaimKeyCollection";
-import { EndEmployment } from "../components/EndEmployment";
+import { DashHero, type DashMetric } from "../components/DashHero";
 import { Prereqs } from "../components/MonthSteps";
 import { RosterUpload } from "../components/RosterUpload";
 import { SetupChecklist } from "../components/SetupChecklist";
 import { WalletPicker } from "../components/WalletPicker";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { periodName, type ParsedRoster } from "../generated/roster";
+import { collectionStatus } from "../lib/collected";
 import { bytesToHex as hex } from "../lib/keys";
 import { formatPeur, formatPeurTile, group } from "../lib/format";
 import { DUTCH_V1, computeLine } from "../generated/tax-params";
+import { useRegistrations } from "../lib/useRegistrations";
 import { usePayrollInstances } from "../lib/usePayrollInstances";
-import { RelayPanel } from "../components/RelayPanel";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
@@ -24,7 +24,7 @@ import { useWallet } from "../wallet/WalletContext";
  * question in both states — what is happening? — and before setup is complete
  * the answer is simply how far along you are.
  */
-export function EmployerOverview() {
+export function EmployerPayroll() {
   const { account, networkId } = useWallet();
   const [deployments, setDeployments] = useState<Deployments>({});
   const [read, setRead] = useState(false);
@@ -212,35 +212,117 @@ export function EmployerOverview() {
   // before that there is nothing for it to report but zeroes.
   const ready = setup.registered && setup.contract && setup.employees;
 
+  /**
+   * Who is on the payroll and what it costs, for the month on screen.
+   *
+   * Read from the chain once the period is filed and from the workbook before
+   * that. Both are the same figures — the circuit recomputes the second into the
+   * first — so the header does not change meaning when the month is filed, it
+   * only stops depending on a file being open.
+   */
+  const headcount =
+    loadedKey !== null && countFor(loadedKey) > 0
+      ? countFor(loadedKey)
+      : (roster?.rows.length ?? 0);
+  const monthGross =
+    loadedKey !== null && filedLoaded
+      ? grossFor(loadedKey)
+      : (roster?.totalMinor ?? null);
+
+  /**
+   * How many people still owe a claim-key hash.
+   *
+   * Can only UNDERCOUNT — a workbook loaded on another machine is not in this
+   * browser's record — which is the right direction for a reminder to be wrong
+   * in. `null` from `collectionStatus` means no workbook is open, and that is
+   * reported as nothing outstanding rather than as everyone outstanding: a
+   * page with no roster loaded knows nothing, and guessing would put a warning
+   * in front of an employer who has done everything.
+   */
+  const claimStatus = (() => {
+    if (!instance) return { missing: 0 };
+    const status = collectionStatus(
+      instance.deployment.contractAddress,
+      roster?.rows ?? null
+    );
+    return { missing: status.total === null ? 0 : status.missing.length };
+  })();
+
+  /**
+   * What to call this employer, if anything.
+   *
+   * The registry knows the company name and the chain does not — it records a
+   * key, never a company — so this is the platform's label rather than a fact
+   * the contract carries. Absent on a contract assigned outside the signup
+   * flow, and absent is fine: the header simply drops the dash.
+   */
+  const { registrations } = useRegistrations(networkId);
+  const companyName = instance
+    ? (registrations ?? []).find(
+        (row) =>
+          row.contractAddress.toLowerCase() ===
+          instance.deployment.contractAddress.toLowerCase()
+      )?.companyName ??
+      instance.deployment.instance ??
+      null
+    : null;
+
+  /** The hero's four figures: who, how much, which month, and is it done. */
+  const monthMetrics = (): DashMetric[] => {
+    const settled = filedLoaded && paidLoaded && withheldLoaded;
+    return [
+      {
+        value: headcount > 0 ? group(BigInt(headcount)) : "—",
+        label: headcount === 1 ? "Employee" : "Employees",
+        note: loadedKey !== null && countFor(loadedKey) > 0 ? "on this period" : "in the workbook",
+      },
+      {
+        value: monthGross === null ? "—" : `€${formatPeurTile(monthGross)}`,
+        exact: monthGross === null ? undefined : `Exactly €${formatPeur(monthGross)}`,
+        label: "Gross payroll",
+        note: filedLoaded ? "filed on chain" : "from the workbook, not yet filed",
+      },
+      {
+        value: loadedPeriod ? periodName(loadedPeriod) : "—",
+        label: "Current period",
+        note: latestDone && !roster ? "next month — the last one is done" : "the month in progress",
+      },
+      {
+        value: settled ? "✓ Settled" : filedLoaded ? (paidLoaded ? "Withholding" : "Unpaid") : "Not filed",
+        label: "Payroll status",
+        note: settled
+          ? "filed, paid and withheld"
+          : !loadedPeriod
+            ? "load a workbook to begin"
+            : filedLoaded
+              ? paidLoaded
+                ? "withholding still to send"
+                : "filed, not yet paid"
+              : "nothing filed for this month",
+        attention: Boolean(loadedPeriod) && !settled,
+      },
+    ];
+  };
+
   return (
     <>
-      <section className="area-head">
-        <h1>
-          {ready && instance
-            ? instance.deployment.instance ?? instance.name.replace(/^.*payroll:?/, "")
-            : "Employer"}
-        </h1>
-        {ready && instance ? (
-          <p className="sub">
-            Payroll contract{" "}
-            <code title={instance.deployment.contractAddress}>
-              {instance.deployment.contractAddress.slice(0, 4)}…
-              {instance.deployment.contractAddress.slice(-4)}
-            </code>
-            {latest ? (
-              <>
-                {" · "}
-                {group(BigInt(countFor(latest)))}{" "}
-                {countFor(latest) === 1 ? "employee" : "employees"}
-                {" · last filed "}
-                {periodName(Number(latest))}
-              </>
-            ) : null}
-          </p>
-        ) : (
-          <p className="lede">Complete your setup to run your first private payroll.</p>
-        )}
-      </section>
+      <DashHero
+        // The company, when there is a name for one. `deployment.instance` is
+        // undefined on the base `payroll` deployment — onboarding stopped
+        // deploying per company — and stripping "payroll" off the name then
+        // leaves an empty string, so the header rendered "EMPLOYER —" with
+        // nothing after the dash. A missing name is now no dash rather than a
+        // dangling one.
+        eyebrow={`Employer${companyName ? ` — ${companyName.toUpperCase()}` : ""}`}
+        title={
+          ready && instance
+            ? "Run private payroll and manage employee records."
+            : "Complete your setup to run your first private payroll."
+        }
+        // Only once there is a contract to report on. Four dashes above a setup
+        // checklist is a dashboard for a system that does not exist yet.
+        metrics={instance ? monthMetrics() : undefined}
+      />
 
       {checking && account ? <p className="muted">Reading your contract…</p> : null}
 
@@ -264,94 +346,57 @@ export function EmployerOverview() {
           already behind `latestDone`, which is false when there is none. */}
       {instance ? (
         <>
-          {/* ── Set up once ────────────────────────────────────────────────
-              Only what the chain can actually answer. Collecting employee keys
-              and claim-key hashes belongs here too and is not tracked yet —
-              adding rows that always read "unknown" would be worse than the
-              two honest ones. */}
-          <p className="when-label">Set up once</p>
-          <section className="card">
-            <div className="row">
-              <div className="k">Company registered</div>
-              <div className="v">
-                <span className="ok-line">Done</span>
-                <span className="muted"> — your wallet controls this contract</span>
-              </div>
-            </div>
-            <div className="row">
-              <div className="k">Payroll passphrase</div>
-              <div className="v">
-                <span className="ok-line">Chosen</span>
-                <span className="muted">
-                  {" "}
-                  — a filed period proves one exists; it cannot be reset
-                </span>
-              </div>
-            </div>
-            <div className="row">
-              <div className="k">Employee keys</div>
-              <div className="v">
-                {roster ? (
-                  <span className="ok-line">
-                    {roster.rows.filter((r) => r.coinPublicKey && r.encryptionPublicKey).length} of{" "}
-                    {roster.rows.length} in the workbook
-                  </span>
-                ) : (
-                  <span className="muted">Load a workbook to check</span>
-                )}
-              </div>
-            </div>
-
-            {/* The one outstanding task an employer cannot discover on their
-                own: nothing on chain says whether a claim-key hash has been
-                collected, and by the time a termination records one it is too
-                late to ask for it. */}
-            <ClaimKeyCollection
-              contractAddress={instance.deployment.contractAddress}
-              rows={roster?.rows ?? null}
-            />
-
-            <p className="note">
-              <Link to="/employer/setup">Keys, addresses and balances</Link> ·{" "}
-              <Link to="/employer/roster">who is on the payroll</Link>
+          {/* What used to be a four-item "Set up once" strip, and before that a
+              card of four rows.
+              
+              Company and payroll key are answered by a contract existing at
+              all — restating them above the month's work said an employer was
+              still being configured every month for the life of the account,
+              which is how a working product comes to feel half-built. Employee
+              keys and claim-key hashes moved to Employees, where they belong:
+              both are facts about people rather than steps in configuring a
+              company.
+              
+              What survives is the one that can block a real operation. A
+              missing claim-key hash is unfixable AFTER a termination is
+              written, so it is worth a line here — and only when there is one
+              to report. */}
+          {claimStatus.missing > 0 ? (
+            <p className="inline-warn">
+              ⚠ {claimStatus.missing}{" "}
+              {claimStatus.missing === 1 ? "employee has" : "employees have"} not
+              provided a benefit claim key.{" "}
+              <Link to="/employer/employees">Review employees →</Link>
             </p>
-          </section>
+          ) : null}
 
-          {/* ── Every month ─────────────────────────────────────────────── */}
-          <p className="when-label">Every month</p>
-          <section className="card">
+          {/* ── Every month ───────────────────────────────────────────────
+              The hero workflow, in the tinted zone the design system reserves
+              for the thing a page exists to do. It was a white card between two
+              other white cards, which made running payroll look like one of
+              three equally weighted concerns rather than the concern. */}
+          <section className="work-zone">
+            {/* The month, and what it costs. The STATUS that used to sit here —
+                "withholding outstanding", "filed, not yet paid" — is in the hero
+                now, where it is one of four standing figures. Repeating it two
+                inches lower said the same thing twice and left no room for the
+                thing the header could not answer: how big is this month. */}
             <div className="month-head">
               <h2 style={{ margin: 0 }}>
                 {loadedPeriod ? periodName(loadedPeriod) : "No month loaded"}
               </h2>
-              {/* Amber when something is outstanding, and grey only when it is
-                  not. "Withholding outstanding" in neutral grey described the
-                  very thing keeping the month open — and the same obligation
-                  the public page reports as €0.00 collected. A status that
-                  needs action should not read like a status that does not. */}
-              {/* Finished reads as finished, rather than leaving the styling to
-                  carry the whole signal: "withholding outstanding" in amber and
-                  "filed, paid and withheld" in grey differed only by colour, so
-                  the words said nothing a glance could use. */}
-              {loadedPeriod && filedLoaded && paidLoaded && withheldLoaded ? (
-                <span className="ok-line">✓ filed, paid and withheld</span>
-              ) : (
-                <span className={loadedPeriod ? "warn-inline" : "muted"}>
-                  {!loadedPeriod
-                    ? "load a workbook to begin"
-                    : filedLoaded
-                      ? paidLoaded
-                        ? "withholding outstanding"
-                        : "filed, not yet paid"
-                      : "not filed yet"}
+              {monthGross !== null && headcount > 0 ? (
+                <span className="month-sum" title={`Exactly €${formatPeur(monthGross)}`}>
+                  €{formatPeurTile(monthGross)} gross · {group(BigInt(headcount))}{" "}
+                  {headcount === 1 ? "employee" : "employees"}
                 </span>
-              )}
+              ) : null}
             </div>
 
             {latestDone && !roster ? (
               <p className="note" style={{ marginTop: 0 }}>
-                {periodName(Number(latest))} is filed, paid and withheld — nothing
-                outstanding. This is the next month.
+                {periodName(Number(latest))} is filed, paid and withheld. This is
+                the next month.
               </p>
             ) : null}
 
@@ -373,40 +418,23 @@ export function EmployerOverview() {
           </section>
 
           <p className="note">
-            <Link to="/employer/payroll">Every period filed, and payslips</Link>
+            <Link to="/employer/history">Every period filed, and payslips</Link>
           </p>
 
-          {/* ── Only when it happens ────────────────────────────────────── */}
-          <p className="when-label">Only when it happens</p>
-          <details className="details rare">
-            <summary>Someone is leaving</summary>
-            {/* The warning leads, because the irreversible part is the
-                ordering rather than the click: by the time this panel is open,
-                a missing claim-key hash is already unfixable. */}
-            <p className="problems" style={{ marginTop: 12 }}>
-              <strong>Get their claim-key hash first.</strong> The statement you
-              sign is write-once and their hash goes inside it — a claim key
-              chosen afterwards is one no claim can ever use.
-            </p>
-            <p className="note">
-              You sign one statement naming their final month. It is what stops
-              anyone choosing a better month later, and it is the only fact a
-              benefit claim needs that your payroll does not already publish.
-              You cannot claim against it: that needs their own wallet key.
-            </p>
-            <EndEmployment
-              contractAddress={instance.deployment.contractAddress}
-              instance={instance.name.replace(/^payroll:/, "")}
-              networkId={networkId}
-              periods={periods.map(Number)}
-              roster={roster}
-            />
-          </details>
-
-          {/* Immediately after ending employment, because that is the moment
-              the opening exists and the only moment the employer has it: the
-              file is not stored anywhere, and without it nobody can claim. */}
-          <RelayPanel period={latest ? Number(latest) : (periods[0] ? Number(periods[0]) : null)} />
+          {/* "Someone is leaving" and "Publish claims for this period" were
+              here, and both have moved to Employees.
+              
+              They were never about a payroll period. Ending an employment is an
+              act against a PERSON, and it was reachable only from a heading
+              that named the occasion rather than the employee — while their
+              row, two clicks away, offered nothing. Publishing was worse: it
+              was the second half of that same act, presented as a separate
+              panel an employer had to know to visit, with a file they had to
+              download from one panel and upload into the other. The relay now
+              runs from the opening already in memory, as part of ending
+              employment, because there was never a decision between the two.
+              
+              What is left on this page is one month. */}
         </>
       ) : null}
 
@@ -432,7 +460,7 @@ export function EmployerOverview() {
             need is on <Link to="/employee">Employee</Link> instead.
           </p>
           <div className="actions">
-            <Link className="button" to="/employer/setup">
+            <Link className="button" to="/employer/settings">
               Register this key
             </Link>
           </div>

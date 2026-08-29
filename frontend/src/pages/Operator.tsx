@@ -1,35 +1,35 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
-import { DeployerRegistry } from "../components/DeployerRegistry";
-import { EmployerAssign } from "../components/EmployerAssign";
-import { EmployerRevoke } from "../components/EmployerRevoke";
+import { DashHero, type DashMetric } from "../components/DashHero";
+import { EmployerTable } from "../components/EmployerTable";
 import { FundDeposit } from "../components/FundDeposit";
+import { NationalTotals } from "../components/NationalTotals";
 import { ServiceReset } from "../components/ServiceReset";
 import { WalletPicker } from "../components/WalletPicker";
 import { loadDeployments, type Deployments } from "../lib/deployments";
-import { usePayrollInstances } from "../lib/usePayrollInstances";
+import { formatPeur, formatPeurTile } from "../lib/format";
+import { readNationalTotals, type NationalTotals as Totals } from "../lib/nationalDeposits";
+import { useNetworkStats } from "../lib/useNetworkStats";
+import { usePayrollInstances, type PayrollInstance } from "../lib/usePayrollInstances";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
  * The platform's own console.
  *
- * These controls existed before this page did — as four cards at the bottom of
- * the public network page, each rendered only when the connected wallet turned
- * out to be the deployer. That put the operator's work in the one place written
- * for people who are not the operator, and hid the system's most consequential
- * buttons under a page most of its readers scroll past.
+ * Not a version of the public page for insiders. Public explains the protocol;
+ * this operates it, so it is built to answer one question on arrival — is there
+ * anything to do — and then to make doing it obvious. Clean and authoritative
+ * rather than handsome.
  *
- * ── Why the last payroll hop moved here ────────────────────────────────────
+ * ── Why the last payroll hop lives here ────────────────────────────────────
  *
- * `FundDeposit` also sat inside the employer's month stepper, as step five. It
- * was never the employer's step. That hop spends the TREASURY wallets — the
+ * `FundDeposit` used to sit inside the employer's month stepper as step five.
+ * It was never the employer's step. That hop spends the TREASURY wallets — the
  * seeds live in this service, not in any browser — and it pays into the benefit
  * fund and the tax vault, which the platform deployed and governs. An employer
  * pressing it would be spending money that had already left their contract, on
- * behalf of an institution they are not. The step remains visible to them,
- * because whether their period's withholding actually arrived is very much
- * their business; performing it is not.
+ * behalf of an institution they are not.
  *
  * ── What the gate is worth ─────────────────────────────────────────────────
  *
@@ -53,20 +53,39 @@ export function Operator() {
   );
   const isPlatform = instances.some((instance) => instance.isPlatform);
 
+  // Read regardless of the gate below, so the summary is populated the moment
+  // the wallet resolves rather than a beat afterwards. Both are public reads
+  // and `fetchContractState` caches, so this costs nothing an unauthorised
+  // visitor could not have done from the public page.
+  const { stats } = useNetworkStats(networkId);
+  const [totals, setTotals] = useState<Totals | null>(null);
+  const [totalsNonce, setTotalsNonce] = useState(0);
+  const [readingTotals, setReadingTotals] = useState(false);
+  const reReadTotals = useCallback(() => setTotalsNonce((n) => n + 1), []);
+  useEffect(() => {
+    let cancelled = false;
+    setReadingTotals(true);
+    void readNationalTotals(networkId)
+      .then((result) => {
+        if (!cancelled) setTotals(result);
+      })
+      .finally(() => {
+        if (!cancelled) setReadingTotals(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId, totalsNonce]);
+
   if (!account) {
     return (
       <>
-        <section className="card">
-          <h2>Operator</h2>
-          <p className="lead-sm">
-            The platform's side of the system: moving each period's withholding
-            into the national contracts, and deciding which company holds the
-            payroll contract.
-          </p>
-          <p className="note">
+        <DashHero eyebrow="Operator" title="Manage treasury settlement and employer access." />
+        <section className="op-head">
+          <p className="note" style={{ marginTop: 0 }}>
             Connect the key that deployed these contracts. Every control here is
-            checked again by the service or by the chain, so connecting the wrong
-            one shows nothing rather than doing anything.
+            checked again by the service or by the chain, so connecting the
+            wrong one shows nothing rather than doing anything.
           </p>
         </section>
         <WalletPicker heading="Connect the platform key" subject="platform key" />
@@ -76,54 +95,210 @@ export function Operator() {
 
   if (!isPlatform) {
     return (
-      <section className="card">
-        <h2>Operator</h2>
-        <p className="lead-sm">
-          This key is not the platform of any contract on {networkId}.
-        </p>
-        <p className="note">
-          {loading
+      <>
+      <DashHero
+        eyebrow="Operator"
+        title={
+          loading
             ? "Reading the contracts…"
-            : "Every payroll contract records the key that deployed it, and this " +
-              "is not it. If you are an employer, your own contract is under "}
-          {loading ? null : <Link to="/employer">Employer</Link>}
-          {loading ? null : "."}
-        </p>
+            : `This key is not the platform of any contract on ${networkId}.`
+        }
+      />
+      <section className="op-head">
+        {loading ? null : (
+          <p className="note">
+            Every payroll contract records the key that deployed it, and this is
+            not it. If you are an employer, your own contract is under{" "}
+            <Link to="/employer">Employer</Link>.
+          </p>
+        )}
         <CopyRow label="Connected key" value={account.coinPublicKey} />
       </section>
+      </>
     );
   }
 
+  const pending = pendingSettlement(
+    totals,
+    stats.taxRemitted + stats.socialRemitted
+  );
+
   return (
     <>
-      <section className="card">
-        <h2>Operator</h2>
-        <p className="lead-sm">
-          What only the platform can do: move the collected withholding into the
-          national contracts, and fill or empty the employer seat. The figures
-          every one of these produces are on{" "}
-          <Link to="/app">the public page</Link>.
-        </p>
+      {/* The dark zone. Title and standing figures together, because they are
+          one statement — who you are and what is outstanding — and because a
+          console needs somewhere the eye lands first. Everything below it is
+          progressively lighter, so the page reads as depth rather than as a
+          stack of equally important boxes. */}
+      <DashHero
+        eyebrow="Operator"
+        title="Manage treasury settlement and employer access."
+        metrics={operatorMetrics(instances, totals, pending)}
+      />
+
+      {/* The purple zone: the one action owed on a schedule. Everything else
+          here is occasional — a company joins, a company leaves — while this is
+          owed every month, and until it runs the money sits in a keypair with
+          no contract behind it. The tint is the page saying so. */}
+      <section className="work-zone">
+        <h2 className="eyebrow">Treasury settlement</h2>
+        <ProcessStrip pending={pending} />
+        <FundDeposit networkId={networkId} onDeposited={reReadTotals} />
       </section>
 
-      {/* First, because it is the step the system waits on. Everything else
-          here is occasional — a company joins, a company leaves — while this one
-          is owed every month, and the money sits in a keypair with no contract
-          behind it until it runs. */}
-      <FundDeposit networkId={networkId} />
+      {/* White again, and read-only: this is where the operator checks rather
+          than acts. */}
+      <section className="band">
+        <h2 className="eyebrow">National contracts</h2>
+        <NationalTotals
+          totals={totals}
+          networkId={networkId}
+          reading={readingTotals}
+          onReRead={reReadTotals}
+        />
+      </section>
 
-      {/* Revoke above assign, in the order a seat actually changes hands: it has
-          to be emptied before it can be filled, and `assignEmployer` cannot be
-          repeated. Assign renders nothing while the seat is taken, so the pair
-          reads as one control that swaps. */}
-      <EmployerRevoke instances={instances} onRevoked={refresh} />
-      <EmployerAssign instances={instances} onAssigned={refresh} />
+      <section className="band">
+        <h2 className="eyebrow">Employers</h2>
+        <EmployerTable instances={instances} networkId={networkId} onChanged={refresh} />
+      </section>
 
-      <DeployerRegistry networkId={networkId} />
-
-      {/* Last. It deletes this service's own files, and it is the one thing here
-          that cannot be undone by pressing something else. */}
-      <ServiceReset />
+      {/* Last, and behind a disclosure. It deletes this service's own files and
+          is the one control here that nothing else undoes — and it is a preview
+          convenience rather than part of how this system is meant to be run,
+          which is a thing an operator should be told before they find the
+          button rather than after. */}
+      <section className="band">
+        <details className="details advanced">
+          <summary>Testing tools</summary>
+          <p className="note">
+            Not part of normal operation. This service keeps two local files —
+            the deployment record and the fund's coin pool — and resetting
+            forgets them. It does not undo anything on chain: the contracts stay
+            deployed, the employers stay assigned, and the money stays where it
+            is. What is lost is this machine's ability to find any of it.
+          </p>
+          <ServiceReset />
+        </details>
+      </section>
     </>
   );
+}
+
+/**
+ * How much has left for the treasuries and not yet reached a contract.
+ *
+ * The one derived number on this page, and the reason it is derived rather than
+ * read: what is actually spendable sits in two shielded treasury wallets, and a
+ * shielded balance cannot be read without the spending key and a wallet sync.
+ * Nothing on a page load can know it.
+ *
+ * What CAN be known is the gap between the two hops, from public state on both
+ * sides: every payroll contract publishes `taxRemitted` and `socialRemitted` —
+ * what left for the treasuries — and the two receiving contracts publish what
+ * arrived. The difference is money in flight, and it is the operator's to move.
+ *
+ * An upper bound rather than a balance, and labelled as one wherever it is
+ * shown. A platform top-up lands in a contract without a matching remittance,
+ * so the receiving side can legitimately exceed the sending side; `null` for
+ * "not read yet" and a `toppedUp` flag keep that case from rendering as a
+ * negative figure, which would read as money gone missing.
+ */
+function pendingSettlement(
+  totals: Totals | null,
+  remitted: bigint
+): { minor: bigint; toppedUp: boolean } | null {
+  if (totals === null) return null;
+  const arrived =
+    (totals.fund?.contributedMinor ?? 0n) + (totals.taxvault?.receivedMinor ?? 0n);
+  return {
+    minor: remitted > arrived ? remitted - arrived : 0n,
+    toppedUp: arrived > remitted,
+  };
+}
+
+/**
+ * Where the money is in the two-hop journey, and which hop is this page's.
+ *
+ * The flow used to be three words and two arrows at note size, which said the
+ * right thing and carried no weight — a caption for a diagram that was not
+ * there. As a strip it does the work a diagram should: the middle node is
+ * highlighted because that is where the operator is standing and where the
+ * money waits, and it carries the figure, so the strip is a reading of the
+ * system rather than a picture of it.
+ */
+function ProcessStrip({ pending }: { pending: { minor: bigint; toppedUp: boolean } | null }) {
+  return (
+    <div className="process-strip">
+      <div className="process-node">
+        <span className="process-label">Payroll</span>
+        <span className="process-sub">withholding assessed and remitted</span>
+      </div>
+      <span className="process-arrow" aria-hidden="true">→</span>
+      <div className="process-node current">
+        <span className="process-label">Treasury wallets</span>
+        <span className="process-sub">
+          {pending === null
+            ? "reading…"
+            : pending.toppedUp
+              ? "nothing in flight"
+              : pending.minor === 0n
+                ? "nothing waiting"
+                : `€${formatPeurTile(pending.minor)} waiting`}
+        </span>
+      </div>
+      <span className="process-arrow" aria-hidden="true">→</span>
+      <div className="process-node">
+        <span className="process-label">National contracts</span>
+        <span className="process-sub">benefit fund · tax vault</span>
+      </div>
+    </div>
+  );
+}
+
+/** Whether anything needs attention, in four figures. */
+function operatorMetrics(
+  instances: PayrollInstance[],
+  totals: Totals | null,
+  pending: { minor: bigint; toppedUp: boolean } | null
+): DashMetric[] {
+  const mine = instances.filter((instance) => instance.isPlatform);
+  const active = mine.filter((instance) => instance.state?.employerAssigned).length;
+  const vacant = mine.length - active;
+  const money = (value: bigint) => `€${formatPeurTile(value)}`;
+  const exact = (value: bigint) => `Exactly €${formatPeur(value)}`;
+
+  return [
+    {
+      value: String(active),
+      label: active === 1 ? "Active employer" : "Active employers",
+      note: vacant > 0 ? `${vacant} seat${vacant === 1 ? "" : "s"} vacant` : "every seat filled",
+    },
+    {
+      value: totals?.fund ? money(totals.fund.contributedMinor) : "—",
+      exact: totals?.fund ? exact(totals.fund.contributedMinor) : undefined,
+      label: "Benefit fund",
+      note: "contributions received",
+    },
+    {
+      value: totals?.taxvault ? money(totals.taxvault.heldMinor) : "—",
+      exact: totals?.taxvault ? exact(totals.taxvault.heldMinor) : undefined,
+      label: "Tax vault",
+      note: "held now",
+    },
+    {
+      value: pending === null ? "…" : money(pending.minor),
+      exact: pending === null ? undefined : exact(pending.minor),
+      label: "Pending remittance",
+      note:
+        pending === null
+          ? "reading"
+          : pending.toppedUp
+            ? "topped up beyond what payroll remitted"
+            : pending.minor === 0n
+              ? "All withholding settled ✓"
+              : "remitted by employers, not yet arrived",
+      attention: pending !== null && pending.minor > 0n,
+    },
+  ];
 }
