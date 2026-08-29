@@ -7,7 +7,7 @@ import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-p
 // `contracts/managed/` is gitignored build output, so it does not exist on a
 // managed host — and once the server started importing this module, `tsc -p
 // tsconfig.server.json` failed the deploy with TS2307 on a path that is only
-// ever present on a developer's machine. `src/server/README.md` names this
+// ever present on a developer's machine. The README's DATA_DIR section names this
 // exact trap and prescribes this fix: resolve the contract module the way
 // `utils/contract.ts` does, falling back to the copies that ship with the code.
 //

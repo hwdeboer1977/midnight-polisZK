@@ -761,7 +761,7 @@ export function createApp(config: ServerConfig): Express {
    * bound to an employer is theirs permanently — and once its address is gone,
    * nothing can reach it again. It is not recoverable from this service, from
    * the employer's browser, or from the chain without the address to look up.
-   * `src/server/README.md` says the same thing at more length and it is not
+   * The README's DATA_DIR section says the same thing at more length and it is not
    * being softened here: on a service with real employers on it, calling this
    * strands them.
    *

@@ -153,7 +153,7 @@ export async function buildClaimKeyFile(
  * it, the disagreement cannot be explained at all.
  *
  * Not `identity` or `account`, both of which were considered and are wrong in
- * ways worth recording. There IS no account here — `steps_employee.md` opens on
+ * ways worth recording. There IS no account here — the README's employee walkthrough opens on
  * that — and "account" imports the one promise this file cannot keep, that a
  * provider can reset it. "Identity" is worse: the WALLET is the identity, since
  * `claim` rebuilds `payeeBinding` from `ownPublicKey()`, so a file named for

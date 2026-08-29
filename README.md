@@ -1,7 +1,13 @@
-# midnight-polisZK
+# IncomeLayerZK
 
 Private payroll on Midnight, and an unemployment benefit paid from it without
-anyone learning who claimed or how much. Four contracts:
+anyone learning who claimed or how much.
+
+**This file is the project's documentation.** It absorbs what used to live in
+`steps_employer.md`, `steps_employee.md`, `multi-contract-findings.md`,
+`tax-and-vaults-approach.md` and `src/server/README.md`.
+
+Five contracts:
 
 - **`payroll`** — one instance per employer. Individual salaries never reach the
   chain; only the headcount, the totals, and one commitment per employee do. It
@@ -18,6 +24,9 @@ anyone learning who claimed or how much. Four contracts:
   she was employed long enough and what her final salary was, discloses neither,
   and is indistinguishable from everyone terminated in the same month anywhere
   on the platform.
+- **`taxvault`** — one shared instance. Receives wage tax per period under a
+  withdrawal authority frozen at deploy. Unlike the fund it never pays out
+  privately, so `heldTotal` is a genuine public balance.
 
 Nobody is recorded as unemployed anywhere. There is no claimant list, no status
 field, and nothing an observer can enumerate to find one — see **The fund**.
@@ -322,7 +331,7 @@ What each one actually establishes:
 Everything in the next section is shaped by this. Withheld money stays in the
 payroll contract's own pools and is remitted to treasury **wallets** — keys, not
 contracts — which is the only arrangement that needs none of the missing
-features. `tax-and-vaults-approach.md` is the pre-probe design and is superseded
+features. The tax-and-vault design appendix below is the pre-probe design and is superseded
 by it.
 
 ## taxparams
@@ -1041,15 +1050,69 @@ npm run frontend:build    # production build into frontend/dist
 Open <http://localhost:5173>, pick the network, and click **Connect**. The
 wallet will ask you to approve — nothing happens until you do.
 
-| Route       | Shows                                                            |
-| ----------- | ---------------------------------------------------------------- |
-| `/`         | landing page: what the product does, and what it does not publish |
-| `/register` | employer registration — connect a wallet, hand over public keys    |
-| `/app`      | balance tiles, keys to receive pEUR, addresses, deployed contracts |
-| `/payroll`  | live payroll state per instance, roster upload                     |
-| `/peur`     | live token state, your pEUR balance, token type                    |
+### Four areas, one per party
 
-Each payroll instance renders inside an **error boundary**. Ledger state decodes
+The top-level navigation names the parties, not the contracts:
+
+| Route       | Who                                                                    |
+| ----------- | ---------------------------------------------------------------------- |
+| `/`         | landing page — what the product does, and what it does not publish      |
+| `/app`      | **Public** — what the network publishes about itself; needs no wallet   |
+| `/operator` | **Operator** — the platform's console: treasury settlement, employer access |
+| `/employer` | **Employer** — run payroll, manage people, history, configuration       |
+| `/employee` | **Employee** — your own income record, and unemployment benefit         |
+
+The employer area has four tabs, each answering one question:
+
+| Tab                    | Question                                        |
+| ---------------------- | ----------------------------------------------- |
+| `/employer`            | Payroll — what do I need to do this month?       |
+| `/employer/employees`  | Employees — who works here?                      |
+| `/employer/history`    | History — what happened in previous months?      |
+| `/employer/settings`   | Settings — how is my company configured?         |
+
+These were `Overview / Setup / Roster / History`, which named pages after their
+implementation. Two were actively misleading: **Overview** was not an overview —
+it is where the month is actually run — and **Setup** stops being setup the
+moment onboarding is done, to the point where the page had re-titled its own
+heading "Reference" while the tab still said Setup. A permanent tab named after
+a finished task makes a working product feel half-built.
+
+The employee area has two: **Salary** and **Unemployment benefit**. There is no
+"unemployed" area, because a system that has to classify you before it can help
+you has already published the thing you most wanted kept private. Claiming is
+something you do, not something you are.
+
+Old routes still resolve: `/register`, `/peur`, `/employer/setup`,
+`/employer/roster`, `/employer/payroll` and `/claim` all redirect.
+
+### The design system
+
+Four visual levels, used wherever someone **operates** rather than reads:
+
+| Level                | Means                                    | Where                              |
+| -------------------- | ---------------------------------------- | ---------------------------------- |
+| dark hero            | who you are, and what is outstanding     | Operator and Employer headers      |
+| tinted work zone     | the thing this page exists to do         | treasury settlement, the month     |
+| white card           | read-only analysis                       | national contracts, payroll record |
+| neutral rows         | administration                           | the employer table                 |
+
+Colour carries state rather than decoration: **green** complete or healthy,
+**amber** attention required, **indigo/lavender** the active workflow, **grey**
+not known — which is never amber, because a thing this browser has not seen is
+not a thing anyone has failed to do. Status is rendered as pills (`.pill.ok`,
+`.warn`, `.neutral`, `.info`) so a column can be scanned rather than read word by
+word.
+
+The **Public** page deliberately stays white. A visitor is reading, not
+operating, and it is structured around the four questions someone actually
+arrives with: how big is the network, what is private, where did the
+contributions go, and can I verify this. Implementation status — assessed versus
+collected, the demo token's permissionless minting, contracts this build cannot
+decode — lives under *Technical details*, because a diagnostic nobody asked for
+should be opened deliberately rather than met on the way past.
+
+Each payroll instance renders inside an **error boundary**.Each payroll instance renders inside an **error boundary**. Ledger state decodes
 lazily — `contract.ledger(...)` returns an object whose fields decode when they
 are read — so a contract deployed from an older `payroll.compact` throws during
 render, well past the `try/catch` that wrapped the fetch. Without a boundary that
@@ -1218,6 +1281,108 @@ bundle stays at ~88 kB gzipped.
 Writes are still CLI-only: submitting a transaction means proving it. The
 connector API can delegate proving to the wallet, which is the path to take when
 these pages grow write support.
+
+## The service
+
+A small Express app (`src/server/`) that exists for the three jobs a browser
+cannot do: hold the platform wallet's seed, hold the two treasury seeds, and
+read `fund-pool.json`. Everything else the app does happens in the page.
+
+```bash
+npm run server        # build, then serve on :8787
+```
+
+`config.ts` refuses to bind anywhere but loopback without `PLATFORM_API_TOKEN`,
+so a local service needs no token and a hosted one cannot start without a real
+guard. `/api/health` publishes which case it is in, and the UI hides the token
+field when there is nothing to send.
+
+### Routes
+
+| Route                        | Guard             | Does                                            |
+| ---------------------------- | ----------------- | ----------------------------------------------- |
+| `GET  /api/health`           | none              | network, and whether a token is required        |
+| `GET  /api/deployments`      | none              | the merged address book                         |
+| `GET  /api/job/:id`          | none              | progress for a long-running job                 |
+| `POST /api/onboard`          | signup limit      | assigns the payroll contract to an employer     |
+| `POST /api/claim`            | signup limit      | the once-only employer starter allowance        |
+| `POST /api/relay`            | work limit        | builds a period's claim bundles, optionally publishes |
+| `GET/POST /api/claim-keys`   | work limit (POST) | employees publish a claim-key hash; employers read it |
+| `GET/POST /api/sealed-roster`| work limit (POST) | the employer's roster, sealed under their passphrase |
+| `GET  /api/registrations`    | none              | the registry of onboarded companies             |
+| `POST /api/platform/*`       | platform token    | treasuries, fund deposits, mint, faucet, reset  |
+
+**Two rate-limit buckets, because the risks differ.** `signupLimit` (3/hour,
+`SIGNUP_LIMIT_PER_HOUR`) covers what spends the *platform's* money — a deploy, a
+mint. `workLimit` (30/hour, `WORK_LIMIT_PER_HOUR`) covers work an employer
+legitimately repeats: a relay run verifies every opening against the chain and
+refuses what does not match, publishing is permissionless anyway, and the other
+two write one row. Sharing one bound made a bundle rebuild after a failed claim
+answer "try again in 34 minutes" — a limit protecting nothing, applied to the
+recovery path for the failure it was blocking.
+
+### What the database holds
+
+Postgres, via `DATABASE_URL`. Every table is created by `initSchema()` on first
+write rather than by a migration step, so a fresh machine needs no setup command.
+
+| Table               | Written by                     | Contents                                        |
+| ------------------- | ------------------------------ | ----------------------------------------------- |
+| `registrations`     | onboarding                     | company name, instance, contract, employer key   |
+| `claim_key_hashes`  | employee, on *Send to my employer* | network, **hex** coin public key, claim-key hash |
+| `sealed_rosters`    | employer, on filing a period   | network, contract, **AES-GCM ciphertext**        |
+
+**`claim_key_hashes` is inert.** It stores `persistentHash(claimKey)` over 32
+random bytes: not reversible, no dictionary to guess against, and no route to a
+payment — `claim` binds to `ownPublicKey()` separately. It removes a courier step
+that was failing in practice, since an employee who never sent their hash cannot
+be helped after the write-once attestation exists. It is a **suggestion**: the
+employer's field is pre-filled and stays editable, and the employee is shown what
+the service holds for them while a mismatch can still be fixed. It carries no
+contract address, so it says "this key has a benefit key", never "this key works
+for X".
+
+**`sealed_rosters` the service cannot read.** A plaintext roster would rebuild
+the employment map the whole design avoids — the chain stores
+`payeeHash(coinPublicKey, period, instance)` and never the key, precisely so
+nobody can enumerate who works where. Storing that in the platform's database,
+where nobody would think to look, is arguably worse than publishing it. So what
+is stored is ciphertext under a key derived from the payroll passphrase, with a
+domain separator so it is not the openings' sealing key. **Names and public keys
+only — never salaries**, so the worst case if the sealing were broken is "who
+works here" and not "and what they earn".
+
+Both writes are unauthenticated, and that is stated in the routes rather than
+left implicit. Nothing stored is a secret or a capability. What an open write
+*can* do is publish under someone else's key, or replace a blob with junk — a
+wrong suggestion an employer can overwrite and an employee can spot, and a
+convenience lost rather than data. That is the honest trade for a demo with no
+employer login, and the mitigations are the editable field and the
+employee-visible mismatch check, not a login this app has no way to issue.
+
+### Why the server builds from its own tsconfig
+
+`tsconfig.server.json` exists because the server and the CLIs have different
+module resolution needs from the frontend, and one config that satisfied both
+satisfied neither. `npm run build:server` compiles only what the service needs.
+
+### `DATA_DIR`
+
+Three files are written at run time and are not source: `deployment.json`,
+`.onboarded-keys.json` and the wallet's sync position — plus `claims.json`, which
+bounds a public route. All four resolve through `dataDir()`, so a managed host
+can point them at storage that outlives a deploy.
+
+Unset, it is the working directory and every local workflow behaves as before.
+On a managed host it must be set, or a push replaces the code directory and takes
+`deployment.json` with it — the contract stays on chain, permanently bound to its
+employer, and nothing left anywhere knows its address. `assignEmployer` cannot be
+repeated, so that is not recoverable by redeploying.
+
+⚠️ **`deployment.json` overrides the `.env` baseline.** A stale record on a
+persistent disk silently outranks a corrected environment variable; the service
+logs a warning naming both addresses, which is the only signal. See
+[Known sharp edges](#known-sharp-edges).
 
 ## Pilot flow
 
@@ -1404,6 +1569,117 @@ Then, in order and each by the party that must do it:
 
 Step 6 is not optional bookkeeping. Until it runs, the fund's remaining balance
 is a coin whose nonce exists nowhere.
+
+## What an employer does
+
+Rewritten for the flow as it now stands.
+
+### Once
+
+1. **Connect the company signing key** on Settings, and register. The platform
+   assigns the payroll contract to that key; after that it cannot write payroll
+   to it.
+2. **Choose a payroll passphrase.** It derives every nonce and unlocks every
+   sealed opening for this contract. It is never sent anywhere and **cannot be
+   reset** — a forgotten one means payslips that can never be recovered.
+3. **Collect two public keys per employee** — coin public key and encryption
+   public key. Both, every time: with only the first, a payment succeeds, the
+   contract marks the slot paid, and the wallet can never find the coin.
+4. **Collect a claim-key hash per employee.** They create it on their own
+   Employee page and press *Send to my employer*, which publishes the hash to the
+   service; the Employees table then shows ✓ Collected. It can still be pasted by
+   hand. This must happen **before** anyone is dismissed.
+
+### Every month
+
+On **Payroll**: load the workbook, enter the passphrase, and press
+**Run payroll for &lt;month&gt;**. That is one action covering three stages:
+
+```
+✓ Payroll filed  →  ✓ Employees paid  →  ✓ Tax & contributions remitted
+```
+
+The waits between them are **not cosmetic**. `fundAndPayPeriod` reads
+`commitmentsFor` and checks each opening against it, so a filing that has been
+submitted but not indexed reads as a period that was never filed. Paying spends
+coins funding just created, and a coin cannot be spent until its commitment has a
+position in the Zswap tree. Remitting spends the pools `fundPeriod` filled. Each
+hop needs the previous one **visible on chain**, not merely submitted — so the
+sequence is forced by the ledger, and what the orchestration changes is who has
+to know that.
+
+Each stage is a separate wallet signature and proves for minutes. The page holds
+a `beforeunload` guard and shows a pulsing indicator with elapsed time, because a
+closed tab abandons a month part way through.
+
+If a run fails, the individual step controls open automatically — a half-finished
+month is recovered by performing the stage that failed, and the run resumes from
+what the chain shows rather than repeating anything that landed.
+
+Then **send the payslips**. Nothing on chain records that a file reached a
+person, so that step never ticks itself.
+
+### When someone leaves
+
+On **Employees** → their row → **Manage** → **End employment**. Pick the final
+month and sign. One action covers three technical acts:
+
+```
+✓ Termination record created
+✓ Claim data prepared
+✓ September 2026 claim root published
+```
+
+The relay runs from the opening already in memory — the download-and-re-upload
+round trip existed only because two panels could not talk to each other. You get
+the **claim bundle** to hand over, and the opening as a backup.
+
+**Rebuild their claim bundle** stays available on the row whenever a termination
+exists, not only after a failure: a bundle goes stale when the fund coin it names
+is spent by an earlier claimant, and that is not a failure of anything.
+
+## What an employee does
+
+
+### When hired
+
+1. **Connect a wallet** on `/employee` and send the employer **both** public keys.
+2. **Create a benefit key** on `/employee/benefit`. One press produces two things
+   with opposite destinations:
+
+   - 🔒 **A file to keep.** Store it where you keep your wallet's recovery
+     phrase. Nobody can reissue it.
+   - ↗ **A hash to send your employer.** Public and safe; press *Send to my
+     employer* or copy it.
+
+   Do this **while still employed**. The employer writes the hash into a
+   write-once statement, so a key made afterwards is one no claim can use.
+
+### While employed
+
+Pay arrives as a shielded transfer; the payslip arrives out of band. Check it on
+`/employee` — the page verifies it against the commitment the employer filed and
+confirms the period was filed for the connected wallet.
+
+⚠️ **Keep every payslip.** The openings on chain are sealed under the
+*employer's* key, so only they can produce one again — and without the payslip
+for the final period there is no claim at all.
+
+### Claiming
+
+`/employee/benefit` needs three files, and the split is the architecture:
+
+| File          | From          | If it goes astray                                        |
+| ------------- | ------------- | -------------------------------------------------------- |
+| Claim bundle  | the relay     | names your employer, final month and months worked, and carries a fund coin someone could spend first |
+| Payslip       | your employer | your actual salary                                        |
+| Claim key     | only you      | not your benefit — claiming needs your wallet too — but which months you claimed |
+
+**None of the three lets anybody take the benefit.** `claim` binds separately to
+`ownPublicKey()`. What they cost is privacy, plus one nuisance the bundle can
+cause. Saying "keep this secret or someone will claim with it" would be a false
+reason for a true instruction, and it collapses the moment somebody reads the
+contract.
 
 ## What is private, and what is not
 
@@ -1875,6 +2151,52 @@ curl -s -X POST -H 'content-type: application/json' \
   https://indexer.preview.midnight.network/api/v4/graphql
 ```
 
+## Deploying it
+
+Two hosts, and they need different things.
+
+### The service (Render)
+
+Runs `node dist/server/index.js`. It must have:
+
+| Variable | Why |
+| --- | --- |
+| `WALLET_MNEMONIC` or `WALLET_SEED` | the platform wallet |
+| `TAX_TREASURY_SEED`, `SOCIAL_TREASURY_SEED` | the treasuries it spends |
+| `PROOF_SERVER_URL` | **critical** — defaults to `127.0.0.1:6300`, which does not exist in a container, so every proving operation fails without it |
+| `payroll_address`, `peur_address`, `taxparams_address`, `fund_address`, `taxvault_address` | `deployment.json` is gitignored, so on a fresh disk the env baseline is the **only** source of addresses |
+| `DATA_DIR` | storage that outlives a deploy |
+| `DATABASE_URL` | the registry, claim-key hashes and sealed rosters |
+| `PLATFORM_API_TOKEN` | required to bind anywhere but loopback |
+| `ALLOWED_ORIGINS` | must include the frontend's origin, or CORS blocks it |
+
+`*_TREASURY_ENC_KEY` is **not** needed when the seeds are set —
+`treasuryEncryptionKeys()` derives it. Set it instead on any machine that should
+not hold the treasuries' spending keys.
+
+`PAYROLL_CONTRACT` is a **pin**, not a source: it filters records that already
+exist. Setting it without `payroll_address` yields no payroll contract at all.
+
+### The frontend (Vercel)
+
+Build-time substitution, so **adding a variable does nothing until you
+redeploy** — an existing deployment keeps the old values baked into its bundle.
+
+`VITE_NETWORK_ID`, `VITE_PAYROLL_ADDRESS`, `VITE_PEUR_ADDRESS`,
+`VITE_PEUR_TOKEN_ID`, `VITE_TAXPARAMS_ADDRESS`, `VITE_FUND_ADDRESS`,
+`VITE_TAXVAULT_ADDRESS`, `VITE_TAX_TREASURY_ENC_KEY`,
+`VITE_SOCIAL_TREASURY_ENC_KEY`, and `VITE_API_BASE` pointing at the service.
+
+⚠️ `loadStatic()` opens with `if (!networkId) return {}` — **without
+`VITE_NETWORK_ID` the frontend resolves zero contracts** and every page reports
+nothing deployed. Addresses used to come from a committed
+`public/deployments.json`; that fetch was removed and the file is now dead
+weight, so its presence is not reassurance.
+
+Variables **without** the `VITE_` prefix are never exposed to client code. Four
+of them (`MIDNIGHT_NETWORK`, `PROOF_SERVER_URL`, `CONTRACT_NAME`, `DEBUG_LEVEL`)
+sat on the project doing nothing but looking like configuration.
+
 ## Toolchain versions
 
 The compiler and the runtime must be a compatible pair. The compiler emits
@@ -1928,6 +2250,7 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 | `npm run compile`        | compile every `contracts/*.compact`               |
 | `npm run build`          | TypeScript → `dist/`                              |
 | `npm run onboard`        | deploy a payroll instance and assign its employer  |
+| `npm run server`         | the platform service on :8787                      |
 | `npm run demo:server`    | ⚠️ demo-only self-service onboarding on :8787      |
 | `npm run roster:template`| write roster-template.xlsx                        |
 | `npm run deploy:payroll` | deploy a payroll instance (`INSTANCE=x`)          |
@@ -1968,6 +2291,7 @@ midnight-polisZK/
 │   ├── taxparams.compact          # versioned, append-only tax rules
 │   ├── peur.compact               # shielded stablecoin
 │   ├── fund.compact               # unemployment fund: rules, roots, nullifiers, pool
+│   ├── taxvault.compact           # wage tax, under a frozen withdrawal authority
 │   └── managed/                   # compiled artifacts, per contract (gitignored)
 ├── src/
 │   ├── deploy.ts                  # deploys whichever CONTRACT_NAME names
@@ -1977,6 +2301,10 @@ midnight-polisZK/
 │   ├── terminate-cli.ts           # end employment (CLI route)
 │   ├── relay.ts                   # build + publish a period's claim tree
 │   ├── check-balance.ts           # address + tNIGHT/tDUST
+│   ├── server/                    # the platform service (Express)
+│   │   ├── app.ts                 # routes: onboard, relay, claim-keys, sealed-roster, platform/*
+│   │   ├── config.ts              # host/port/token rules, the two rate-limit buckets
+│   │   └── guards.ts              # rate limiting, platform token, signup code
 │   ├── providers/                 # midnight-js provider wiring
 │   └── utils/
 │       ├── benefit-params.ts      # the published rule sets — only their HASH is on chain
@@ -1988,9 +2316,12 @@ midnight-polisZK/
 │   ├── public/deployments.json    # generated by npm run frontend:config
 │   └── src/
 │       ├── wallet/WalletContext.tsx   # connect, account snapshot, refresh
-│       ├── pages/                     # Public, Employer, Employee, Claim
-│       ├── components/                # ClaimForm, ClaimKey, EndEmployment, CopyRow, …
-│       └── lib/                       # claim.ts, claimKey.ts, endEmployment.ts, payslip, …
+│       ├── pages/                     # Public, Operator, EmployerPayroll/Employees/
+│       │                              #   History/Settings, Employee, EmployeeBenefit
+│       ├── components/                # DashHero, ClaimForm, ClaimKey, EndEmployment,
+│       │                              #   EmployerTable, FundDeposit, NationalTotals, …
+│       └── lib/                       # claim.ts, claimKey.ts, runMonth.ts, sealedRoster.ts,
+│                                      #   publishedClaimKeys.ts, useRunGuard.ts, …
 ├── terminations/                  # employers' termination openings — input to the relay
 ├── claims/<period>/               # claim bundles the relay writes, one per claimant
 ├── .env                           # config (keep private!)
@@ -2302,6 +2633,118 @@ payment was batched would make that 2 regardless of roster size.
   coin circuits could not be proved in the browser for a long time after that was
   fixed and written up here. When the README and a code comment disagree about a
   defeat, check the README.
+- **`deployment.json` silently outranks the `.env` baseline.** On a managed host
+  it lives under `DATA_DIR`, so a stale record on a persistent disk overrides a
+  corrected environment variable. The only signal is a warning naming both
+  addresses. A fund pinned to a superseded address decoded *plausibly wrong* —
+  `contributedTotal` read `1` — before throwing `expected a cell, received map`
+  on the first field whose layout had moved.
+- **Two installs of `compact-runtime` break `instanceof`.** A module under
+  `frontend/src/generated/` resolves the runtime from `frontend/node_modules`; a
+  file under `src/` resolves the root one. **Both the same version**, so nothing
+  in a lockfile hints at it — but a `ContractState` deserialized by one is not
+  `instanceof` the other's `ChargedState`, and `ledger()` throws
+  `expected instance of ChargedState`. Server code must resolve generated modules
+  through `contractModulePath()`. Bit `fund-deposit.ts` and later `relay-run.ts`,
+  where it surfaced as *"contract state unreadable, or it predates this build"* —
+  blaming a contract that was fine.
+- **A generated ledger is lazy.** `ledger()` succeeds on any state and each
+  getter decodes on access, so a `try/catch` around `ledger()` protects nothing.
+  Extract the fields **inside** the try, or a mismatch escapes as an unhandled
+  rejection and the page waits forever instead of reporting "unreadable".
+- **Bech32m in the wallet, hex everywhere else — and it fails silently.** A key
+  published from `account.coinPublicKey` and looked up against a workbook's hex
+  matches nothing, with no error. Normalise with `keyToHex` at *both* ends of any
+  cross-boundary comparison.
+- **`payeeHash` includes the period**, deliberately, so a worker cannot be linked
+  across months. Grouping employees by it therefore produces one row per person
+  *per period* — a roster that grows by its own headcount every month.
+- **A claim bundle goes stale.** It carries a specific fund coin, and the coin
+  dies the moment another claimant spends it. The entitlement evidence never goes
+  stale; only the coin does. Rebuilding is the fix, and the coin is not bound to
+  the claim — `claim` asserts only `coin.value >= benefitNet`, so any spendable
+  fund coin works.
+- **The pool file had no `spent` status until it cost a claim.** `reconcile`
+  recorded the change coin and left its parent looking spendable — and the parent
+  is usually the *largest* record, so everything that picks by value picked the
+  dead coin first. It now marks the parent, which it can do reliably because it
+  identifies it by rebuilding the change's commitment from the parent's nonce.
+- **The relay cannot size a coin to a benefit**, because the benefit derives from
+  a salary it never sees. It warns against `cap × rate` — the most any benefit can
+  be — which is the strongest honest statement available, and it warns when
+  `coinsReceived` on chain exceeds the records in the pool file, which is
+  reconciliation being overdue.
+- **`PILOT_DURATION_MONTHS` is not enforced.** `claim` never constrains `window`
+  against `leaf.finalPeriod` or any limit, so three monthly payments is what the
+  app *shows*, not what the fund *allows*. Closing it needs the duration inside
+  `BenefitParams` and an assertion in `claim` — which means republishing every
+  version and redeploying, since `claim` is impure and its verifier keys are fixed
+  at deploy.
+- **"Rate limited" is usually the public indexer, not this app.** It answers a
+  burst with that bare string, which lands in a red box under a claim form and
+  reads as the claim being refused. Nothing was submitted. `explainError()`
+  recognises it and says so.
+
+## Appendix: multi-contract transactions
+
+Probe results, with transaction hashes, that decided the architecture.
+
+| Question | Answer | Evidence |
+| --- | --- | --- |
+| Can one transaction call two contracts? | **Yes** | `d6531c86…` |
+| Can both calls sit in one intent (one segment)? | **Yes, without coins** | `d6531c86…` |
+| Can both calls move a coin? | **Yes** | `13d1f74f…` |
+| Can both move a coin *and* share one intent? | **Unresolved** | route B rejected |
+| Does a failing call take the others down? | **Untested** | |
+| Are ZK proofs stored on chain? | **Yes** | |
+| Can a contract require a sibling call to exist? | **Yes, enforced** | `ed9a9950…` |
+| Does that requirement cover the call's data? | **Yes** | |
+
+Bundling across contracts works, and `claimContractCall` lets a contract refuse
+to act unless a named sibling call is present — which is what makes a
+cross-contract design buildable, since the chain rejects an incomplete bundle
+rather than the shortfall merely being visible afterwards.
+
+### Two recorded beliefs that were wrong
+
+Both had cost design decisions before being retested.
+
+**`Transaction.merge` does not throw on contract interactions.** An earlier note
+said it did, which is why a four-contract design was abandoned. On ledger-v8
+8.1.0 it merged two single-call transactions that each receive a shielded coin,
+first try, and the merged transaction landed.
+
+**The CLI does not use the proof server.** `provingMode()` returns `wasm` unless
+`PROVING_MODE=http`, so every Node path proves in-process. `PROOF_SERVER_URL`
+applies to the browser only. Several failures were misdiagnosed as "the proof
+server is down" when it was irrelevant.
+
+**The lesson worth keeping: these notes have a shelf life. Retest before
+designing around a recorded limit.**
+
+## Appendix: the tax and vault design
+
+The reasoning behind splitting rules, payroll and custody into separate
+contracts, recorded before the probes above.
+
+| Contract    | Instances    | Holds money   | Purpose                                    |
+| ----------- | ------------ | ------------- | ------------------------------------------ |
+| `taxparams` | one, shared  | no            | versioned rule sets, keyed by period        |
+| `payroll`   | one/employer | net, briefly  | files periods, funds slots, pays employees  |
+| `taxvault`  | one, shared  | yes           | receives withheld tax; pays one authority   |
+| `fund`      | one, shared  | yes           | pools contributions; pays benefits          |
+
+Two unknowns dictated the shape and were settled with stubs before anything was
+written: whether a contract can send a shielded coin to another contract, and
+what three sends do to transaction size and proving cost. The recorded fallback —
+the employer funding all destinations directly in one transaction, with `payroll`
+asserting the vault amounts against a shared totals hash — is worth keeping in
+mind, since it gives the same guarantees with no contract-to-contract call and
+more coordination in the client.
+
+What the split newly leaks was decided deliberately rather than discovered: the
+withholding totals are public per period, because tax that is never remitted is
+not tax and remitting requires the contract to know what it owes.
 
 ## Not built yet
 
@@ -2342,6 +2785,6 @@ In order:
    and claimed with it. What remains custodial is the seed-based test employees
    the CLI generates.
 
-`tax-and-vaults-approach.md` describes a four-contract version of this with
+The tax-and-vault appendix describes a four-contract version of this with
 separate tax and contribution vaults. It is superseded — see **What the compiler
 would not do** for why that shape cannot be built.
