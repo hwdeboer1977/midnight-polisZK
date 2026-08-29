@@ -1799,3 +1799,39 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
 .claim-workflow { background: var(--work-tint); border-color: var(--work-line); }
 .claim-workflow .card,
 .claim-workflow .callout { background: var(--card); }
+
+/* ── Running a month as one act ──────────────────────────────────────────────
+   Three stages the contract genuinely requires in order, presented as one
+   operation with three ticks. The step list below stays: it is where a failed
+   run is recovered from, one stage at a time. */
+.month-run-offer {
+  display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
+  padding: 14px 16px; margin-bottom: 16px;
+  background: var(--card); border: 1px solid var(--work-line);
+  border-radius: var(--radius);
+}
+.month-run-offer .note { max-width: 60ch; }
+
+.month-run {
+  padding: 16px 18px; margin-bottom: 16px;
+  background: var(--card); border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+.month-run-head {
+  font-size: 13px; font-weight: 660; color: var(--accent);
+  letter-spacing: 0.02em; margin-bottom: 10px;
+}
+.month-run-steps { list-style: none; margin: 0 0 10px; padding: 0; }
+.month-run-steps li {
+  display: flex; gap: 9px; align-items: baseline;
+  font-size: 13.5px; padding: 3px 0; color: var(--faint);
+}
+.month-run-steps li.done { color: var(--ok); }
+.month-run-steps li.now { color: var(--text); font-weight: 620; }
+.month-run-mark { width: 14px; flex: none; }
+/* The inner progress line, verbatim from the step that is running. */
+.month-run-detail {
+  font-size: 12.5px; color: var(--muted); margin: 0 0 8px;
+  padding-top: 8px; border-top: 1px solid var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}

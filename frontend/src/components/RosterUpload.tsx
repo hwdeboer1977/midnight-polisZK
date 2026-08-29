@@ -16,6 +16,12 @@ import { loadDeployments } from "../lib/deployments";
 import { recordRoster } from "../lib/collected";
 import { FilePicker } from "./FilePicker";
 import { MonthSteps } from "./MonthSteps";
+import {
+  runMonth,
+  MONTH_STAGES,
+  type MonthProgress,
+  type MonthStage,
+} from "../lib/runMonth";
 import { PayslipRecovery } from "./PayslipRecovery";
 import { Payslips } from "./Payslips";
 import { useWallet } from "../wallet/WalletContext";
@@ -106,6 +112,28 @@ export function RosterUpload({
 } = {}) {
   const { api, networkId } = useWallet();
   const [step, setStep] = useState<string | null>(null);
+  /**
+   * The whole month as one run, when the employer takes that route.
+   *
+   * Held separately from `step` and `payStep` so the individual controls keep
+   * behaving exactly as they did: a failed run leaves the month in a real
+   * intermediate state, and recovering means using the step that failed.
+   */
+  const [monthRun, setMonthRun] = useState<MonthProgress | null>(null);
+  const [monthError, setMonthError] = useState<string | null>(null);
+  /**
+   * Whether the three chain steps show their own controls.
+   *
+   * Off by default, and that is the whole point of the orchestrated run: with
+   * both routes rendered at once the page showed two passphrase fields and two
+   * buttons for the same month, which is worse than the three-step flow it was
+   * meant to simplify. The steps below stay as a RECORD — what has happened and
+   * what has not — and become operable on request.
+   *
+   * Turned on automatically when a run fails, because that is exactly the
+   * moment somebody needs to perform one stage by hand.
+   */
+  const [manual, setManual] = useState(false);
   const [submitted, setSubmitted] = useState<SubmitResult | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
@@ -527,6 +555,61 @@ export function RosterUpload({
       setPayError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setPayStep(null);
+    }
+  }
+
+  /**
+   * File, pay and remit, in one act.
+   *
+   * The three stay separately callable below — see `runMonth`'s header for why
+   * an orchestration that is the only route in strands anyone it fails. This
+   * resumes from whatever the chain already shows, so pressing it again after a
+   * failure repeats nothing that landed.
+   */
+  async function onRunMonth() {
+    if (!roster || roster.period === null || !target || !api) return;
+
+    setMonthError(null);
+    setSubmitError(null);
+    setPayError(null);
+    // Where the chain says this month already is. Reading it here rather than
+    // trusting page state: the month may have been advanced in another tab, or
+    // by an earlier run whose failure was in reporting rather than in chain.
+    const from: MonthStage = filed ? (paid && withheldDone ? "remit" : "pay") : "file";
+    setMonthRun({ stage: from, index: MONTH_STAGES.indexOf(from) + 1, detail: "Starting…" });
+    try {
+      const result = await runMonth({
+        api,
+        networkId,
+        contractAddress: target.contractAddress,
+        passphrase,
+        period: roster.period,
+        salaries: roster.rows.map((row) => row.salaryMinor),
+        weeks: roster.rows.map((row) => row.weeks),
+        payees: roster.rows.map((row) => ({
+          coinPublicKey: row.coinPublicKey,
+          encryptionPublicKey: row.encryptionPublicKey,
+        })),
+        names: roster.rows.map((row) => row.fullName),
+        provingMode: delegateProving ? "wallet" : "local",
+        from,
+        onProgress: setMonthRun,
+      });
+      if (result.filed) setSubmitted(result.filed);
+      if (result.paid) setPayResult(result.paid);
+      if (result.remitted) setRemitted(result.remitted);
+      // Only once the whole month is through. Clearing it between stages would
+      // strand the run — every stage derives the same key from it.
+      setPassphrase("");
+      setConfirmation("");
+      onSubmitted?.();
+    } catch (cause) {
+      setMonthError(cause instanceof Error ? cause.message : String(cause));
+      // A half-finished month is recovered one stage at a time, so open the
+      // controls rather than making someone find the link that reveals them.
+      setManual(true);
+    } finally {
+      setMonthRun(null);
     }
   }
 
@@ -1010,6 +1093,93 @@ export function RosterUpload({
   );
 
   return (
+    <>
+      {/* One operation, three ticks. Shown above the steps rather than inside
+          one of them: while it runs it IS the page, and the step list below is
+          the record of where it got to. */}
+      {monthRun ? (
+        <div className="month-run">
+          <div className="month-run-head">
+            Running payroll — {monthRun.index} of {MONTH_STAGES.length}
+          </div>
+          <ol className="month-run-steps">
+            {MONTH_STAGES.map((stage, i) => (
+              <li
+                key={stage}
+                className={
+                  i < monthRun.index - 1 ? "done" : i === monthRun.index - 1 ? "now" : "todo"
+                }
+              >
+                <span className="month-run-mark">
+                  {i < monthRun.index - 1 ? "✓" : i === monthRun.index - 1 ? "●" : "○"}
+                </span>
+                {stage === "file"
+                  ? "Payroll filed"
+                  : stage === "pay"
+                    ? "Employees paid"
+                    : "Tax & contributions remitted"}
+              </li>
+            ))}
+          </ol>
+          {/* The inner step, verbatim. Proving takes minutes and a generic
+              "working…" is what makes someone close the tab. */}
+          <p className="month-run-detail">{monthRun.detail}</p>
+          <p className="note" style={{ margin: 0 }}>
+            Each stage is signed separately and has to be visible on chain before
+            the next can start — the contract requires it. Keep this tab open.
+          </p>
+        </div>
+      ) : null}
+
+      {monthError ? (
+        <p className="status error" style={{ marginBottom: 12 }}>
+          {monthError}
+        </p>
+      ) : null}
+
+      {/* The whole month, offered as one action when one is possible: a
+          workbook is open, a passphrase is entered, and the month is not
+          already done. The steps below stay exactly as they were — this is a
+          shortcut through them, not a replacement for them. */}
+      {/* `withheldDone` is NOT the end of the month.
+      
+          It means the tax and contributions have been moved INTO the contract,
+          which `fundPeriod` does in the same transaction that pays everyone —
+          so it goes true at stage two and made this condition hide the offer
+          exactly when stage three was the thing left to do. Remitting is what
+          empties the pools onward, and `remitDone` is the flag for it. */}
+      {!monthRun && ready && !(filed && paid && withheldDone && remitDone) ? (
+        <div className="month-run-offer">
+          {passphraseBlock}
+          <button
+            className="primary"
+            disabled={!api || !passphraseReady || submitting || payStep !== null}
+            onClick={() => void onRunMonth()}
+          >
+            {filed
+              ? paid && withheldDone
+                ? "Remit tax & contributions"
+                : "Pay and remit " + (roster?.period ? periodName(roster.period) : "this month")
+              : "Run payroll for " +
+                (roster?.period ? periodName(roster.period) : "this month")}
+          </button>
+          <p className="note" style={{ margin: 0 }}>
+            File, pay and remit in one go — {MONTH_STAGES.length} wallet
+            signatures, a few minutes each. The steps below show where the month
+            has got to.{" "}
+            {manual ? (
+              <button type="button" className="linklike" onClick={() => setManual(false)}>
+                Hide the individual controls
+              </button>
+            ) : (
+              <button type="button" className="linklike" onClick={() => setManual(true)}>
+                Run them one at a time instead
+              </button>
+            )}
+          </p>
+        </div>
+      ) : null}
+
     <MonthSteps
       steps={[
         {
@@ -1044,7 +1214,7 @@ export function RosterUpload({
             "Publishes the totals and one sealed commitment per employee. Salaries stay on this machine.",
           cost: "1 transaction · about 30 seconds",
           state: filed ? "done" : ready ? "now" : "todo",
-          action: ready ? fileAction : null,
+          action: manual && ready ? fileAction : null,
         },
         {
           // One step where there were two, because the contract now does it in
@@ -1064,7 +1234,7 @@ export function RosterUpload({
           // the ledger's tree, which does not exist until it has been committed.
           cost: "2 transactions · one to fund the period, then one to pay",
           state: paid && withheldDone ? "done" : filed && ready ? "now" : "todo",
-          action: ready && filed ? payAction : null,
+          action: manual && ready && filed ? payAction : null,
         },
         // Only when the two came apart.
         //
@@ -1085,7 +1255,7 @@ export function RosterUpload({
                   "assessed, not collected.",
                 cost: "1 transaction",
                 state: "now" as const,
-                action: withholdAction,
+                action: manual ? withholdAction : null,
               },
             ]
           : []),
@@ -1119,7 +1289,8 @@ export function RosterUpload({
           ) : remitDone ? (
             "Sent — the pools are with the treasury wallets"
           ) : null,
-          action: unremitted || withheldDone || remitted ? remitAction : null,
+          action:
+            manual && (unremitted || withheldDone || remitted) ? remitAction : null,
         },
         {
           title: "Send payslips",
@@ -1152,6 +1323,7 @@ export function RosterUpload({
         },
       ]}
     />
+    </>
   );
 }
 
