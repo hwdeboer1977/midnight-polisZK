@@ -71,12 +71,14 @@ flowchart TB
         VAULT["taxvault"]
     end
 
+    PU ~~~ EE ~~~ EM ~~~ OP
+
     PU --> PUS
     EE --> EES
     EM --> EMS
     OP --> OPS
 
-    PUS -->|public reads only| CH
+    PUS -.->|public reads only| CH
     EES --> WAL
     EMS --> WAL
 
