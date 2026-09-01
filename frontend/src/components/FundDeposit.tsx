@@ -398,21 +398,83 @@ export function FundDeposit({
    * syncs it. Doing that every time the step renders would sync two wallets
    * per page load for a figure nobody had asked for.
    */
+  /**
+   * What the CONNECTED wallet holds, read from the wallet itself.
+   *
+   * The service used to answer this for every treasury, because it held their
+   * seeds. It no longer does — that was the point of moving the treasuries into
+   * the operator's wallet — and a shielded balance can only be read by whoever
+   * holds the spending key. So the service now answers "SOCIAL_TREASURY_SEED is
+   * not set on this service", which is true and correct and reads as a
+   * misconfiguration.
+   *
+   * The wallet is the only thing that can answer for itself, so it does.
+   * `spendableMinor` is left null: how much is reachable in ONE transaction
+   * depends on coin selection, which the connector does not expose — the Max
+   * button falls back to the balance, and the balancer refuses anything it
+   * cannot assemble.
+   */
+  async function readConnectedWalletBalance(): Promise<TreasuryBalance | null> {
+    if (!api) return null;
+    const which: TreasuryName = target === "fund" ? "social-treasury" : "tax-treasury";
+    try {
+      const [shielded, unshielded] = await Promise.all([
+        api.getShieldedBalances(),
+        api.getUnshieldedBalances(),
+      ]);
+      const token = String(import.meta.env.VITE_PEUR_TOKEN_ID ?? "")
+        .replace(/^0x/, "")
+        .toLowerCase();
+      const peur =
+        shielded[token] ?? shielded[`0x${token}`] ?? 0n;
+      const night = Object.values(unshielded).reduce((a, b) => a + b, 0n);
+      return {
+        from: which,
+        minor: String(peur),
+        nightMinor: String(night),
+        spendableMinor: null,
+      };
+    } catch (cause) {
+      return {
+        from: which,
+        minor: null,
+        nightMinor: null,
+        spendableMinor: null,
+        error: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
+  }
+
   async function checkBalances() {
-    if (blockedWithoutToken()) return;
+    // The wallet answers for itself and needs no token. Only the service-held
+    // platform wallet does, so the guard moved inside the branch below.
     setError(null);
     setReading(true);
     try {
       // Both treasuries every time — the point of the list is to see what each
       // holds — plus the platform only while a top-up is actually selected, so
       // an unrelated wallet is not synced for nothing.
-      const wallets = Array.from(new Set<TreasuryName>(["social-treasury", "tax-treasury", from]));
-      const result = await runJob<TreasuryBalance[]>(
-        "/api/treasuries/balances",
-        { wallets },
-        setLog
-      );
-      setBalances(result ?? []);
+      // The connected wallet IS the treasury now, so it answers for itself and
+      // no token is needed. Only a platform top-up still asks the service,
+      // which holds that seed by design.
+      if (from !== "platform") {
+        const own = await readConnectedWalletBalance();
+        if (!own) {
+          throw new Error(
+            "Connect the treasury wallet to read its balance — the service no longer " +
+              "holds treasury keys, so only the wallet itself can see what it holds."
+          );
+        }
+        setBalances([own]);
+      } else {
+        if (blockedWithoutToken()) return;
+        const result = await runJob<TreasuryBalance[]>(
+          "/api/treasuries/balances",
+          { wallets: ["platform"] },
+          setLog
+        );
+        setBalances(result ?? []);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -898,8 +960,8 @@ function TreasuryBalances({
       ) : (
         <p className="note" style={{ margin: 0 }}>
           A shielded balance is not public — only the holder of the spending key
-          can decrypt its own coins — so this builds each wallet and syncs it.
-          Seconds on a warm cache, minutes after a restart.
+          can decrypt its own coins. That holder is your wallet now, not this
+          service, so the figure comes from the wallet you have connected.
         </p>
       )}
     </div>
