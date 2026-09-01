@@ -4,6 +4,7 @@
 import { timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
 import type { ServerConfig } from "./config.js";
+import { isLiveSession } from "./wallet-auth.js";
 
 /**
  * Guards the routes that spend the platform wallet.
@@ -28,6 +29,16 @@ export function requirePlatformToken(config: ServerConfig) {
 
     const header = req.header("authorization") ?? "";
     const presented = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+
+    // A wallet session is the other way in, and the better one: it proves the
+    // caller HOLDS the platform wallet rather than that they know a string.
+    // Checked first because it is the path the operator page takes; the static
+    // token stays for callers with no wallet to sign with — scripts, the CLI,
+    // and anything driving this service unattended. See `wallet-auth.ts`.
+    if (presented && isLiveSession(presented)) {
+      next();
+      return;
+    }
 
     if (!presented || !constantTimeEqual(presented, config.token)) {
       // No detail. A message distinguishing "no token" from "wrong token" is a

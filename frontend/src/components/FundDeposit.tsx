@@ -3,15 +3,14 @@
 
 import { useEffect, useState } from "react";
 import { apiUrl } from "../lib/origin";
+import { signIn, signOut, storedSession } from "../lib/walletAuth";
+import { useWallet } from "../wallet/WalletContext";
 import { loadDeployments } from "../lib/deployments";
 import { formatPeur, parsePeurInput, toPeurInput } from "../lib/format";
 import { readNationalDeposits, type NationalDeposits } from "../lib/nationalDeposits";
 import { NationalArrivals } from "./NationalArrivals";
 
 type TreasuryName = "social-treasury" | "tax-treasury" | "platform";
-
-/** Where the typed platform token is remembered between reloads. */
-const TOKEN_KEY = "polisZK/platform-token";
 
 interface TreasuryBalance {
   from: TreasuryName;
@@ -117,21 +116,33 @@ export function FundDeposit({
    * first place. Wrapped in try/catch: a browser with site data blocked throws
    * on access, and that must not take the panel down.
    */
-  const [token, setToken] = useState(() => {
-    try {
-      return localStorage.getItem(TOKEN_KEY) ?? "";
-    } catch {
-      return "";
+  const [token, setToken] = useState<string>(() => storedSession() ?? "");
+  const [signingIn, setSigningIn] = useState(false);
+  const { api } = useWallet();
+
+  /**
+   * Trades a wallet signature for a session.
+   *
+   * Replaces pasting `PLATFORM_API_TOKEN` into the page. The operator already
+   * connects the platform wallet here, and a signature over a challenge the
+   * service just chose proves they hold it — which a pasted string never did,
+   * it only proved they had been told it.
+   */
+  async function authenticate() {
+    if (!api) {
+      setError("Connect the platform wallet first — the signature comes from it.");
+      return;
     }
-  });
-  useEffect(() => {
+    setError(null);
+    setSigningIn(true);
     try {
-      if (token.trim()) localStorage.setItem(TOKEN_KEY, token.trim());
-      else localStorage.removeItem(TOKEN_KEY);
-    } catch {
-      // Nothing to do — the field still works for this page view.
+      setToken(await signIn(api as unknown as Parameters<typeof signIn>[0]));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSigningIn(false);
     }
-  }, [token]);
+  }
 
   /**
    * What the two receiving contracts already hold for the period being typed.
@@ -221,11 +232,11 @@ export function FundDeposit({
     token.trim() ? { authorization: `Bearer ${token.trim()}` } : {};
 
   /**
-   * The service wants a token and none has been typed.
+   * The service is guarded and this browser has no session yet.
    *
-   * `authenticated` is read from `/api/health`, so this is only true where a
+   * `authenticated` comes from `/api/health`, so this is only true where a
    * request would actually be refused — a loopback service with no token
-   * configured never shows the field and never sets this.
+   * configured never shows the control and never sets this.
    */
   const needsToken = authenticated === true && !token.trim();
 
@@ -241,8 +252,8 @@ export function FundDeposit({
   function blockedWithoutToken(): boolean {
     if (!needsToken) return false;
     setError(
-      "This service requires a platform token. Paste PLATFORM_API_TOKEN from the " +
-        "service's environment into the field at the top of this card, then try again."
+      "This service needs proof you hold the platform wallet. Press " +
+        '"Sign in with wallet" at the top of this card and approve the signature.'
     );
     return true;
   }
@@ -414,38 +425,51 @@ export function FundDeposit({
           `auth.ts` will not say more, deliberately: distinguishing "no token"
           from "wrong token" is a free oracle. So the page has to be the thing
           that explains it, before the request rather than after. */}
+      {/* Authority comes from the wallet, not from a pasted secret.
+
+          This used to be a password field holding `PLATFORM_API_TOKEN`, which
+          meant the operator typed the service's own minting secret into a web
+          page and the browser kept it. The connected wallet already IS the
+          platform wallet; a signature over a challenge the service chose proves
+          that, and `server/wallet-auth.ts` checks it against the verifying key
+          it derives from its own seed. Nothing to paste, nothing worth stealing
+          in storage, and no secret to rotate. */}
       {authenticated ? (
-        <label className="field settlement-token">
-          <span>
-            Platform token
-            {/* The length, because the field is a password field and a wrong
-                token is invisible. A truncated paste, a stray character or a
-                password manager filling something else all look identical to a
-                correct one until the service refuses it — and the service will
-                not say which, on purpose. A count is the one thing that can be
-                shown safely and settles it instantly: the token is 64
-                characters, so anything else is a bad paste rather than a wrong
-                secret. */}
-            {needsToken ? (
-              <em className="note" style={{ marginLeft: 8, fontStyle: "normal" }}>
-                required for every action on this card
-              </em>
-            ) : (
-              <em className="note" style={{ marginLeft: 8, fontStyle: "normal" }}>
-                {token.trim().length} characters
-                {token.trim().length !== token.length ? " (surrounding spaces ignored)" : ""}
-              </em>
-            )}
-          </span>
-          <input
-            type="password"
-            value={token}
-            disabled={working}
-            placeholder="PLATFORM_API_TOKEN from the service's environment"
-            autoComplete="off"
-            onChange={(e) => setToken(e.target.value)}
-          />
-        </label>
+        <div className="settlement-token">
+          {token ? (
+            <p className="note" style={{ margin: 0 }}>
+              ✓ Signed in as the platform wallet.{" "}
+              <button
+                type="button"
+                className="linklike"
+                disabled={working}
+                onClick={() => {
+                  const current = token;
+                  setToken("");
+                  void signOut(current);
+                }}
+              >
+                Sign out
+              </button>
+            </p>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="ghost"
+                disabled={working || signingIn}
+                onClick={() => void authenticate()}
+              >
+                {signingIn ? "Waiting for your wallet…" : "Sign in with wallet"}
+              </button>
+              <p className="note" style={{ marginTop: 6 }}>
+                Everything on this card spends the platform wallet, so it asks that
+                wallet to sign a one-off challenge. Nothing is transferred and no
+                fee is paid.
+              </p>
+            </>
+          )}
+        </div>
       ) : null}
 
       {/* The hop as one line, left to right, in the order it is decided: what is

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import cors from "cors";
 import { requirePlatformToken } from "./auth.js";
+import { endSession, issueChallenge, verifySignedChallenge } from "./wallet-auth.js";
 import { rateLimit, requireSignupCode } from "./guards.js";
 import { getJob, startJob } from "./jobs.js";
 import type { ServerConfig } from "./config.js";
@@ -133,6 +134,68 @@ export function createApp(config: ServerConfig): Express {
        */
       durableState: dataDir() !== process.cwd(),
     });
+  });
+
+  /**
+   * Sign-in by wallet signature, in two public steps.
+   *
+   * PUBLIC, necessarily: a caller cannot authenticate through a door that is
+   * already locked. Neither route discloses anything — a challenge is random
+   * and worthless without the platform key, and a rejected signature returns a
+   * reason rather than a secret.
+   *
+   * This is the answer to the note on the token guard below: a coin public key
+   * proves nothing because anyone can claim it, but a signature over a value
+   * this service just chose proves possession of the key. `wallet-auth.ts`
+   * carries the reasoning and the replay rules.
+   *
+   * The static `PLATFORM_API_TOKEN` still works and still has to: a CLI or a
+   * cron job has no wallet extension to sign with. What this removes is the
+   * need to paste that secret into a browser.
+   */
+  app.post("/api/auth/challenge", (_req: Request, res: Response) => {
+    if (!config.token) {
+      // Loopback with no token configured: the guard passes anyway, so issuing
+      // a challenge would invite the operator to sign for nothing.
+      res.status(409).json({
+        error: "This service is not guarded, so there is nothing to sign in to.",
+      });
+      return;
+    }
+    res.json(issueChallenge());
+  });
+
+  app.post("/api/auth/verify", (req: Request, res: Response) => {
+    if (!config.token) {
+      res.status(409).json({
+        error: "This service is not guarded, so there is nothing to sign in to.",
+      });
+      return;
+    }
+    const { data, signature, verifyingKey, challenge } = req.body ?? {};
+    if (
+      typeof data !== "string" ||
+      typeof signature !== "string" ||
+      typeof verifyingKey !== "string" ||
+      typeof challenge !== "string"
+    ) {
+      res
+        .status(400)
+        .json({ error: "data, signature, verifyingKey and challenge are required" });
+      return;
+    }
+    const result = verifySignedChallenge({ data, signature, verifyingKey, challenge });
+    if (!result.ok) {
+      res.status(401).json({ error: result.reason });
+      return;
+    }
+    res.json({ token: result.token, expiresInMs: result.expiresInMs });
+  });
+
+  app.post("/api/auth/signout", (req: Request, res: Response) => {
+    const header = req.header("authorization") ?? "";
+    if (header.startsWith("Bearer ")) endSession(header.slice(7).trim());
+    res.json({ ok: true });
   });
 
   /**
