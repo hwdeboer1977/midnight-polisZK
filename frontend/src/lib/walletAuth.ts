@@ -82,6 +82,19 @@ export async function signIn(wallet: WalletSigner): Promise<string> {
     keyType: "unshielded",
   });
 
+  // What the wallet actually returned, for when it does not match what this
+  // service can read. The connector documents neither the encoding of `data`
+  // nor the prefix, so the shape is worth seeing once rather than guessing at.
+  // The challenge is public and the signature is useless without the key, so
+  // there is nothing here worth hiding from a console the operator owns.
+  console.info("[sign-in] wallet returned", {
+    dataLength: signed.data.length,
+    dataStartsWith: signed.data.slice(0, 48),
+    containsChallenge: signed.data.includes(issued.challenge),
+    verifyingKeyLength: signed.verifyingKey.length,
+    signatureLength: signed.signature.length,
+  });
+
   const verifyResponse = await fetch(apiUrl("/api/auth/verify"), {
     method: "POST",
     headers: { "content-type": "application/json" },

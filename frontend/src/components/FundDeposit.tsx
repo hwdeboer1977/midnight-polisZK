@@ -118,6 +118,15 @@ export function FundDeposit({
    */
   const [token, setToken] = useState<string>(() => storedSession() ?? "");
   const [signingIn, setSigningIn] = useState(false);
+  /**
+   * Why sign-in failed, kept apart from the card's operation error.
+   *
+   * They shared one state and that hid the answer: a failed sign-in set
+   * `error`, then pressing any gated button immediately overwrote it with the
+   * generic "you need to sign in" guard. The operator saw the instruction they
+   * had just followed and no trace of what went wrong.
+   */
+  const [authError, setAuthError] = useState<string | null>(null);
   const { api } = useWallet();
 
   /**
@@ -130,15 +139,15 @@ export function FundDeposit({
    */
   async function authenticate() {
     if (!api) {
-      setError("Connect the platform wallet first — the signature comes from it.");
+      setAuthError("Connect the platform wallet first — the signature comes from it.");
       return;
     }
-    setError(null);
+    setAuthError(null);
     setSigningIn(true);
     try {
       setToken(await signIn(api as unknown as Parameters<typeof signIn>[0]));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setAuthError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSigningIn(false);
     }
@@ -467,6 +476,11 @@ export function FundDeposit({
                 wallet to sign a one-off challenge. Nothing is transferred and no
                 fee is paid.
               </p>
+              {authError ? (
+                <p className="status error" style={{ marginTop: 6 }}>
+                  {authError}
+                </p>
+              ) : null}
             </>
           )}
         </div>

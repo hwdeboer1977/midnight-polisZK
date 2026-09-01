@@ -124,6 +124,45 @@ check("the service derives its own platform key",
     "data unbound from the challenge was accepted");
 }
 
+// ── The wallet may hand back its data hex- or base64-encoded ───────────────
+//
+// The connector types `data` as a string and documents no encoding, so all
+// three readings have to work. A wrong guess cannot let anything through: every
+// reading is checked against the same signature and the same key.
+{
+  for (const [name, encode] of [
+    ["hex", (t) => Buffer.from(t, "utf8").toString("hex")],
+    ["base64", (t) => Buffer.from(t, "utf8").toString("base64")],
+  ]) {
+    const { challenge } = issueChallenge();
+    const text = "\x19Midnight Signed Message:\n" + challenge;
+    const result = verifySignedChallenge({
+      data: encode(text),
+      signature: ks.signData(new TextEncoder().encode(text)),
+      verifyingKey: ks.getPublicKey(),
+      challenge,
+    });
+    check(`${name}-encoded signed data verifies`, result.ok, result.ok ? "" : result.reason);
+    if (result.ok) endSession(result.token);
+  }
+}
+
+// ── Tolerance is not a hole ────────────────────────────────────────────────
+{
+  const { challenge } = issueChallenge();
+  const text = "\x19Midnight Signed Message:\n" + challenge;
+  const stranger = deriveKeys({ kind: "seed", value: "22".repeat(32) }, net.networkId)
+    .unshieldedKeystore;
+  const result = verifySignedChallenge({
+    data: Buffer.from(text, "utf8").toString("hex"),
+    signature: stranger.signData(new TextEncoder().encode(text)),
+    verifyingKey: stranger.getPublicKey(),
+    challenge,
+  });
+  check("a hex-encoded signature from another wallet is still refused", !result.ok,
+    "encoding tolerance let a stranger through");
+}
+
 // ── A tampered signature ───────────────────────────────────────────────────
 {
   const { challenge } = issueChallenge();

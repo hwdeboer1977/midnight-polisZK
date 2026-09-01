@@ -139,10 +139,18 @@ export function verifySignedChallenge(input: SignedChallenge): VerifyResult {
   // is the shape of an oracle.
   challenges.delete(input.challenge);
 
-  if (!input.data.includes(input.challenge)) {
+  // The wallet decides how `data` comes back, and the connector API does not
+  // say. Lace may hand back the text it signed, or the same bytes hex- or
+  // base64-encoded, in each case with its own prefix attached. Rather than bet
+  // on one, every plausible reading is tried and the challenge has to survive
+  // in at least one of them.
+  const readings = candidateReadings(input.data);
+  if (!readings.some((r) => r.text.includes(input.challenge))) {
     return {
       ok: false,
-      reason: "The signed data does not contain the challenge that was issued.",
+      reason:
+        "The signed data does not contain the challenge that was issued. The wallet " +
+        "returned data this service could not read as text, hex or base64.",
     };
   }
 
@@ -156,16 +164,16 @@ export function verifySignedChallenge(input: SignedChallenge): VerifyResult {
     };
   }
 
-  let valid = false;
-  try {
-    valid = verifySignature(
-      input.verifyingKey.trim(),
-      new TextEncoder().encode(input.data),
-      input.signature.trim()
-    );
-  } catch {
-    valid = false;
-  }
+  // Verified against each reading too, for the same reason: the bytes the
+  // wallet actually signed are whichever encoding `data` is in, and only the
+  // wallet knows. One of them verifies or none do.
+  const valid = readings.some((reading) => {
+    try {
+      return verifySignature(input.verifyingKey.trim(), reading.bytes, input.signature.trim());
+    } catch {
+      return false;
+    }
+  });
   if (!valid) return { ok: false, reason: "That signature did not verify." };
 
   const token = randomBytes(32).toString("hex");
@@ -190,4 +198,40 @@ function constantTimeEqual(a: string, b: string): boolean {
   const right = Buffer.from(b);
   if (left.length !== right.length) return false;
   return timingSafeEqual(left, right);
+}
+
+/**
+ * Every plausible reading of what the wallet says it signed.
+ *
+ * The connector API types `data` as a string and documents neither its encoding
+ * nor the prefix the wallet prepends, so this enumerates rather than assumes:
+ * the string as UTF-8, and — where the shape allows — the bytes it would decode
+ * to as hex or base64, each also read back as text so the challenge can be
+ * looked for inside it.
+ *
+ * Trying several is not a weakening. Every reading is still checked against the
+ * SAME signature and the same verifying key, so a wrong guess simply fails to
+ * verify; what this buys is not having to know which wallet build produced it.
+ */
+function candidateReadings(data: string): { bytes: Uint8Array; text: string }[] {
+  const readings: { bytes: Uint8Array; text: string }[] = [];
+  const utf8 = new TextEncoder().encode(data);
+  readings.push({ bytes: utf8, text: data });
+
+  const trimmed = data.trim();
+  if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+    const bytes = Buffer.from(trimmed, "hex");
+    readings.push({ bytes: new Uint8Array(bytes), text: bytes.toString("utf8") });
+  }
+  if (/^[A-Za-z0-9+/=]+$/.test(trimmed) && trimmed.length % 4 === 0) {
+    try {
+      const bytes = Buffer.from(trimmed, "base64");
+      if (bytes.length > 0) {
+        readings.push({ bytes: new Uint8Array(bytes), text: bytes.toString("utf8") });
+      }
+    } catch {
+      // Not base64 after all.
+    }
+  }
+  return readings;
 }
