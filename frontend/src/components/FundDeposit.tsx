@@ -190,6 +190,15 @@ export function FundDeposit({
     token.trim() ? { authorization: `Bearer ${token.trim()}` } : {};
 
   /**
+   * The service wants a token and none has been typed.
+   *
+   * `authenticated` is read from `/api/health`, so this is only true where a
+   * request would actually be refused — a loopback service with no token
+   * configured never shows the field and never sets this.
+   */
+  const needsToken = authenticated === true && !token.trim();
+
+  /**
    * Runs a job route to completion.
    *
    * Both routes here answer with a job id rather than a result: a deposit
@@ -210,6 +219,20 @@ export function FundDeposit({
       jobId?: string;
       error?: string;
     };
+    // A 401 here says only "Unauthorized", and it says that whether the token
+    // was missing or wrong — `auth.ts` refuses to tell the two apart on
+    // purpose. Repeating the bare word would leave the operator with nothing to
+    // act on, so the page supplies the half the server will not: which field,
+    // and where its value comes from.
+    if (response.status === 401) {
+      throw new Error(
+        token.trim()
+          ? "That platform token was refused. It must match PLATFORM_API_TOKEN in the " +
+            "service's environment exactly — check for a truncated copy or a trailing newline."
+          : "This service requires a platform token. Paste PLATFORM_API_TOKEN from the " +
+            "service's environment into the field at the top of this card."
+      );
+    }
     if (!response.ok) throw new Error(started.error ?? `Service returned ${response.status}`);
 
     const poll = async (): Promise<T | undefined> => {
@@ -327,6 +350,39 @@ export function FundDeposit({
   // of the zone that frames it.
   return (
     <div className="settlement">
+      {/* The token gates EVERY privileged action on this card, so it sits above
+          all of them rather than inside one.
+
+          It used to live in the remit row, between the Max and Remit buttons,
+          which read as belonging to that form alone. It never did: `authHeader`
+          is shared by remit, "Check balances" and "Fund the treasuries with
+          NIGHT", and the latter two sit outside that row entirely. Leaving it
+          empty and pressing Check balances produced a bare "Unauthorized" —
+          true, unexplained, and pointing at nothing the operator could see.
+          `auth.ts` will not say more, deliberately: distinguishing "no token"
+          from "wrong token" is a free oracle. So the page has to be the thing
+          that explains it, before the request rather than after. */}
+      {authenticated ? (
+        <label className="field settlement-token">
+          <span>
+            Platform token
+            {needsToken ? (
+              <em className="note" style={{ marginLeft: 8, fontStyle: "normal" }}>
+                required for every action on this card
+              </em>
+            ) : null}
+          </span>
+          <input
+            type="password"
+            value={token}
+            disabled={working}
+            placeholder="PLATFORM_API_TOKEN from the service's environment"
+            autoComplete="off"
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </label>
+      ) : null}
+
       {/* The hop as one line, left to right, in the order it is decided: what is
           moving, for which month, out of which wallet. It used to be three
           controls in a row with a paragraph before them and two after, and the
@@ -383,24 +439,15 @@ export function FundDeposit({
         >
           Max
         </button>
-        {authenticated ? (
-          <input
-            type="password"
-            value={token}
-            disabled={working}
-            placeholder="Platform token"
-            autoComplete="off"
-            style={{ minWidth: 160 }}
-            onChange={(e) => setToken(e.target.value)}
-          />
-        ) : null}
         {/* The amount on the button, not only in the field beside it. This is
             the last chance to notice a figure before minutes of proving, and a
             button reading "Remit" says nothing about what is about to move. */}
         <button
           type="button"
           className="primary remit"
-          disabled={working || amountMinor === null || !period.trim() || !source.trim()}
+          disabled={
+            working || needsToken || amountMinor === null || !period.trim() || !source.trim()
+          }
           onClick={() => void deposit()}
         >
           {busy
@@ -459,6 +506,7 @@ export function FundDeposit({
         onCheck={() => void checkBalances()}
         onFund={() => void fundWithNight()}
         disabled={working}
+        needsToken={needsToken}
       />
 
       <details className="details">
@@ -542,6 +590,7 @@ function TreasuryBalances({
   onCheck,
   onFund,
   disabled,
+  needsToken,
 }: {
   balances: TreasuryBalance[] | null;
   reading: boolean;
@@ -550,16 +599,40 @@ function TreasuryBalances({
   onCheck: () => void;
   onFund: () => void;
   disabled: boolean;
+  /** The service wants a platform token and none has been typed. */
+  needsToken: boolean;
 }) {
   return (
     <div className="treasury-balances">
-      <button type="button" className="ghost" disabled={disabled} onClick={onCheck}>
+      {/* Disabled rather than left to fail: these read and spend the platform
+          wallet, so without a token the request can only come back as a bare
+          401. The title says which field is empty, since the button sits well
+          below it and the connection is not otherwise visible. */}
+      <button
+        type="button"
+        className="ghost"
+        disabled={disabled || needsToken}
+        title={needsToken ? "Enter the platform token at the top of this card" : undefined}
+        onClick={onCheck}
+      >
         {reading ? "Reading the wallets…" : balances ? "Re-check balances" : "Check balances"}
       </button>
       {stranded ? (
-        <button type="button" className="ghost" disabled={disabled} onClick={onFund}>
+        <button
+          type="button"
+          className="ghost"
+          disabled={disabled || needsToken}
+          title={needsToken ? "Enter the platform token at the top of this card" : undefined}
+          onClick={onFund}
+        >
           {funding ? "Sending NIGHT and registering…" : "Fund the treasuries with NIGHT"}
         </button>
+      ) : null}
+      {needsToken ? (
+        <p className="note" style={{ marginTop: 6 }}>
+          Reading a shielded balance spends the platform wallet's keys, so it needs
+          the platform token above.
+        </p>
       ) : null}
       {balances?.some((b) => b.minor !== "0" && b.nightMinor === "0") ? (
         <p className="status error" style={{ marginTop: 6 }}>

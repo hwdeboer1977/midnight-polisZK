@@ -1288,6 +1288,16 @@ button.primary.secondary-action {
   padding: 14px; border: 1px solid var(--line); border-radius: var(--radius);
 }
 .settlement-topup { display: inline-flex; margin-top: 10px; }
+.settlement-token {
+  /* Above the panel because it gates every action inside and below it — remit,
+     "Check balances" and the NIGHT top-up all send the same header. Narrow so
+     it reads as one credential for the card rather than another field of the
+     remit form, which is exactly the confusion that put it here. */
+  max-width: 420px;
+  margin: 0 0 14px;
+}
+.settlement-token span { font-weight: 600; color: var(--text); }
+.settlement-token em { color: var(--muted); font-size: 12px; }
 .settlement-arrivals {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
   margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft);
