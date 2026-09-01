@@ -3,6 +3,8 @@
 
 import { useEffect, useState } from "react";
 import { apiUrl } from "../lib/origin";
+import { depositFromWallet } from "../lib/depositFromWallet";
+import { useWallet } from "../wallet/WalletContext";
 import { loadDeployments } from "../lib/deployments";
 import { formatPeur, parsePeurInput, toPeurInput } from "../lib/format";
 import { readNationalDeposits, type NationalDeposits } from "../lib/nationalDeposits";
@@ -251,6 +253,16 @@ export function FundDeposit({
    */
   const needsToken = authenticated === true && !token.trim();
 
+  const { api } = useWallet();
+  /**
+   * Whether the connected wallet pays, rather than the service.
+   *
+   * Only for the two treasuries: a platform top-up spends the service's own
+   * wallet, which no browser holds. Requires a connected wallet, because the
+   * signature and the proof both come from it.
+   */
+  const walletPays = Boolean(api) && from !== "platform";
+
   /**
    * Refuses an action that has no chance, and says why.
    *
@@ -440,15 +452,44 @@ export function FundDeposit({
     setBusy(true);
     try {
       if (amountMinor === null) throw new Error("An amount in pEUR, e.g. 200.20");
-      const result = await runJob<{ txHash: string; ordinal: number }>(
-        "/api/fund/deposit",
-        // Minor units on the wire, as the service expects — the euro figure
-        // above is a display convention of this field and nothing else.
-        { amount: String(amountMinor), from, target, period, source },
-        setLog
-      );
+
+      /**
+       * Two ways to pay, and the wallet is the better one.
+       *
+       * `walletPays` sends it from the connected treasury wallet, proving in
+       * the browser. The service then never holds the treasury's spending key
+       * and never proves — which is what stopped the settlement working at all
+       * on a managed host, where a minute of blocked event loop reads as a dead
+       * process and the instance is restarted mid-proof.
+       *
+       * The service path stays for a top-up from the platform wallet, whose
+       * seed the service does hold by design, and as a fallback while the
+       * treasuries are still the ones in `.env`.
+       */
+      const result = walletPays
+        ? await depositFromWallet({
+            api: api!,
+            networkId,
+            token,
+            amountMinor,
+            period: Number(period),
+            source,
+            target,
+            provingMode: "wallet",
+            onProgress: (line) => setLog((lines) => [...lines, line]),
+          })
+        : await runJob<{ txHash: string; ordinal: number }>(
+            "/api/fund/deposit",
+            // Minor units on the wire, as the service expects — the euro figure
+            // above is a display convention of this field and nothing else.
+            { amount: String(amountMinor), from, target, period, source },
+            setLog
+          );
       if (result) {
-        setDone(result);
+        if ("bookkeepingWarning" in result && result.bookkeepingWarning) {
+          setError(result.bookkeepingWarning);
+        }
+        setDone(result as { txHash: string; ordinal: number });
         // The point of the arrivals line above: what the receiving contract now
         // records, rather than the tx hash this returns.
         setNationalNonce((n) => n + 1);
@@ -530,6 +571,29 @@ export function FundDeposit({
             onChange={(e) => setToken(e.target.value)}
           />
         </label>
+      ) : null}
+
+      {/* Who signs. The operator is about to be asked to approve in a wallet, or
+          not asked at all, and which of those happens should not be a surprise.
+          It also names the wallet limitation found the hard way: 1AM queues a
+          signing request WITHOUT raising its window. */}
+      {authenticated ? (
+        <p className="note" style={{ marginTop: 0, marginBottom: 12 }}>
+          {from === "platform" ? (
+            <>Paid by the service from the platform wallet — no signature needed.</>
+          ) : walletPays ? (
+            <>
+              Paid by your connected wallet, which signs and proves it. Approve in the
+              extension when asked — <strong>it will not open by itself</strong>.
+            </>
+          ) : (
+            <>
+              No wallet connected, so the service will pay from its own treasury seed.
+              Connect the {target === "fund" ? "social" : "tax"} treasury to sign this
+              yourself instead.
+            </>
+          )}
+        </p>
       ) : null}
 
       {/* The hop as one line, left to right, in the order it is decided: what is

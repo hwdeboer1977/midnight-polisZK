@@ -13,6 +13,7 @@ import type { ServerConfig } from "./config.js";
 import { fundAndPay } from "../utils/payroll-run.js";
 import { runRelay, type TerminationOpening } from "../utils/relay-run.js";
 import { depositToFund, type TreasuryName } from "../utils/fund-deposit.js";
+import { confirmPreparedDeposit, prepareDeposit } from "../utils/deposit-prepare.js";
 import { readTreasuryBalances } from "../utils/treasury-balances.js";
 import { fundTreasuriesWithNight } from "../utils/treasury-night.js";
 import { onboardEmployer } from "../utils/onboarding.js";
@@ -804,6 +805,75 @@ export function createApp(config: ServerConfig): Express {
     startJob(res, `depositing €${body.amount} from ${from} into ${target}`, (log) =>
       depositToFund({ amountMinor, from: from as any, period, source, target, log })
     );
+  });
+
+  /**
+   * The two halves of a deposit the BROWSER pays for.
+   *
+   * `/fund/deposit` above does the whole thing here because the service holds
+   * the treasury seed. When the treasury is a wallet in the operator's browser,
+   * the paying half moves there — but the nonce cannot follow it. See
+   * `utils/deposit-prepare.ts`: `fund-pool.json` is the fund's only record of
+   * the coins it holds, and a browser tab is not a place to keep it.
+   *
+   * Both are token-gated with the rest of this router, because both WRITE that
+   * file. Reading it wrong strands a coin; writing it wrong strands a coin.
+   *
+   * Synchronous rather than jobs: neither call proves anything, so neither
+   * takes more than a round trip to the indexer. The long part is the browser's.
+   */
+  platform.post("/fund/deposit/prepare", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    let amountMinor: bigint;
+    try {
+      amountMinor = parsePeurAmount(String(body.amount ?? ""));
+    } catch (cause) {
+      res.status(400).json({ error: cause instanceof Error ? cause.message : String(cause) });
+      return;
+    }
+    const target = String(body.target ?? "fund");
+    if (target !== "fund" && target !== "taxvault") {
+      res.status(400).json({ error: 'target must be "fund" or "taxvault"' });
+      return;
+    }
+    try {
+      res.json(
+        await prepareDeposit({
+          amountMinor,
+          period: Number(body.period),
+          source: String(body.source ?? ""),
+          target,
+        })
+      );
+    } catch (cause) {
+      res.status(400).json({ error: cause instanceof Error ? cause.message : String(cause) });
+    }
+  });
+
+  platform.post("/fund/deposit/confirm", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const nonce = String(body.nonce ?? "").replace(/^0x/, "");
+    const txHash = String(body.txHash ?? "");
+    const target = String(body.target ?? "fund");
+    if (!/^[0-9a-f]{64}$/i.test(nonce)) {
+      res.status(400).json({ error: "nonce is required, 64 hex characters" });
+      return;
+    }
+    if (target !== "fund" && target !== "taxvault") {
+      res.status(400).json({ error: 'target must be "fund" or "taxvault"' });
+      return;
+    }
+    try {
+      res.json(await confirmPreparedDeposit({ nonce, txHash, target }));
+    } catch (cause) {
+      // NOT a 500: the transaction has already landed by the time this runs, so
+      // a failure here is a bookkeeping problem, not a failed deposit. Saying
+      // otherwise would send an operator to re-send money that already moved.
+      res.status(409).json({
+        error: cause instanceof Error ? cause.message : String(cause),
+        note: "The deposit may have landed. Check `npm run fund -- pool` before retrying.",
+      });
+    }
   });
 
   platform.post("/mint", (req: Request, res: Response) => {

@@ -85,7 +85,7 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
  * deposit and the balance read want the same two modules.
  */
 const modules = new Map<string, Promise<any>>();
-function contractModule(contractName: string): Promise<any> {
+export function contractModule(contractName: string): Promise<any> {
   let pending = modules.get(contractName);
   if (!pending) {
     pending = import(contractModulePath(contractName));
