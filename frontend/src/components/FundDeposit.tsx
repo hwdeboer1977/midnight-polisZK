@@ -321,7 +321,19 @@ export function FundDeposit({
     }
     if (!response.ok) throw new Error(started.error ?? `Service returned ${response.status}`);
 
+    // A job that never reports finished used to poll forever, and the `finally`
+    // that clears `reading`/`funding` never ran — so one lost job left every
+    // control on this card disabled for the life of the page. The service can
+    // restart mid-job (a managed host sleeps), so this is an ordinary event,
+    // not a rare one.
+    const deadline = Date.now() + 10 * 60 * 1000;
     const poll = async (): Promise<T | undefined> => {
+      if (Date.now() > deadline) {
+        throw new Error(
+          "The service stopped reporting on that job. It may have restarted — " +
+            "try again, and check the wallets before repeating anything that moves money."
+        );
+      }
       const r = await fetch(apiUrl(`/api/job/${started.jobId}`));
       const job = (await r.json()) as {
         status: string;
@@ -480,10 +492,19 @@ export function FundDeposit({
             </p>
           ) : (
             <>
+              {/* Deliberately NOT disabled by `working`.
+
+                  Every other control on this card is, and sign-in used to be
+                  too — which meant one stuck operation disabled the very button
+                  that unsticks the card, silently. A disabled ghost button looks
+                  almost identical to an enabled one, so pressing it produced no
+                  prompt, no log and no error, and looked like the wallet
+                  ignoring the click. Signing in touches nothing the other
+                  operations touch, so it has no reason to wait for them. */}
               <button
                 type="button"
                 className="ghost"
-                disabled={working || signingIn}
+                disabled={signingIn}
                 onClick={() => void authenticate()}
               >
                 {signingIn ? "Check your wallet for the prompt…" : "Sign in with wallet"}
