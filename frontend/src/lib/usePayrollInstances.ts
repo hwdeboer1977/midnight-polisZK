@@ -30,6 +30,16 @@ export interface PayrollInstance {
    * disappeared for exactly the wallet that runs the service in development.
    */
   isPlatform: boolean;
+  /**
+   * Whether the connected key is one of THIS contract's frozen treasuries.
+   *
+   * Read off the ledger rather than configured, for the same reason
+   * `isPlatform` is: `taxTreasury` and `socialTreasury` are public fields fixed
+   * at deploy, so the chain is the authority on who they are. Since the
+   * treasuries became wallets the operator holds, they are a third role that
+   * can act here — and the settlement card is theirs, not the platform's.
+   */
+  treasuryRole: "tax" | "social" | null;
 }
 
 
@@ -104,6 +114,14 @@ export function usePayrollInstances(
             const isPlatform = Boolean(
               state && coinPublicKey && sameKey(hex(state.platform.bytes), coinPublicKey)
             );
+            const treasuryRole: "tax" | "social" | null =
+              state && coinPublicKey
+                ? sameKey(hex(state.taxTreasury.bytes), coinPublicKey)
+                  ? "tax"
+                  : sameKey(hex(state.socialTreasury.bytes), coinPublicKey)
+                    ? "social"
+                    : null
+                : null;
             if (state && coinPublicKey) {
               if (state.employerAssigned && sameKey(hex(state.employer.bytes), coinPublicKey)) {
                 role = "employer";
@@ -119,6 +137,7 @@ export function usePayrollInstances(
               blockHeight: chainState?.blockHeight ?? null,
               role,
               isPlatform,
+              treasuryRole,
             };
           })
         );

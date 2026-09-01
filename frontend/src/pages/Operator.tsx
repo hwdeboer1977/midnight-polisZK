@@ -55,6 +55,22 @@ export function Operator() {
     account?.coinPublicKey ?? null
   );
   const isPlatform = instances.some((instance) => instance.isPlatform);
+  /**
+   * The treasury this key is, if any.
+   *
+   * A third role, and a recent one. The treasuries used to be seeds the service
+   * held, so the only person who could act here was the platform. Now they are
+   * wallets the operator holds — and a shielded balance can be read only by the
+   * key that owns it, so the platform key literally cannot see what a treasury
+   * holds, let alone spend it.
+   *
+   * Gating this page on `isPlatform` alone therefore locked the settlement card
+   * away from the only keys that can use it: connect a treasury and the page
+   * said "not the platform of any contract"; connect the platform and the card
+   * could neither read a balance nor pay.
+   */
+  const treasuryRole =
+    instances.map((instance) => instance.treasuryRole).find(Boolean) ?? null;
 
   // Read regardless of the gate below, so the summary is populated the moment
   // the wallet resolves rather than a beat afterwards. Both are public reads
@@ -96,7 +112,7 @@ export function Operator() {
     );
   }
 
-  if (!isPlatform) {
+  if (!isPlatform && !treasuryRole) {
     return (
       <>
       <DashHero
@@ -146,11 +162,16 @@ export function Operator() {
       <section className="work-zone">
         <h2 className="eyebrow">Treasury settlement</h2>
         <ProcessStrip pending={pending} />
-        <FundDeposit networkId={networkId} onDeposited={reReadTotals} />
+        <FundDeposit
+          networkId={networkId}
+          onDeposited={reReadTotals}
+          treasuryRole={treasuryRole}
+        />
       </section>
 
       {/* White again, and read-only: this is where the operator checks rather
-          than acts. */}
+          than acts. Shown to a treasury key too — the national totals are public
+          and are what a treasury is settling against. */}
       <section className="band">
         <h2 className="eyebrow">National contracts</h2>
         <NationalTotals

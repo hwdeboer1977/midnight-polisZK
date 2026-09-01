@@ -37,6 +37,15 @@ export function loadContract(contractName: string) {
 /** Public ledger shape of payroll.compact. */
 export interface PayrollLedger {
   platform: { bytes: Uint8Array };
+  /**
+   * Where withheld money goes, frozen at deploy.
+   *
+   * Public, and read here because the treasuries are wallets the operator holds
+   * rather than seeds the service holds — so "is this connected key a treasury"
+   * is a question the chain answers and nothing else can.
+   */
+  taxTreasury: { bytes: Uint8Array };
+  socialTreasury: { bytes: Uint8Array };
   employer: { bytes: Uint8Array };
   employerAssigned: boolean;
   /**

@@ -58,8 +58,18 @@ const WALLET_LABEL: Record<TreasuryName, string> = {
 export function FundDeposit({
   networkId,
   onDeposited,
+  treasuryRole,
 }: {
   networkId: string;
+  /**
+   * Which treasury the connected key IS, read off the chain by the page.
+   *
+   * Null for the platform key, which can see everything here and pay for none
+   * of it: the treasuries are wallets now, and a shielded balance is readable
+   * only by its owner. So this decides whether the card offers an action or
+   * explains which wallet to connect for it.
+   */
+  treasuryRole?: "tax" | "social" | null;
   /**
    * Fired once a remittance has landed, so the page's own read of the two
    * receiving contracts refreshes rather than waiting for a reload. This
@@ -261,7 +271,8 @@ export function FundDeposit({
    * wallet, which no browser holds. Requires a connected wallet, because the
    * signature and the proof both come from it.
    */
-  const walletPays = Boolean(api) && from !== "platform";
+  const walletPays =
+    Boolean(api) && from !== "platform" && treasuryRole === (target === "fund" ? "social" : "tax");
 
   /**
    * Refuses an action that has no chance, and says why.
@@ -415,8 +426,13 @@ export function FundDeposit({
    * cannot assemble.
    */
   async function readConnectedWalletBalance(): Promise<TreasuryBalance | null> {
-    if (!api) return null;
     const which: TreasuryName = target === "fund" ? "social-treasury" : "tax-treasury";
+    const needed = target === "fund" ? "social" : "tax";
+    // Refuses rather than reporting the wrong wallet's money. An earlier version
+    // read whatever was connected and labelled it the treasury, which showed the
+    // PLATFORM wallet's pEUR under "Social treasury" — a figure that looked
+    // right and was not.
+    if (!api || treasuryRole !== needed) return null;
     try {
       const [shielded, unshielded] = await Promise.all([
         api.getShieldedBalances(),
@@ -461,8 +477,9 @@ export function FundDeposit({
         const own = await readConnectedWalletBalance();
         if (!own) {
           throw new Error(
-            "Connect the treasury wallet to read its balance — the service no longer " +
-              "holds treasury keys, so only the wallet itself can see what it holds."
+            `Connect the ${target === "fund" ? "social" : "tax"} treasury wallet to read ` +
+              "its balance. Its pEUR is shielded, so only the key that owns it can see " +
+              "it — not this service, and not the platform key."
           );
         }
         setBalances([own]);
@@ -650,9 +667,10 @@ export function FundDeposit({
             </>
           ) : (
             <>
-              No wallet connected, so the service will pay from its own treasury seed.
-              Connect the {target === "fund" ? "social" : "tax"} treasury to sign this
-              yourself instead.
+              This is the <strong>{treasuryRole ? `${treasuryRole} treasury` : "platform"}</strong>{" "}
+              key. Settling {target === "fund" ? "contributions" : "wage tax"} is paid by the{" "}
+              {target === "fund" ? "social" : "tax"} treasury, so connect that wallet in 1AM
+              to remit — its pEUR is shielded and no other key can spend or even see it.
             </>
           )}
         </p>
