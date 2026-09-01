@@ -10,6 +10,9 @@ import { NationalArrivals } from "./NationalArrivals";
 
 type TreasuryName = "social-treasury" | "tax-treasury" | "platform";
 
+/** Where the typed platform token is remembered between reloads. */
+const TOKEN_KEY = "polisZK/platform-token";
+
 interface TreasuryBalance {
   from: TreasuryName;
   /** Minor units as a string — JSON has no bigint. Null when unreadable. */
@@ -100,7 +103,35 @@ export function FundDeposit({
       : "social-treasury";
   const [period, setPeriod] = useState("");
   const [source, setSource] = useState("");
-  const [token, setToken] = useState("");
+  /**
+   * The platform token, remembered for this browser.
+   *
+   * It cannot come from `.env`: that file is read by the SERVICE, on another
+   * machine, and the browser has no access to it. Shipping it as a `VITE_`
+   * variable would be worse than typing it — Vite inlines those into the public
+   * bundle, so the secret that mints pEUR would be readable by anyone who opens
+   * the JS. So it is typed once and kept here.
+   *
+   * `localStorage` rather than component state alone, because retyping a 64
+   * character secret on every reload is how a truncated paste happens in the
+   * first place. Wrapped in try/catch: a browser with site data blocked throws
+   * on access, and that must not take the panel down.
+   */
+  const [token, setToken] = useState(() => {
+    try {
+      return localStorage.getItem(TOKEN_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  useEffect(() => {
+    try {
+      if (token.trim()) localStorage.setItem(TOKEN_KEY, token.trim());
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch {
+      // Nothing to do — the field still works for this page view.
+    }
+  }, [token]);
 
   /**
    * What the two receiving contracts already hold for the period being typed.
@@ -387,11 +418,24 @@ export function FundDeposit({
         <label className="field settlement-token">
           <span>
             Platform token
+            {/* The length, because the field is a password field and a wrong
+                token is invisible. A truncated paste, a stray character or a
+                password manager filling something else all look identical to a
+                correct one until the service refuses it — and the service will
+                not say which, on purpose. A count is the one thing that can be
+                shown safely and settles it instantly: the token is 64
+                characters, so anything else is a bad paste rather than a wrong
+                secret. */}
             {needsToken ? (
               <em className="note" style={{ marginLeft: 8, fontStyle: "normal" }}>
                 required for every action on this card
               </em>
-            ) : null}
+            ) : (
+              <em className="note" style={{ marginLeft: 8, fontStyle: "normal" }}>
+                {token.trim().length} characters
+                {token.trim().length !== token.length ? " (surrounding spaces ignored)" : ""}
+              </em>
+            )}
           </span>
           <input
             type="password"
