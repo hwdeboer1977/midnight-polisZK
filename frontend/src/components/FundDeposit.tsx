@@ -199,6 +199,24 @@ export function FundDeposit({
   const needsToken = authenticated === true && !token.trim();
 
   /**
+   * Refuses an action that has no chance, and says why.
+   *
+   * Returns true when it has handled the problem. Checked in the handlers
+   * rather than enforced by disabling the buttons: a disabled button is silent,
+   * and the field it refers to is at the top of a card whose actions are at the
+   * bottom, so silence reads as breakage. This answers on the press, with no
+   * round trip, and leaves the control usable the moment a token is typed.
+   */
+  function blockedWithoutToken(): boolean {
+    if (!needsToken) return false;
+    setError(
+      "This service requires a platform token. Paste PLATFORM_API_TOKEN from the " +
+        "service's environment into the field at the top of this card, then try again."
+    );
+    return true;
+  }
+
+  /**
    * Runs a job route to completion.
    *
    * Both routes here answer with a job id rather than a result: a deposit
@@ -264,6 +282,7 @@ export function FundDeposit({
    * per page load for a figure nobody had asked for.
    */
   async function checkBalances() {
+    if (blockedWithoutToken()) return;
     setError(null);
     setReading(true);
     try {
@@ -293,6 +312,7 @@ export function FundDeposit({
    * cannot be pointed at a faucet by hand. This service holds them already.
    */
   async function fundWithNight() {
+    if (blockedWithoutToken()) return;
     setError(null);
     setFunding(true);
     try {
@@ -308,6 +328,7 @@ export function FundDeposit({
   }
 
   async function deposit() {
+    if (blockedWithoutToken()) return;
     setError(null);
     setDone(null);
     setLog([]);
@@ -445,9 +466,7 @@ export function FundDeposit({
         <button
           type="button"
           className="primary remit"
-          disabled={
-            working || needsToken || amountMinor === null || !period.trim() || !source.trim()
-          }
+          disabled={working || amountMinor === null || !period.trim() || !source.trim()}
           onClick={() => void deposit()}
         >
           {busy
@@ -604,15 +623,14 @@ function TreasuryBalances({
 }) {
   return (
     <div className="treasury-balances">
-      {/* Disabled rather than left to fail: these read and spend the platform
-          wallet, so without a token the request can only come back as a bare
-          401. The title says which field is empty, since the button sits well
-          below it and the connection is not otherwise visible. */}
+      {/* Left ENABLED even when the token is missing. Disabling it was tried and
+          was worse: a control that does nothing cannot say why, and the reason
+          sits in a field far enough above to be off screen. The handler answers
+          instead, immediately and without a request. */}
       <button
         type="button"
         className="ghost"
-        disabled={disabled || needsToken}
-        title={needsToken ? "Enter the platform token at the top of this card" : undefined}
+        disabled={disabled}
         onClick={onCheck}
       >
         {reading ? "Reading the wallets…" : balances ? "Re-check balances" : "Check balances"}
@@ -621,8 +639,7 @@ function TreasuryBalances({
         <button
           type="button"
           className="ghost"
-          disabled={disabled || needsToken}
-          title={needsToken ? "Enter the platform token at the top of this card" : undefined}
+          disabled={disabled}
           onClick={onFund}
         >
           {funding ? "Sending NIGHT and registering…" : "Fund the treasuries with NIGHT"}
@@ -630,8 +647,8 @@ function TreasuryBalances({
       ) : null}
       {needsToken ? (
         <p className="note" style={{ marginTop: 6 }}>
-          Reading a shielded balance spends the platform wallet's keys, so it needs
-          the platform token above.
+          These read and spend the platform wallet, so they need the platform token
+          at the top of this card.
         </p>
       ) : null}
       {balances?.some((b) => b.minor !== "0" && b.nightMinor === "0") ? (
