@@ -63,6 +63,21 @@ function remember(token: string | null): void {
  * operator and neither leaks anything. See `server/wallet-auth.ts`.
  */
 export async function signIn(wallet: WalletSigner): Promise<string> {
+  // Checked before anything else, because the type system cannot.
+  // `@midnight-ntwrk/dapp-connector-api` DECLARES `signData` on
+  // `WalletConnectedAPI`, but the declaration describes the protocol, not the
+  // extension the visitor happens to have installed — an older wallet satisfies
+  // the type and still has no such method. Calling it then throws
+  // "signData is not a function" from inside a promise, which surfaces as a
+  // sign-in that fails with nothing in the console to say why.
+  if (typeof wallet?.signData !== "function") {
+    throw new Error(
+      "This wallet does not support message signing (signData), which is how the " +
+        "service checks you hold the platform wallet. Update the wallet extension, " +
+        "or use the platform token instead."
+    );
+  }
+
   const challengeResponse = await fetch(apiUrl("/api/auth/challenge"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -75,12 +90,37 @@ export async function signIn(wallet: WalletSigner): Promise<string> {
     throw new Error(issued.error ?? "This service would not issue a sign-in challenge.");
   }
 
+  // Logged BEFORE the call as well as after. A wallet that rejects, hangs or
+  // throws leaves no trace otherwise, and "nothing in the console" is
+  // indistinguishable from "the button did nothing".
+  console.info("[sign-in] asking the wallet to sign", {
+    challengeLength: issued.challenge.length,
+    hasSignData: typeof wallet.signData === "function",
+  });
+
   // "text" so the operator sees the sentence in their wallet's approval dialog
   // rather than a wall of hex. What they are approving should be readable.
-  const signed = await wallet.signData(issued.challenge, {
-    encoding: "text",
-    keyType: "unshielded",
-  });
+  //
+  // Raced against a timeout because a dead extension channel makes this promise
+  // hang rather than reject: no prompt appears, nothing throws, and the button
+  // waits forever on a dialog that will never open. Two minutes is generous for
+  // a human approving in a wallet window and still short of "forever".
+  const signed = await Promise.race([
+    wallet.signData(issued.challenge, { encoding: "text", keyType: "unshielded" }),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              "The wallet never answered the signing request. Open the wallet extension " +
+                "— the approval prompt may be waiting in its window — or reconnect it and " +
+                "try again."
+            )
+          ),
+        120_000
+      )
+    ),
+  ]);
 
   // What the wallet actually returned, for when it does not match what this
   // service can read. The connector documents neither the encoding of `data`

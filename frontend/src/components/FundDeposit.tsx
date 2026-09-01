@@ -127,7 +127,7 @@ export function FundDeposit({
    * had just followed and no trace of what went wrong.
    */
   const [authError, setAuthError] = useState<string | null>(null);
-  const { api } = useWallet();
+  const { api, wallet, networkId: walletNetworkId } = useWallet();
 
   /**
    * Trades a wallet signature for a session.
@@ -138,14 +138,31 @@ export function FundDeposit({
    * it only proved they had been told it.
    */
   async function authenticate() {
-    if (!api) {
+    if (!api && !wallet) {
       setAuthError("Connect the platform wallet first — the signature comes from it.");
       return;
     }
     setAuthError(null);
     setSigningIn(true);
     try {
-      setToken(await signIn(api as unknown as Parameters<typeof signIn>[0]));
+      /**
+       * Reconnect before signing, rather than reusing the stored handle.
+       *
+       * The `ConnectedAPI` held in context is from whenever the wallet was
+       * connected, and its channel to the extension can be dead by the time
+       * anyone presses this — an extension reload or an update leaves the
+       * object in place with nothing on the other end. The failure mode is the
+       * worst kind: `signData` neither resolves nor rejects, so the wallet
+       * shows no prompt, the console shows no error, and the button sits on
+       * "Waiting for your wallet…" forever. The give-away is
+       * `[1AM Content] Error forwarding message` in the console.
+       *
+       * Calling `connect` again is cheap where the site is already authorised —
+       * no second approval — and it hands back a live handle. Falls back to the
+       * stored one only if there is no initial API to reconnect through.
+       */
+      const signer = wallet ? await wallet.connect(walletNetworkId) : api;
+      setToken(await signIn(signer as unknown as Parameters<typeof signIn>[0]));
     } catch (cause) {
       setAuthError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -469,7 +486,7 @@ export function FundDeposit({
                 disabled={working || signingIn}
                 onClick={() => void authenticate()}
               >
-                {signingIn ? "Waiting for your wallet…" : "Sign in with wallet"}
+                {signingIn ? "Check your wallet for the prompt…" : "Sign in with wallet"}
               </button>
               <p className="note" style={{ marginTop: 6 }}>
                 Everything on this card spends the platform wallet, so it asks that
@@ -729,8 +746,8 @@ function TreasuryBalances({
       ) : null}
       {needsToken ? (
         <p className="note" style={{ marginTop: 6 }}>
-          These read and spend the platform wallet, so they need the platform token
-          at the top of this card.
+          These read and spend the platform wallet, so sign in with it first —
+          the button is at the top of this card.
         </p>
       ) : null}
       {balances?.some((b) => b.minor !== "0" && b.nightMinor === "0") ? (
