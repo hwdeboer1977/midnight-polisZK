@@ -312,6 +312,7 @@ export function FundDeposit({
     // restart mid-job (a managed host sleeps), so this is an ordinary event,
     // not a rare one.
     const deadline = Date.now() + 10 * 60 * 1000;
+    let networkFailures = 0;
     const poll = async (): Promise<T | undefined> => {
       if (Date.now() > deadline) {
         throw new Error(
@@ -319,7 +320,46 @@ export function FundDeposit({
             "try again, and check the wallets before repeating anything that moves money."
         );
       }
-      const r = await fetch(apiUrl(`/api/job/${started.jobId}`));
+      /**
+       * A poll that fails is usually the SERVICE, not the job.
+       *
+       * These jobs sync a shielded wallet over ~180k blocks and then prove for
+       * a minute or two, all inside one request. A managed host sleeps on idle
+       * and redeploys on every push, so the process dying mid-job is ordinary.
+       * When it does, the edge answers with its own error page — which carries
+       * no CORS headers, so the browser reports "Failed to fetch" / a CORS
+       * violation rather than anything about the job. Giving up on the first
+       * one turns a service blip into "your remittance failed", which is a
+       * claim this code cannot actually make: the transaction may already have
+       * been submitted.
+       *
+       * So a network-level failure is retried while the service comes back.
+       */
+      let r: Response;
+      try {
+        r = await fetch(apiUrl(`/api/job/${started.jobId}`));
+      } catch {
+        networkFailures += 1;
+        if (networkFailures > 10) {
+          throw new Error(
+            "Lost contact with the service while the job was running — it most likely " +
+              "restarted. This does NOT mean the transaction failed: it may have been " +
+              "submitted. Press Re-check above to read the contracts before trying again."
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        return poll();
+      }
+      networkFailures = 0;
+      // A job the service no longer knows about is the same story: it restarted
+      // and lost its in-memory record, not a job that failed.
+      if (r.status === 404) {
+        throw new Error(
+          "The service restarted and lost track of that job. It does NOT mean the " +
+            "transaction failed. Press Re-check above to read the contracts before " +
+            "trying again."
+        );
+      }
       const job = (await r.json()) as {
         status: string;
         log?: string[];
