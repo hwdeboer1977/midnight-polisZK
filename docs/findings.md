@@ -243,11 +243,34 @@ Probe results, with transaction hashes, that decided the architecture.
 | Are ZK proofs stored on chain? | **Yes** | |
 | Can a contract require a sibling call to exist? | **Yes, enforced** | `ed9a9950…` |
 | Does that requirement cover the call's data? | **Yes** | |
+| Can one contract send a shielded coin to another contract? | **Never run** | probe written, never executed |
 
 Bundling across contracts works, and `claimContractCall` lets a contract refuse
 to act unless a named sibling call is present — which is what makes a
 cross-contract design buildable, since the chain rejects an incomplete bundle
 rather than the shortfall merely being visible afterwards.
+
+The last row is the one open question, and it is open because the probe was
+never run, not because it failed. `relaypair.compact` deployed one contract
+twice — instance S playing `payroll`, instance R playing the treasury — and had
+S call `sendShielded` with the `right<ZswapCoinPublicKey, ContractAddress>`
+branch, publishing the resulting nonce and colour so the receiver could be told
+which coin to claim. That published nonce was the point: a wallet finds coins by
+scanning and a contract cannot, so whether the client can predict the nonce
+`sendShielded` derives is what decides if contract treasuries are buildable at
+all.
+
+`incomelayerzk-constraints` still records this as tried and stranded, on the
+reasoning that `Transaction.merge` throws when both sides carry contract
+interactions. That reasoning no longer holds — merge works (`13d1f74f…`) and two
+contracts in one transaction is proven (`d6531c86…`) — so the recorded limit
+rests on a premise since disproved and should be treated as unknown rather than
+as a wall. Until someone runs it, `remitTax` keeps sending to a wallet whose
+seed sits in `.env`.
+
+The contract and its driver were removed in the contracts cleanup and are
+recoverable from git: `contracts/relaypair.compact` and `src/c2c-remit-probe.ts`
+at commit `6414cba`.
 
 ### Two recorded beliefs that were wrong
 
