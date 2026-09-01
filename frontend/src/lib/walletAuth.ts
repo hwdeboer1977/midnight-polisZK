@@ -62,7 +62,20 @@ function remember(token: string | null): void {
  * wrong wallet" and "your challenge expired" need different actions from the
  * operator and neither leaks anything. See `server/wallet-auth.ts`.
  */
-export async function signIn(wallet: WalletSigner): Promise<string> {
+export async function signIn(
+  wallet: WalletSigner,
+  /**
+   * Reports each step to the page.
+   *
+   * On screen rather than only in the console, because every failure in this
+   * flow so far has been invisible: a prompt behind the window, a disabled
+   * button, a promise that neither resolves nor rejects. Each looked identical
+   * from the outside — nothing happened — and each needed a different fix. A
+   * visible step tells the operator which one they are in without opening
+   * devtools.
+   */
+  onStep: (step: string) => void = () => {}
+): Promise<string> {
   // Checked before anything else, because the type system cannot.
   // `@midnight-ntwrk/dapp-connector-api` DECLARES `signData` on
   // `WalletConnectedAPI`, but the declaration describes the protocol, not the
@@ -78,6 +91,7 @@ export async function signIn(wallet: WalletSigner): Promise<string> {
     );
   }
 
+  onStep("1/4 asking the service for a challenge…");
   const challengeResponse = await fetch(apiUrl("/api/auth/challenge"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -93,6 +107,7 @@ export async function signIn(wallet: WalletSigner): Promise<string> {
   // Logged BEFORE the call as well as after. A wallet that rejects, hangs or
   // throws leaves no trace otherwise, and "nothing in the console" is
   // indistinguishable from "the button did nothing".
+  onStep("2/4 waiting for your wallet to approve — check the extension window");
   console.info("[sign-in] asking the wallet to sign", {
     challengeLength: issued.challenge.length,
     hasSignData: typeof wallet.signData === "function",
@@ -135,6 +150,7 @@ export async function signIn(wallet: WalletSigner): Promise<string> {
     signatureLength: signed.signature.length,
   });
 
+  onStep("3/4 sending the signature to the service…");
   const verifyResponse = await fetch(apiUrl("/api/auth/verify"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -153,6 +169,7 @@ export async function signIn(wallet: WalletSigner): Promise<string> {
     throw new Error(result.error ?? "The service refused that signature.");
   }
 
+  onStep("4/4 signed in");
   remember(result.token);
   return result.token;
 }

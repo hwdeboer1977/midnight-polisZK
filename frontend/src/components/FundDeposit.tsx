@@ -127,6 +127,8 @@ export function FundDeposit({
    * had just followed and no trace of what went wrong.
    */
   const [authError, setAuthError] = useState<string | null>(null);
+  /** Which step of sign-in is running, shown on the page. */
+  const [signInStep, setSignInStep] = useState<string | null>(null);
   const { api, wallet, networkId: walletNetworkId } = useWallet();
 
   /**
@@ -143,6 +145,7 @@ export function FundDeposit({
       return;
     }
     setAuthError(null);
+    setSignInStep("starting…");
     setSigningIn(true);
     try {
       /**
@@ -161,10 +164,14 @@ export function FundDeposit({
        * no second approval — and it hands back a live handle. Falls back to the
        * stored one only if there is no initial API to reconnect through.
        */
+      setSignInStep("0/4 reconnecting to the wallet…");
       const signer = wallet ? await wallet.connect(walletNetworkId) : api;
-      setToken(await signIn(signer as unknown as Parameters<typeof signIn>[0]));
+      setToken(
+        await signIn(signer as unknown as Parameters<typeof signIn>[0], setSignInStep)
+      );
     } catch (cause) {
       setAuthError(cause instanceof Error ? cause.message : String(cause));
+      setSignInStep(null);
     } finally {
       setSigningIn(false);
     }
@@ -514,6 +521,11 @@ export function FundDeposit({
                 wallet to sign a one-off challenge. Nothing is transferred and no
                 fee is paid.
               </p>
+              {signInStep ? (
+                <p className="note" style={{ marginTop: 6 }}>
+                  <code>{signInStep}</code>
+                </p>
+              ) : null}
               {authError ? (
                 <p className="status error" style={{ marginTop: 6 }}>
                   {authError}
