@@ -91,7 +91,7 @@ export async function signIn(
     );
   }
 
-  onStep("1/4 asking the service for a challenge…");
+  onStep("Asking the service for a challenge…");
   const challengeResponse = await fetch(apiUrl("/api/auth/challenge"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -107,7 +107,7 @@ export async function signIn(
   // Logged BEFORE the call as well as after. A wallet that rejects, hangs or
   // throws leaves no trace otherwise, and "nothing in the console" is
   // indistinguishable from "the button did nothing".
-  onStep("2/4 waiting for your wallet to approve — check the extension window");
+  onStep("OPEN YOUR WALLET EXTENSION AND APPROVE — it will not open by itself");
   console.info("[sign-in] asking the wallet to sign", {
     challengeLength: issued.challenge.length,
     hasSignData: typeof wallet.signData === "function",
@@ -127,12 +127,12 @@ export async function signIn(
         () =>
           reject(
             new Error(
-              "The wallet never answered the signing request. Open the wallet extension " +
-                "— the approval prompt may be waiting in its window — or reconnect it and " +
-                "try again."
+              "No answer from the wallet. 1AM does NOT raise its own window for a signing " +
+                "request — open the extension from the toolbar and approve the pending " +
+                "\"Sign Data\" prompt, then press Sign in again."
             )
           ),
-        120_000
+        90_000
       )
     ),
   ]);
@@ -150,7 +150,7 @@ export async function signIn(
     signatureLength: signed.signature.length,
   });
 
-  onStep("3/4 sending the signature to the service…");
+  onStep("Checking the signature…");
   const verifyResponse = await fetch(apiUrl("/api/auth/verify"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -169,7 +169,7 @@ export async function signIn(
     throw new Error(result.error ?? "The service refused that signature.");
   }
 
-  onStep("4/4 signed in");
+  onStep("Signed in");
   remember(result.token);
   return result.token;
 }

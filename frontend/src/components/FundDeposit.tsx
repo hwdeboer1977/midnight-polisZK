@@ -164,7 +164,7 @@ export function FundDeposit({
        * no second approval — and it hands back a live handle. Falls back to the
        * stored one only if there is no initial API to reconnect through.
        */
-      setSignInStep("0/4 reconnecting to the wallet…");
+      setSignInStep("Reconnecting to the wallet…");
       const signer = wallet ? await wallet.connect(walletNetworkId) : api;
       setToken(
         await signIn(signer as unknown as Parameters<typeof signIn>[0], setSignInStep)
@@ -514,16 +514,24 @@ export function FundDeposit({
                 disabled={signingIn}
                 onClick={() => void authenticate()}
               >
-                {signingIn ? "Check your wallet for the prompt…" : "Sign in with wallet"}
+                {signingIn ? "Waiting — approve in your wallet" : "Sign in with wallet"}
               </button>
               <p className="note" style={{ marginTop: 6 }}>
                 Everything on this card spends the platform wallet, so it asks that
                 wallet to sign a one-off challenge. Nothing is transferred and no
                 fee is paid.
               </p>
+              {/* Loud, because the thing it is asking for is INVISIBLE: 1AM
+                  queues a `signData` request without raising its window, so the
+                  page waits on a dialog the operator has no reason to know
+                  exists. Transaction requests do raise it, which makes this the
+                  one action in the app where nothing appears to happen. */}
               {signInStep ? (
-                <p className="note" style={{ marginTop: 6 }}>
-                  <code>{signInStep}</code>
+                <p
+                  className={signingIn ? "status error" : "note"}
+                  style={{ marginTop: 6 }}
+                >
+                  {signInStep}
                 </p>
               ) : null}
               {authError ? (
