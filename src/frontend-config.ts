@@ -10,6 +10,23 @@ import { WebSocket } from "ws";
 import { EnvironmentManager } from "./utils/environment.js";
 import { listDeployments } from "./utils/deployments.js";
 import { managedPath } from "./utils/contract.js";
+import { contractVersion } from "./utils/contract-version.js";
+
+/**
+ * The contract's verifier-key fingerprint, or undefined where it cannot be read.
+ *
+ * Undefined rather than throwing: `contractVersion` needs `contracts/managed`,
+ * and a checkout without it can still legitimately write an env file. A missing
+ * cache key costs a stale-cache risk, which is strictly better than a config
+ * step that refuses to run.
+ */
+function contractVersionOrUndefined(name: string): string | undefined {
+  try {
+    return contractVersion(name);
+  } catch {
+    return undefined;
+  }
+}
 
 if (!(globalThis as { WebSocket?: unknown }).WebSocket) {
   (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
@@ -262,6 +279,27 @@ const baseline: [string, string | undefined][] = [
   ["VITE_TAXPARAMS_ADDRESS", process.env.taxparams_address],
   ["VITE_FUND_ADDRESS", process.env.fund_address],
   ["VITE_TAXVAULT_ADDRESS", process.env.taxvault_address],
+  /**
+   * The build's own verifier-key fingerprint, used ONLY to bust the ZK cache.
+   *
+   * `vercel.json` serves `/zk/*` as `immutable` for a year, which is right for
+   * files this large and wrong for these paths: `keys/<circuit>.verifier` is a
+   * STABLE url whose contents change with every contract version. A browser
+   * that fetched `setPayroll.verifier` under an older contract keeps serving it
+   * from disk without revalidating — `immutable` means it does not even ask —
+   * and every circuit then fails its verifier-key check against the redeployed
+   * contract. Changing the header does not rescue an already-poisoned browser,
+   * because it never sends the request that would learn about the new header.
+   *
+   * Only a different URL forces a refetch, so `zkBaseUrl` appends this as a
+   * query string. Vercel serves the same bytes for any query, the response is
+   * still cached immutably, and a new contract version is simply a new url.
+   *
+   * This was found the hard way: after redeploying payroll, every circuit was
+   * reported as having a mismatched verifier key EXCEPT `remit` — the one
+   * circuit whose file was new, and therefore the only one with a cold cache.
+   */
+  ["VITE_ZK_VERSION", contractVersionOrUndefined("payroll")],
 ];
 
 /**

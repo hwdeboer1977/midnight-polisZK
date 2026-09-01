@@ -54,6 +54,40 @@ const zkBaseUrl = (contractName: string) =>
   `${window.location.origin}/zk/${contractName}`;
 
 /**
+ * Fetches a ZK asset at a url that changes when the contract does.
+ *
+ * `vercel.json` serves `/zk/*` as `public, max-age=31536000, immutable`, which
+ * is correct for 19 MB prover keys and wrong for the paths they sit at:
+ * `keys/<circuit>.verifier` never changes name, only contents. After a contract
+ * redeploy a returning browser keeps serving the previous version's keys from
+ * disk — `immutable` means it does not revalidate, so it never learns — and
+ * every circuit fails its verifier-key check against the new contract.
+ *
+ * The failure is worth recognising because it does not look like a cache
+ * problem: the node reports "undefined or have mismatched verifier keys" for
+ * every circuit EXCEPT the one that was newly added, since that is the only
+ * file whose url had no cache entry. Everything server-side checks out — the
+ * right bytes are served, `curl` confirms it — because curl has no cache.
+ *
+ * Editing the header cannot fix an already-poisoned browser: it will not send
+ * a request to discover the change. Only a different url will, hence the query
+ * string. It is appended per-asset rather than to the base because
+ * `FetchZkConfigProvider` concatenates `keys/<circuit>.prover` onto the base,
+ * which would bury a query string mid-path.
+ */
+const zkFetch: typeof fetch = (input, init) => {
+  const url =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+  const version = import.meta.env.VITE_ZK_VERSION;
+  if (!version || !url.includes("/zk/")) return fetch(input, init);
+  return fetch(`${url}${url.includes("?") ? "&" : "?"}v=${version}`, init);
+};
+
+/**
  * Private state that is never written.
  *
  * `payroll.compact` declares no witnesses — every input to `setPayroll` is a
@@ -372,7 +406,7 @@ export async function connectContract(options: {
 
   const zkConfigProvider = new FetchZkConfigProvider(
     zkBaseUrl(contractName),
-    fetch.bind(window)
+    zkFetch
   );
   const shielded = await api.getShieldedAddresses();
 
