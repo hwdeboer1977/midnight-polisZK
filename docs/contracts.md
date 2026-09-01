@@ -12,10 +12,28 @@ employer.
 
 ### Ownership
 
-The platform operator deploys an instance, then hands it to its employer exactly
-once. After assignment the platform has **no privileged circuit left**: it cannot
-reassign, cannot revoke, and cannot set payroll. Only employer X can write to
-employer X's instance.
+The platform operator deploys an instance and hands it to its employer. After
+assignment the platform cannot set payroll, cannot reassign the seat to anyone
+else, and keeps exactly one privileged circuit: `revokeEmployer`. Only employer
+X can write to employer X's instance.
+
+**One contract, one employer, for the life of the contract.** `revokeEmployer`
+vacates the seat, and `lastEmployer` remembers who held it, so `assignEmployer`
+can refuse every key but that one. A revoke therefore ends an employer's access
+to their contract without handing that contract to anybody else — the payroll
+history in it stays theirs, and their own key is the only way back in.
+
+That is a narrower power than it used to be, and the narrowing is the point.
+While the seat could be refilled with any key, a revoked instance could be given
+to an unrelated company along with write access to the previous one's records —
+`endEmployment` is write-once per slot, so a stranger in the seat could
+permanently burn a termination attestation the real employee still needed. No
+salary was ever exposed by that (commitments are hashes, and sealed openings
+stay encrypted under the first employer's passphrase), but the write access and
+the mixing of two companies' pools in one contract were reason enough.
+
+The cost is that a contract can no longer be recycled: onboarding deploys one
+per employer rather than refilling a shared seat.
 
 ```bash
 INSTANCE=acme npm run deploy:payroll   # platform deploys; instance is unowned
@@ -39,6 +57,74 @@ Verified on the devnet with three separately funded wallets:
 | platform sets payroll         | `failed assert: only the employer may set payroll`  |
 | unrelated wallet sets payroll | `failed assert: only the employer may set payroll`  |
 | employer X sets payroll       | accepted                                            |
+
+The seat rule is exercised in `tests/employer-seat.test.mjs`, which drives the
+compiled circuits locally — no wallet, no node, no proofs:
+
+| Attempt                                  | Result                                             |
+| ---------------------------------------- | -------------------------------------------------- |
+| platform assigns a first employer        | accepted                                            |
+| revoke, then assign a DIFFERENT employer | `failed assert: this contract belongs to another employer` |
+| revoke, then assign the same employer    | accepted                                            |
+| employer rotates their key, then revoked | the rotated key is restorable; the retired one is not |
+| platform calls `transferEmployer`        | `failed assert: only the employer may transfer ownership` |
+
+### Which employer a period was filed by
+
+`PayrollCommitment` binds the employer key, so reopening a commitment needs the
+key that FILED the period. `employer` is not that key — it is whoever holds the
+seat now, and it moves: `revokeEmployer` zeroes it, `transferEmployer` replaces
+it. Every circuit that recomputed a commitment read the moving value, which made
+two ordinary acts destructive:
+
+- a revoke stopped every payslip already issued from verifying, reported by
+  `checkPayslip` as a figures mismatch — the message that means fraud;
+- a key rotation left any still-unpaid period unpayable, because `payEmployee`
+  could no longer reproduce the commitment it must open. The circuit that exists
+  so a lost key cannot strand an instance was the thing that stranded it.
+
+`employerFor` records the filer when the period is filed, exactly as
+`paramsHashFor` records its rule set, and both are facts about the period rather
+than about who is filing next. `tests/period-employer.test.mjs` drives a filing
+through a revoke and a rotation and checks the commitment still opens — with the
+old behaviour kept as a negative control, so the fix cannot be quietly undone.
+
+### Remitting: one circuit, not two
+
+`remitTax` and `remitSocial` were the same circuit twice — identical guards,
+token check, amount check and send, differing only in six paired fields
+(`taxCoinFor`/`socialCoinFor`, `totalTaxFor`/`totalSocialFor`,
+`taxTreasury`/`socialTreasury`, `taxPool`/`socialPool`,
+`taxRemitted`/`socialRemitted`, and which record is cleared). They are now one
+`remit(period, isTax, treasury, coin)`.
+
+This was forced rather than chosen: the contract no longer fit in a deploy
+transaction. See "The deploy ceiling" in `findings.md` for how that was
+established and what it costs to ignore.
+
+The merge preserves the one property that matters. There is exactly **one**
+`sendShielded`, and `treasury` still reaches it as a disclosed argument —
+`findings.md` records that reading the recipient from the ledger got every
+remittance refused with the retired catch-all 103, and that passing it as an
+argument is what fixed it. The branch selects reads before the send and writes
+after it, so the send itself never moved. The destination is still frozen at
+deploy; naming it as an argument cannot redirect anything, because the assert
+pins it to the frozen value.
+
+Callers pass `isTax`: `frontend/src/lib/payPayroll.ts` sends
+`what === "tax"` as the second argument.
+
+### Why `endEmployment` is not gated on the filer
+
+It is write-once per slot, so whoever can call it can permanently deny an
+employee the attestation their claim needs. Binding it to `employerFor` was
+planned and then dropped, because the seat rule above already closes the hole
+and the binding would open a worse one. The hazard was a stranger in the seat,
+reachable only while a revoked contract could be handed to a different key —
+which `assignEmployer` now refuses. What remains reachable is the employer's own
+lineage, and a filer-gate would break exactly that: an employer who rotated
+their key could no longer end employment for periods filed under the old one,
+which is the same bug `employerFor` was written to fix.
 
 Assertions fire during local circuit execution, **before** balancing, so an
 unauthorised call costs nothing and never reaches the chain.

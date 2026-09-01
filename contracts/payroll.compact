@@ -128,6 +128,30 @@ export ledger socialTreasury: ZswapCoinPublicKey;
 export ledger employer: ZswapCoinPublicKey;
 export ledger employerAssigned: Boolean;
 
+// Who this contract belongs to, remembered ACROSS a revoke.
+//
+// `employer` cannot answer that question: `revokeEmployer` clears it, precisely
+// so the ledger stops stating an ownership that no longer holds. That left the
+// contract with no memory of who had filed its payroll, and `assignEmployer`
+// with nothing to check a new name against — so a vacated seat could be handed
+// to any key the platform chose, including a company unrelated to the payroll
+// already in the contract.
+//
+// Nothing in that was a disclosure. Every field here is `export ledger` and was
+// world-readable before the handover; the salaries stay behind commitments and
+// the sealed openings stay encrypted under the first employer's passphrase. The
+// harm was write access — `endEmployment` is write-once per slot, so a stranger
+// in the seat could permanently burn a termination the real employee still
+// needed — together with pools and running totals that would then mix two
+// companies' money in one contract.
+//
+// `everAssigned` is separate from `lastEmployer` rather than derived from it.
+// Comparing against `default<ZswapCoinPublicKey>` would conflate "never
+// assigned" with "assigned to the zero key", and the zero key is exactly what
+// `revokeEmployer` writes.
+export ledger lastEmployer: ZswapCoinPublicKey;
+export ledger everAssigned: Boolean;
+
 // Payroll is recorded per period, not as a single current state.
 //
 // A commitment is only worth having if it can still be opened when someone
@@ -261,6 +285,28 @@ export ledger terminationFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
 // while keeping them reconstructible, which random nonces would not.
 export ledger fileRoundFor: Map<Uint<32>, Uint<32>>;
 
+// period -> the employer key its commitments were sealed with.
+//
+// `PayrollCommitment` binds `employer`, so reproducing a commitment needs the
+// key that FILED the period — and `employer` is not that key. It is the key
+// holding the seat right now, and it moves: `revokeEmployer` zeroes it and
+// `transferEmployer` replaces it. Every circuit that recomputes a commitment
+// was reading the moving value, which made two ordinary acts destructive:
+//
+//   • A revoke zeroed it, so every payslip already issued stopped verifying —
+//     `checkPayslip` recomputes against the ledger and got the zero key, and
+//     reported the mismatch with the message that means fraud.
+//   • A key rotation replaced it, so any period still unpaid became unpayable:
+//     `payEmployee` could no longer reproduce the commitment it must open. The
+//     circuit that exists so a lost key cannot strand an instance was the thing
+//     that stranded it.
+//
+// A period's employer is a fact about the period, exactly as its rule set is,
+// and both are now written once when it is filed. Re-filing a month overwrites
+// this along with the commitments, which is right: the round that stands is the
+// one whose figures stand.
+export ledger employerFor: Map<Uint<32>, ZswapCoinPublicKey>;
+
 // How many coins this contract has ever received.
 //
 // Coins land in the Zswap tree in the order they are created, so the n-th coin
@@ -314,6 +360,7 @@ export ledger socialCoinFor: Map<Uint<32>, Uint<32>>;
 constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
   platform = disclose(ownPublicKey());
   employerAssigned = false;
+  everAssigned = false;
   latestPeriod = 0;
   payTokenSet = false;
   coinsReceived = 0;
@@ -345,17 +392,42 @@ export circuit setParamsFor(period: Uint<32>, hash: Bytes<32>): [] {
 // Hands the instance to an employer. Platform only, and only while the seat is
 // vacant — which it is at deploy, and again after `revokeEmployer`.
 //
-// Nothing here distinguishes a first assignment from a re-assignment, so a
-// revoked employer can be given the same instance back by naming their key
-// again. That is deliberate: a lapsed subscription that is later paid should
-// restore the employer to the contract holding their own payroll history, not
-// strand it and force a fresh deployment they cannot migrate into.
+// A revoked employer can be given the same instance back by naming their key
+// again, and that is the ONLY thing a re-assignment can do. A lapsed
+// subscription that is later paid should restore the employer to the contract
+// holding their own payroll history, not strand it and force a fresh deployment
+// they cannot migrate into — but restoring the employer and handing their
+// contract to somebody else are different acts, and this circuit used to be
+// unable to tell them apart.
+//
+// It could not tell them apart because nothing survived the revoke to compare
+// against. `lastEmployer` is that memory, and the assert below is the whole of
+// the rule: one contract, one employer, for the life of the contract.
+//
+// ── What this costs, stated plainly ────────────────────────────────────────
+//
+// A contract can no longer be recycled. `utils/onboarding.ts` used to fill this
+// seat on the single contract named by `payroll_address` — revoke-then-onboard
+// rather than deploy-another-contract — and that is now unbuildable by design:
+// the second employer to arrive is refused here. Onboarding deploys a contract
+// per employer instead, which is what the service needed anyway, since a
+// contract that has filed payroll is that employer's record and not a seat.
+//
+// The platform keeps exactly one power over a live employer, `revokeEmployer`,
+// and it is now strictly weaker than it was: it can end an employer's access to
+// their contract, and it can no longer give that contract to anyone else.
 export circuit assignEmployer(newEmployer: ZswapCoinPublicKey): [] {
   assert(ownPublicKey() == platform, "only the platform may assign the employer");
   assert(!employerAssigned, "employer already assigned");
+  assert(
+    !everAssigned || newEmployer == lastEmployer,
+    "this contract belongs to another employer"
+  );
 
   employer = disclose(newEmployer);
   employerAssigned = true;
+  lastEmployer = disclose(newEmployer);
+  everAssigned = true;
 }
 
 // Takes the seat back. Platform only.
@@ -364,8 +436,14 @@ export circuit assignEmployer(newEmployer: ZswapCoinPublicKey): [] {
 // be read before it is relied on. Until this circuit existed, `assignEmployer`
 // fired once and the platform had no privileged circuit left — an employer
 // could verify from the contract alone that nobody could take it from them.
-// That is no longer true. The platform can now vacate the seat at any time and
-// hand it to any key it chooses, and the employer cannot prevent it.
+// That is no longer true. The platform can vacate the seat at any time and the
+// employer cannot prevent it.
+//
+// What it can no longer do is hand the seat onward. `assignEmployer` refuses
+// any key but the one that held it, so a revoke ends an employer's access to
+// their contract without giving that contract to anybody else — the instance
+// and the payroll history in it stay theirs, and the only way back into the
+// seat is their own key.
 //
 // What it deliberately does NOT do:
 //
@@ -398,6 +476,12 @@ export circuit transferEmployer(newEmployer: ZswapCoinPublicKey): [] {
   assert(ownPublicKey() == employer, "only the employer may transfer ownership");
 
   employer = disclose(newEmployer);
+  // The memory follows the seat, or rotating a key would quietly cost the
+  // employer the right to be restored after a later revoke: `assignEmployer`
+  // would still be holding them to the key this call just replaced, and the
+  // circuit that exists to stop a lost key stranding the instance would be the
+  // thing that stranded it.
+  lastEmployer = disclose(newEmployer);
 }
 
 // Salaries are capped at Uint<60> rather than Uint<64> so that ten of them
@@ -548,6 +632,12 @@ export circuit setPayroll(
     fileRoundFor.insert(p, (fileRoundFor.lookup(p) + 1) as Uint<32>);
   }
 
+  // Recorded BEFORE the commitments below, and read back by everything that
+  // reopens them. `employer` and `employerFor.lookup(p)` are the same value in
+  // this circuit and only in this circuit — which is the whole reason the write
+  // belongs here rather than anywhere else.
+  employerFor.insert(p, employer);
+
   for (const i of 0..2) {
     commitmentsFor.lookup(p).insert(
       i as Uint<8>,
@@ -559,7 +649,7 @@ export circuit setPayroll(
           net: net[i],
           weeks: weeks[i],
           period: p,
-          employer: employer,
+          employer: employerFor.lookup(p),
           paramsHash: paramsHashFor.lookup(p),
           nonce: nonces[i]
         }
@@ -626,7 +716,7 @@ export circuit fundEmployee(
       persistentHash<PayrollCommitment>(
 PayrollCommitment {
           gross: gross, tax: tax, social: social, net: net,
-          weeks: weeks, period: p, employer: employer,
+          weeks: weeks, period: p, employer: employerFor.lookup(p),
           paramsHash: paramsHashFor.lookup(p), nonce: nonce
         }
       ),
@@ -721,7 +811,7 @@ export circuit fundPeriod(
         persistentHash<PayrollCommitment>(
           PayrollCommitment {
             gross: gross[i], tax: tax[i], social: social[i], net: net[i],
-            weeks: weeks[i], period: p, employer: employer,
+            weeks: weeks[i], period: p, employer: employerFor.lookup(p),
             paramsHash: paramsHashFor.lookup(p), nonce: nonces[i]
           }
         ),
@@ -814,7 +904,7 @@ export circuit payEmployee(
       persistentHash<PayrollCommitment>(
 PayrollCommitment {
           gross: gross, tax: tax, social: social, net: net,
-          weeks: weeks, period: p, employer: employer,
+          weeks: weeks, period: p, employer: employerFor.lookup(p),
           paramsHash: paramsHashFor.lookup(p), nonce: nonce
         }
       ),
@@ -963,8 +1053,39 @@ export circuit fundWithholding(
 // The assert is what keeps the guarantee: naming any other treasury is refused,
 // so taking it as an argument changes how the value reaches `sendShielded` and
 // nothing about where the money can go.
-export circuit remitTax(
+// Sends one period's withheld tax OR social contribution to its treasury.
+//
+// One circuit for both, selected by `isTax`. They were two, and the two were
+// the same circuit twice: identical guards, identical token and amount checks,
+// identical send, differing only in which of six paired fields they touched.
+//
+// ── Why they were merged, which is not a tidiness argument ─────────────────
+//
+// A payroll deploy sits on the network's per-transaction ceiling. The contract
+// deployed on 2026-08-28 with 22,276 bytes of ZKIR across 13 circuits; adding
+// `employerFor` and the seat rule took it to 22,820 and the node began refusing
+// the deploy outright with `1010: Transaction would exhaust the block limits`,
+// on an otherwise empty chain. The pre-change source still deployed, so the
+// margin was under 544 bytes. Thirteen circuits was already one too many, and
+// this pair was the only true duplicate among them.
+//
+// ── What must NOT move, and why ────────────────────────────────────────────
+//
+// There is exactly ONE `sendShielded`, and `treasury` reaches it as a disclosed
+// ARGUMENT. That is not incidental: `docs/findings.md` records that reading the
+// recipient from the ledger and sending to it directly got every remittance
+// refused by the node with the retired catch-all 103, while passing it as an
+// argument — the way `payPeriod` passes `disclose(payees[i])` — fixed it. The
+// destination is still the one frozen at deploy; naming it as an argument does
+// not let a caller choose it, because the assert below pins it to the frozen
+// value and refuses any other. Putting the send inside the branch would give
+// this circuit two of them and put that fix back at risk for nothing.
+//
+// The branch is therefore only what it has to be: the six paired fields. The
+// reads are selected before the send, the writes after it.
+export circuit remit(
   period: Uint<32>,
+  isTax: Boolean,
   treasury: ZswapCoinPublicKey,
   coin: QualifiedShieldedCoinInfo
 ): [] {
@@ -975,15 +1096,19 @@ export circuit remitTax(
   );
 
   const p = disclose(period);
+  const t = disclose(isTax);
   assert(withheldFor.member(p) && withheldFor.lookup(p), "that period is not funded");
-  assert(taxCoinFor.member(p), "no tax coin recorded for that period");
+  assert(
+    t ? taxCoinFor.member(p) : socialCoinFor.member(p),
+    "no coin recorded for that period"
+  );
 
-  const owed = totalTaxFor.lookup(p);
+  const owed = t ? totalTaxFor.lookup(p) : totalSocialFor.lookup(p);
+  const frozen = t ? taxTreasury : socialTreasury;
+
   assert(payToken == disclose(coin.color), "wrong token for this payroll");
-  assert(coin.value == owed as Uint<128>, "coin does not hold that period's tax");
-  // The destination is still the one frozen at deploy. Naming it as an argument
-  // does not let a caller choose it.
-  assert(disclose(treasury) == taxTreasury, "that is not this contract's tax treasury");
+  assert(coin.value == owed as Uint<128>, "coin does not hold that period's amount");
+  assert(disclose(treasury) == frozen, "that is not this contract's treasury for that");
 
   sendShielded(
     disclose(coin),
@@ -991,46 +1116,15 @@ export circuit remitTax(
     disclose(owed) as Uint<128>
   );
 
-  taxPool = (taxPool - owed) as Uint<64>;
-  taxRemitted = (taxRemitted + owed) as Uint<64>;
-  taxCoinFor.remove(p);
-}
-
-// The same for the social contribution, to its own treasury.
-// The same for the social contribution — see `remitTax` for why the treasury
-// is an argument rather than a ledger read.
-export circuit remitSocial(
-  period: Uint<32>,
-  treasury: ZswapCoinPublicKey,
-  coin: QualifiedShieldedCoinInfo
-): [] {
-  assert(employerAssigned, "no employer assigned yet");
-  assert(
-    ownPublicKey() == employer || ownPublicKey() == platform,
-    "only the employer or the platform may remit"
-  );
-
-  const p = disclose(period);
-  assert(withheldFor.member(p) && withheldFor.lookup(p), "that period is not funded");
-  assert(socialCoinFor.member(p), "no contribution coin recorded for that period");
-
-  const owed = totalSocialFor.lookup(p);
-  assert(payToken == disclose(coin.color), "wrong token for this payroll");
-  assert(coin.value == owed as Uint<128>, "coin does not hold that period's contribution");
-  assert(
-    disclose(treasury) == socialTreasury,
-    "that is not this contract's social treasury"
-  );
-
-  sendShielded(
-    disclose(coin),
-    left<ZswapCoinPublicKey, ContractAddress>(disclose(treasury)),
-    disclose(owed) as Uint<128>
-  );
-
-  socialPool = (socialPool - owed) as Uint<64>;
-  socialRemitted = (socialRemitted + owed) as Uint<64>;
-  socialCoinFor.remove(p);
+  if (t) {
+    taxPool = (taxPool - owed) as Uint<64>;
+    taxRemitted = (taxRemitted + owed) as Uint<64>;
+    taxCoinFor.remove(p);
+  } else {
+    socialPool = (socialPool - owed) as Uint<64>;
+    socialRemitted = (socialRemitted + owed) as Uint<64>;
+    socialCoinFor.remove(p);
+  }
 }
 
 // Pays the whole period in one transaction.
@@ -1076,7 +1170,7 @@ export circuit payPeriod(
         persistentHash<PayrollCommitment>(
           PayrollCommitment {
             gross: gross[i], tax: tax[i], social: social[i], net: net[i],
-            weeks: weeks[i], period: p, employer: employer,
+            weeks: weeks[i], period: p, employer: employerFor.lookup(p),
             paramsHash: paramsHashFor.lookup(p), nonce: nonces[i]
           }
         ),

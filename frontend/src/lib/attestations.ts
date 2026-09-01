@@ -155,7 +155,11 @@ export async function findAttestations(
             ledger.commitmentsFor.lookup(period).member(key)
               ? bytesToHex(ledger.commitmentsFor.lookup(period).lookup(key))
               : "",
-          employerKey: ledger.employer.bytes,
+          // Who filed the period, which is what the commitment binds — not the
+          // key in the seat now, which a revoke zeroes and a rotation replaces.
+          employerKey: ledger.employerFor.member(period)
+            ? ledger.employerFor.lookup(period).bytes
+            : ledger.employer.bytes,
           paramsHash: ledger.paramsHashFor.member(period)
             ? ledger.paramsHashFor.lookup(period)
             : new Uint8Array(32),

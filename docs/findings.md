@@ -289,6 +289,55 @@ server is down" when it was irrelevant.
 **The lesson worth keeping: these notes have a shelf life. Retest before
 designing around a recorded limit.**
 
+## The deploy ceiling
+
+`payroll` sits on the network's per-transaction limit, and has done since before
+anyone noticed. Establishing that cost four deploy attempts on 2026-09-01 and is
+written down here so the next person does not repeat them.
+
+The symptom is `1010: Invalid Transaction: Transaction would exhaust the block
+limits` — Substrate's `ExhaustsResources`, with no inner `Custom error: N`. It
+arrives at submission, after proving, and says nothing about which contract or
+which limit.
+
+What ruled out every other explanation:
+
+| Check | Result |
+| --- | --- |
+| Network health | 13 peers, not syncing, finalizing normally |
+| Block occupancy | 3 extrinsics, 434 bytes — essentially empty |
+| Deployer wallet | 9.99 tNIGHT, ~50 tDUST |
+| A 2-circuit contract (`taxvault`) | deployed fine, same wallet, same minute |
+| The PRE-change payroll source, recompiled | **deployed fine** |
+
+That last row is the one that matters. The pre-change source recompiles to
+`ee56ef7459949944`, byte-identical to what deployed on 2026-08-28, and it still
+deploys today — so the limit had not moved. Adding `employerFor` and the seat
+rule took ZKIR from 22,276 to 22,820 bytes across 13 circuits and that was
+enough to be refused. **The margin was under 544 bytes.**
+
+Verifier keys were identical either side of that change (23,707 bytes), so the
+binding quantity is not simply the on-chain state size. Merging `remitTax` and
+`remitSocial` into one `remit` brought verifier keys to 21,588 and ZKIR to
+22,379 — still 103 ZKIR bytes above the last known-good point, but 2,119
+verifier bytes below it — and that deployed. Which of the two dimensions
+actually binds is therefore still not established; what is established is that
+removing a whole circuit buys enough room and trimming statements does not.
+
+**What to do about it.** Treat 13 circuits as over the line and 12 as the
+current ceiling. Before adding anything to `payroll`, budget for removing a
+circuit, and expect a size failure to look like a network fault rather than a
+contract one. Community reports put the threshold around 10 non-trivial circuits
+with 5-7 per contract as the safe heuristic, and the limits are described as
+deliberately conservative for this network phase — so this may relax later.
+
+The obvious next reduction is NOT `payEmployee`, despite it having no callers on
+the happy path. It is the recovery route for a partially funded period:
+`payPeriod` asserts `fundedFor` and `!paidFor` for every slot, so it cannot
+settle a period where funding failed partway, and `setPayroll` refuses to
+re-file a month with a funded, unpaid slot. Removing it would strand those coins
+permanently — the exact hazard the comment above that guard exists to prevent.
+
 ## Appendix: the tax and vault design
 
 The reasoning behind splitting rules, payroll and custody into separate

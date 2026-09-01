@@ -82,22 +82,15 @@ export type ImpureCircuits<PS> = {
                                   color: Uint8Array,
                                   value: bigint
                                 }): __compactRuntime.CircuitResults<PS, []>;
-  remitTax(context: __compactRuntime.CircuitContext<PS>,
-           period_0: bigint,
-           treasury_0: { bytes: Uint8Array },
-           coin_0: { nonce: Uint8Array,
-                     color: Uint8Array,
-                     value: bigint,
-                     mt_index: bigint
-                   }): __compactRuntime.CircuitResults<PS, []>;
-  remitSocial(context: __compactRuntime.CircuitContext<PS>,
-              period_0: bigint,
-              treasury_0: { bytes: Uint8Array },
-              coin_0: { nonce: Uint8Array,
-                        color: Uint8Array,
-                        value: bigint,
-                        mt_index: bigint
-                      }): __compactRuntime.CircuitResults<PS, []>;
+  remit(context: __compactRuntime.CircuitContext<PS>,
+        period_0: bigint,
+        isTax_0: boolean,
+        treasury_0: { bytes: Uint8Array },
+        coin_0: { nonce: Uint8Array,
+                  color: Uint8Array,
+                  value: bigint,
+                  mt_index: bigint
+                }): __compactRuntime.CircuitResults<PS, []>;
   payPeriod(context: __compactRuntime.CircuitContext<PS>,
             period_0: bigint,
             gross_0: bigint[],
@@ -193,22 +186,15 @@ export type ProvableCircuits<PS> = {
                                   color: Uint8Array,
                                   value: bigint
                                 }): __compactRuntime.CircuitResults<PS, []>;
-  remitTax(context: __compactRuntime.CircuitContext<PS>,
-           period_0: bigint,
-           treasury_0: { bytes: Uint8Array },
-           coin_0: { nonce: Uint8Array,
-                     color: Uint8Array,
-                     value: bigint,
-                     mt_index: bigint
-                   }): __compactRuntime.CircuitResults<PS, []>;
-  remitSocial(context: __compactRuntime.CircuitContext<PS>,
-              period_0: bigint,
-              treasury_0: { bytes: Uint8Array },
-              coin_0: { nonce: Uint8Array,
-                        color: Uint8Array,
-                        value: bigint,
-                        mt_index: bigint
-                      }): __compactRuntime.CircuitResults<PS, []>;
+  remit(context: __compactRuntime.CircuitContext<PS>,
+        period_0: bigint,
+        isTax_0: boolean,
+        treasury_0: { bytes: Uint8Array },
+        coin_0: { nonce: Uint8Array,
+                  color: Uint8Array,
+                  value: bigint,
+                  mt_index: bigint
+                }): __compactRuntime.CircuitResults<PS, []>;
   payPeriod(context: __compactRuntime.CircuitContext<PS>,
             period_0: bigint,
             gross_0: bigint[],
@@ -324,22 +310,15 @@ export type Circuits<PS> = {
                                   color: Uint8Array,
                                   value: bigint
                                 }): __compactRuntime.CircuitResults<PS, []>;
-  remitTax(context: __compactRuntime.CircuitContext<PS>,
-           period_0: bigint,
-           treasury_0: { bytes: Uint8Array },
-           coin_0: { nonce: Uint8Array,
-                     color: Uint8Array,
-                     value: bigint,
-                     mt_index: bigint
-                   }): __compactRuntime.CircuitResults<PS, []>;
-  remitSocial(context: __compactRuntime.CircuitContext<PS>,
-              period_0: bigint,
-              treasury_0: { bytes: Uint8Array },
-              coin_0: { nonce: Uint8Array,
-                        color: Uint8Array,
-                        value: bigint,
-                        mt_index: bigint
-                      }): __compactRuntime.CircuitResults<PS, []>;
+  remit(context: __compactRuntime.CircuitContext<PS>,
+        period_0: bigint,
+        isTax_0: boolean,
+        treasury_0: { bytes: Uint8Array },
+        coin_0: { nonce: Uint8Array,
+                  color: Uint8Array,
+                  value: bigint,
+                  mt_index: bigint
+                }): __compactRuntime.CircuitResults<PS, []>;
   payPeriod(context: __compactRuntime.CircuitContext<PS>,
             period_0: bigint,
             gross_0: bigint[],
@@ -385,6 +364,8 @@ export type Ledger = {
   readonly socialTreasury: { bytes: Uint8Array };
   readonly employer: { bytes: Uint8Array };
   readonly employerAssigned: boolean;
+  readonly lastEmployer: { bytes: Uint8Array };
+  readonly everAssigned: boolean;
   periods: {
     isEmpty(): boolean;
     size(): bigint;
@@ -512,6 +493,13 @@ export type Ledger = {
     member(key_0: bigint): boolean;
     lookup(key_0: bigint): bigint;
     [Symbol.iterator](): Iterator<[bigint, bigint]>
+  };
+  employerFor: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(key_0: bigint): boolean;
+    lookup(key_0: bigint): { bytes: Uint8Array };
+    [Symbol.iterator](): Iterator<[bigint, { bytes: Uint8Array }]>
   };
   readonly coinsReceived: bigint;
   coinOrdinalFor: {

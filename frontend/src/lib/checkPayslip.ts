@@ -83,7 +83,13 @@ export async function checkPayslip(options: {
       .pureCircuits,
     slip,
     {
-      employer: ledger.employer.bytes,
+      // The key that FILED this period, not the one holding the seat now. Those
+      // differ after a revoke or a key rotation, and reading the live seat made
+      // every payslip from before either act fail here — with the message that
+      // means the figures were altered.
+      employer: ledger.employerFor.member(period)
+        ? ledger.employerFor.lookup(period).bytes
+        : ledger.employer.bytes,
       paramsHash: ledger.paramsHashFor.member(period)
         ? ledger.paramsHashFor.lookup(period)
         : new Uint8Array(32),

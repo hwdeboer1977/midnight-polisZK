@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { CopyRow } from "./CopyRow";
 import { useOnboarding } from "../lib/useOnboarding";
+import { bytesToHex as hex, sameKey } from "../lib/keys";
 import type { PayrollInstance } from "../lib/usePayrollInstances";
 
 /**
@@ -64,20 +65,43 @@ export function EmployerAssign({
   const slug = company.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const key = employerKey.trim().replace(/^0x/, "");
   const keyValid = /^[0-9a-f]{64}$/i.test(key);
-  const ready = Boolean(slug) && keyValid && !busy;
+
+  // A vacant contract that has been held before belongs to whoever held it.
+  //
+  // Checked here for the same reason `vacant` excludes occupied seats: the
+  // contract asserts it, so getting it wrong is refused after minutes of
+  // proving with "this contract belongs to another employer" — a true answer
+  // arriving far too late to be useful. A seat nobody has ever held takes any
+  // key, so its presence means nothing can be ruled out yet.
+  const returning = vacant.filter((instance) => instance.state?.everAssigned);
+  const anyFresh = returning.length < vacant.length;
+  const acceptable = returning.map((instance) => hex(instance.state!.lastEmployer.bytes));
+  const keyRefused =
+    keyValid && !anyFresh && !acceptable.some((owner) => sameKey(owner, key));
+  const ready = Boolean(slug) && keyValid && !keyRefused && !busy;
 
   return (
     <section className="card">
       <h2>Assign an employer</h2>
       <p className="lead-sm">
-        Hands a vacant payroll contract to a company's signing key. The seat can
-        be filled exactly once — freeing it again is <strong>Revoke</strong>{" "}
-        above, and it is a transaction of its own.
+        Hands a vacant payroll contract to a company's signing key. Freeing it
+        again is <strong>Revoke</strong> above, and it is a transaction of its
+        own — but a revoked contract can only ever go back to the same employer,
+        so this is not a way to move one company's contract to another.
       </p>
 
       {vacant.map((instance) => (
-        <CopyRow key={instance.deployment.contractAddress} label="Vacant contract"
-          value={instance.deployment.contractAddress} />
+        <div key={instance.deployment.contractAddress}>
+          <CopyRow label="Vacant contract" value={instance.deployment.contractAddress} />
+          {instance.state?.everAssigned ? (
+            <p className="note">
+              Previously held, so this one is not free to give away: it goes back
+              to <code>{hex(instance.state.lastEmployer.bytes).slice(0, 16)}…</code>{" "}
+              or to nobody. The payroll already filed here is that employer's
+              record, and the contract refuses any other key.
+            </p>
+          ) : null}
+        </div>
       ))}
 
       {job?.status === "done" ? (
@@ -122,6 +146,14 @@ export function EmployerAssign({
             <p className="status error">
               A coin public key is 64 hex characters. The company's registration
               page shows theirs — the Bech32m form the wallet displays is not it.
+            </p>
+          ) : null}
+          {keyRefused ? (
+            <p className="status error">
+              Every vacant contract here has been held before, and each one only
+              takes its own employer back. This key holds none of them, so the
+              contract would refuse the assignment — deploy a contract for this
+              company instead.
             </p>
           ) : null}
 

@@ -84,7 +84,8 @@ for (const slot of slots) {
   });
 
   const ok = verifyPayslip(payroll.pureCircuits, slip, {
-    employer: l.employer.bytes,
+    // The filer of this period, not the current seat holder — see checkPayslip.ts.
+    employer: l.employerFor.member(p) ? l.employerFor.lookup(p).bytes : l.employer.bytes,
     paramsHash: l.paramsHashFor.lookup(p),
     commitment: hex(l.commitmentsFor.lookup(p).lookup(k)),
   });

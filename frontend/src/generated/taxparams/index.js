@@ -112,14 +112,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('publish',
                                      'argument 1 (as invoked from Typescript)',
-                                     'taxparams.compact line 72 char 1',
+                                     'taxparams.compact line 75 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(params_0) === 'object' && typeof(params_0.version) === 'bigint' && params_0.version >= 0n && params_0.version <= 65535n && typeof(params_0.validFrom) === 'bigint' && params_0.validFrom >= 0n && params_0.validFrom <= 4294967295n && typeof(params_0.threshold1) === 'bigint' && params_0.threshold1 >= 0n && params_0.threshold1 <= 1152921504606846975n && typeof(params_0.threshold2) === 'bigint' && params_0.threshold2 >= 0n && params_0.threshold2 <= 1152921504606846975n && typeof(params_0.rate1) === 'bigint' && params_0.rate1 >= 0n && params_0.rate1 <= 65535n && typeof(params_0.rate2) === 'bigint' && params_0.rate2 >= 0n && params_0.rate2 <= 65535n && typeof(params_0.rate3) === 'bigint' && params_0.rate3 >= 0n && params_0.rate3 <= 65535n && typeof(params_0.maxContribBase) === 'bigint' && params_0.maxContribBase >= 0n && params_0.maxContribBase <= 1152921504606846975n && typeof(params_0.contribRate) === 'bigint' && params_0.contribRate >= 0n && params_0.contribRate <= 65535n)) {
           __compactRuntime.typeError('publish',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'taxparams.compact line 72 char 1',
+                                     'taxparams.compact line 75 char 1',
                                      'struct TaxParams<version: Uint<0..65536>, validFrom: Uint<0..4294967296>, threshold1: Uint<0..1152921504606846976>, threshold2: Uint<0..1152921504606846976>, rate1: Uint<0..65536>, rate2: Uint<0..65536>, rate3: Uint<0..65536>, maxContribBase: Uint<0..1152921504606846976>, contribRate: Uint<0..65536>>',
                                      params_0)
         }
@@ -357,7 +357,7 @@ export class Contract {
                                        { ins: { cached: true, n: 1 } }]);
     const tmp_0 = ((t1) => {
                     if (t1 > 65535n) {
-                      throw new __compactRuntime.CompactError('taxparams.compact line 91 char 18: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 65535');
+                      throw new __compactRuntime.CompactError('taxparams.compact line 94 char 18: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 65535');
                     }
                     return t1;
                   })(_descriptor_2.fromValue(__compactRuntime.queryLedgerState(context,
@@ -499,7 +499,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 65535n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'taxparams.compact line 54 char 1',
+                                     'taxparams.compact line 57 char 1',
                                      'Uint<0..65536>',
                                      key_0)
         }
@@ -528,7 +528,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 65535n)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'taxparams.compact line 54 char 1',
+                                     'taxparams.compact line 57 char 1',
                                      'Uint<0..65536>',
                                      key_0)
         }
@@ -608,7 +608,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(elem_0) === 'bigint' && elem_0 >= 0n && elem_0 <= 65535n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'taxparams.compact line 58 char 1',
+                                     'taxparams.compact line 61 char 1',
                                      'Uint<0..65536>',
                                      elem_0)
         }
@@ -680,7 +680,7 @@ export const pureCircuits = {
     if (!(typeof(params_0) === 'object' && typeof(params_0.version) === 'bigint' && params_0.version >= 0n && params_0.version <= 65535n && typeof(params_0.validFrom) === 'bigint' && params_0.validFrom >= 0n && params_0.validFrom <= 4294967295n && typeof(params_0.threshold1) === 'bigint' && params_0.threshold1 >= 0n && params_0.threshold1 <= 1152921504606846975n && typeof(params_0.threshold2) === 'bigint' && params_0.threshold2 >= 0n && params_0.threshold2 <= 1152921504606846975n && typeof(params_0.rate1) === 'bigint' && params_0.rate1 >= 0n && params_0.rate1 <= 65535n && typeof(params_0.rate2) === 'bigint' && params_0.rate2 >= 0n && params_0.rate2 <= 65535n && typeof(params_0.rate3) === 'bigint' && params_0.rate3 >= 0n && params_0.rate3 <= 65535n && typeof(params_0.maxContribBase) === 'bigint' && params_0.maxContribBase >= 0n && params_0.maxContribBase <= 1152921504606846975n && typeof(params_0.contribRate) === 'bigint' && params_0.contribRate >= 0n && params_0.contribRate <= 65535n)) {
       __compactRuntime.typeError('paramsHash',
                                  'argument 1',
-                                 'taxparams.compact line 103 char 1',
+                                 'taxparams.compact line 106 char 1',
                                  'struct TaxParams<version: Uint<0..65536>, validFrom: Uint<0..4294967296>, threshold1: Uint<0..1152921504606846976>, threshold2: Uint<0..1152921504606846976>, rate1: Uint<0..65536>, rate2: Uint<0..65536>, rate3: Uint<0..65536>, maxContribBase: Uint<0..1152921504606846976>, contribRate: Uint<0..65536>>',
                                  params_0)
     }

@@ -39,6 +39,26 @@ export interface PayrollLedger {
   platform: { bytes: Uint8Array };
   employer: { bytes: Uint8Array };
   employerAssigned: boolean;
+  /**
+   * Who this contract belongs to, remembered across a revoke.
+   *
+   * `employer` is cleared by `revokeEmployer`; this is not. `assignEmployer`
+   * refuses every key but this one once `everAssigned`, so a vacant contract
+   * that was held before can only go back to the same employer — which is what
+   * lets the assign form say so before anyone spends minutes proving a call the
+   * contract will refuse.
+   */
+  lastEmployer: { bytes: Uint8Array };
+  everAssigned: boolean;
+  /**
+   * period -> the employer key that period's commitments were sealed with.
+   *
+   * Read instead of `employer` wherever a commitment is reproduced. `employer`
+   * is the current seat holder and moves — a revoke zeroes it, a key rotation
+   * replaces it — so recomputing against it made every payslip issued before
+   * either act fail to verify, reported as a figures mismatch.
+   */
+  employerFor: LedgerMap<bigint, { bytes: Uint8Array }>;
   /** YYYYMM of the most recent run, 0 before any. */
   latestPeriod: bigint;
   periods: LedgerSet<bigint>;

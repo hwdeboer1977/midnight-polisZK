@@ -397,14 +397,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('publishParams',
                                      'argument 1 (as invoked from Typescript)',
-                                     'fund.compact line 257 char 1',
+                                     'fund.compact line 260 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(params_0) === 'object' && typeof(params_0.version) === 'bigint' && params_0.version >= 0n && params_0.version <= 65535n && typeof(params_0.validFrom) === 'bigint' && params_0.validFrom >= 0n && params_0.validFrom <= 4294967295n && typeof(params_0.maxMonthlyGross) === 'bigint' && params_0.maxMonthlyGross >= 0n && params_0.maxMonthlyGross <= 1152921504606846975n && typeof(params_0.rate) === 'bigint' && params_0.rate >= 0n && params_0.rate <= 65535n && typeof(params_0.minMonths) === 'bigint' && params_0.minMonths >= 0n && params_0.minMonths <= 65535n)) {
           __compactRuntime.typeError('publishParams',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'fund.compact line 257 char 1',
+                                     'fund.compact line 260 char 1',
                                      'struct BenefitParams<version: Uint<0..65536>, validFrom: Uint<0..4294967296>, maxMonthlyGross: Uint<0..1152921504606846976>, rate: Uint<0..65536>, minMonths: Uint<0..65536>>',
                                      params_0)
         }
@@ -434,21 +434,21 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('publishRoot',
                                      'argument 1 (as invoked from Typescript)',
-                                     'fund.compact line 272 char 1',
+                                     'fund.compact line 275 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(period_0) === 'bigint' && period_0 >= 0n && period_0 <= 4294967295n)) {
           __compactRuntime.typeError('publishRoot',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'fund.compact line 272 char 1',
+                                     'fund.compact line 275 char 1',
                                      'Uint<0..4294967296>',
                                      period_0)
         }
         if (!(typeof(root_0) === 'bigint' && root_0 >= 0 && root_0 <= __compactRuntime.MAX_FIELD)) {
           __compactRuntime.typeError('publishRoot',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'fund.compact line 272 char 1',
+                                     'fund.compact line 275 char 1',
                                      'Field',
                                      root_0)
         }
@@ -481,35 +481,35 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('fundBenefits',
                                      'argument 1 (as invoked from Typescript)',
-                                     'fund.compact line 308 char 1',
+                                     'fund.compact line 311 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(period_0) === 'bigint' && period_0 >= 0n && period_0 <= 4294967295n)) {
           __compactRuntime.typeError('fundBenefits',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'fund.compact line 308 char 1',
+                                     'fund.compact line 311 char 1',
                                      'Uint<0..4294967296>',
                                      period_0)
         }
         if (!(source_0.buffer instanceof ArrayBuffer && source_0.BYTES_PER_ELEMENT === 1 && source_0.length === 32)) {
           __compactRuntime.typeError('fundBenefits',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'fund.compact line 308 char 1',
+                                     'fund.compact line 311 char 1',
                                      'Bytes<32>',
                                      source_0)
         }
         if (!(typeof(amount_0) === 'bigint' && amount_0 >= 0n && amount_0 <= 18446744073709551615n)) {
           __compactRuntime.typeError('fundBenefits',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'fund.compact line 308 char 1',
+                                     'fund.compact line 311 char 1',
                                      'Uint<0..18446744073709551616>',
                                      amount_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('fundBenefits',
                                      'argument 4 (argument 5 as invoked from Typescript)',
-                                     'fund.compact line 308 char 1',
+                                     'fund.compact line 311 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
@@ -558,133 +558,133 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('claim',
                                      'argument 1 (as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(path_0) === 'object' && path_0.leaf.buffer instanceof ArrayBuffer && path_0.leaf.BYTES_PER_ELEMENT === 1 && path_0.leaf.length === 32 && Array.isArray(path_0.path) && path_0.path.length === 16 && path_0.path.every((t) => typeof(t) === 'object' && typeof(t.sibling) === 'object' && typeof(t.sibling.field) === 'bigint' && t.sibling.field >= 0 && t.sibling.field <= __compactRuntime.MAX_FIELD && typeof(t.goes_left) === 'boolean'))) {
           __compactRuntime.typeError('claim',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'struct MerkleTreePath<leaf: Bytes<32>, path: Vector<16, struct MerkleTreePathEntry<sibling: struct MerkleTreeDigest<field: Field>, goes_left: Boolean>>>',
                                      path_0)
         }
         if (!(typeof(leaf_0) === 'object' && leaf_0.commitment.buffer instanceof ArrayBuffer && leaf_0.commitment.BYTES_PER_ELEMENT === 1 && leaf_0.commitment.length === 32 && leaf_0.payeeBinding.buffer instanceof ArrayBuffer && leaf_0.payeeBinding.BYTES_PER_ELEMENT === 1 && leaf_0.payeeBinding.length === 32 && leaf_0.claimKeyHash.buffer instanceof ArrayBuffer && leaf_0.claimKeyHash.BYTES_PER_ELEMENT === 1 && leaf_0.claimKeyHash.length === 32 && typeof(leaf_0.finalPeriod) === 'bigint' && leaf_0.finalPeriod >= 0n && leaf_0.finalPeriod <= 4294967295n && typeof(leaf_0.monthsWorked) === 'bigint' && leaf_0.monthsWorked >= 0n && leaf_0.monthsWorked <= 65535n && leaf_0.instance.buffer instanceof ArrayBuffer && leaf_0.instance.BYTES_PER_ELEMENT === 1 && leaf_0.instance.length === 32)) {
           __compactRuntime.typeError('claim',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'struct ClaimLeaf<commitment: Bytes<32>, payeeBinding: Bytes<32>, claimKeyHash: Bytes<32>, finalPeriod: Uint<0..4294967296>, monthsWorked: Uint<0..65536>, instance: Bytes<32>>',
                                      leaf_0)
         }
         if (!(typeof(gross_0) === 'bigint' && gross_0 >= 0n && gross_0 <= 1152921504606846975n)) {
           __compactRuntime.typeError('claim',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..1152921504606846976>',
                                      gross_0)
         }
         if (!(typeof(tax_0) === 'bigint' && tax_0 >= 0n && tax_0 <= 1152921504606846975n)) {
           __compactRuntime.typeError('claim',
                                      'argument 4 (argument 5 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..1152921504606846976>',
                                      tax_0)
         }
         if (!(typeof(social_0) === 'bigint' && social_0 >= 0n && social_0 <= 1152921504606846975n)) {
           __compactRuntime.typeError('claim',
                                      'argument 5 (argument 6 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..1152921504606846976>',
                                      social_0)
         }
         if (!(typeof(net_0) === 'bigint' && net_0 >= 0n && net_0 <= 1152921504606846975n)) {
           __compactRuntime.typeError('claim',
                                      'argument 6 (argument 7 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..1152921504606846976>',
                                      net_0)
         }
         if (!(typeof(weeks_0) === 'bigint' && weeks_0 >= 0n && weeks_0 <= 255n)) {
           __compactRuntime.typeError('claim',
                                      'argument 7 (argument 8 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..256>',
                                      weeks_0)
         }
         if (!(typeof(employer_0) === 'object' && employer_0.bytes.buffer instanceof ArrayBuffer && employer_0.bytes.BYTES_PER_ELEMENT === 1 && employer_0.bytes.length === 32)) {
           __compactRuntime.typeError('claim',
                                      'argument 8 (argument 9 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                      employer_0)
         }
         if (!(payrollParamsHash_0.buffer instanceof ArrayBuffer && payrollParamsHash_0.BYTES_PER_ELEMENT === 1 && payrollParamsHash_0.length === 32)) {
           __compactRuntime.typeError('claim',
                                      'argument 9 (argument 10 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Bytes<32>',
                                      payrollParamsHash_0)
         }
         if (!(nonce_0.buffer instanceof ArrayBuffer && nonce_0.BYTES_PER_ELEMENT === 1 && nonce_0.length === 32)) {
           __compactRuntime.typeError('claim',
                                      'argument 10 (argument 11 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Bytes<32>',
                                      nonce_0)
         }
         if (!(claimKey_0.buffer instanceof ArrayBuffer && claimKey_0.BYTES_PER_ELEMENT === 1 && claimKey_0.length === 32)) {
           __compactRuntime.typeError('claim',
                                      'argument 11 (argument 12 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Bytes<32>',
                                      claimKey_0)
         }
         if (!(typeof(window_0) === 'bigint' && window_0 >= 0n && window_0 <= 4294967295n)) {
           __compactRuntime.typeError('claim',
                                      'argument 12 (argument 13 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..4294967296>',
                                      window_0)
         }
         if (!(typeof(params_0) === 'object' && typeof(params_0.version) === 'bigint' && params_0.version >= 0n && params_0.version <= 65535n && typeof(params_0.validFrom) === 'bigint' && params_0.validFrom >= 0n && params_0.validFrom <= 4294967295n && typeof(params_0.maxMonthlyGross) === 'bigint' && params_0.maxMonthlyGross >= 0n && params_0.maxMonthlyGross <= 1152921504606846975n && typeof(params_0.rate) === 'bigint' && params_0.rate >= 0n && params_0.rate <= 65535n && typeof(params_0.minMonths) === 'bigint' && params_0.minMonths >= 0n && params_0.minMonths <= 65535n)) {
           __compactRuntime.typeError('claim',
                                      'argument 13 (argument 14 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'struct BenefitParams<version: Uint<0..65536>, validFrom: Uint<0..4294967296>, maxMonthlyGross: Uint<0..1152921504606846976>, rate: Uint<0..65536>, minMonths: Uint<0..65536>>',
                                      params_0)
         }
         if (!(typeof(taxParams_0) === 'object' && typeof(taxParams_0.version) === 'bigint' && taxParams_0.version >= 0n && taxParams_0.version <= 65535n && typeof(taxParams_0.validFrom) === 'bigint' && taxParams_0.validFrom >= 0n && taxParams_0.validFrom <= 4294967295n && typeof(taxParams_0.threshold1) === 'bigint' && taxParams_0.threshold1 >= 0n && taxParams_0.threshold1 <= 1152921504606846975n && typeof(taxParams_0.threshold2) === 'bigint' && taxParams_0.threshold2 >= 0n && taxParams_0.threshold2 <= 1152921504606846975n && typeof(taxParams_0.rate1) === 'bigint' && taxParams_0.rate1 >= 0n && taxParams_0.rate1 <= 65535n && typeof(taxParams_0.rate2) === 'bigint' && taxParams_0.rate2 >= 0n && taxParams_0.rate2 <= 65535n && typeof(taxParams_0.rate3) === 'bigint' && taxParams_0.rate3 >= 0n && taxParams_0.rate3 <= 65535n && typeof(taxParams_0.maxContribBase) === 'bigint' && taxParams_0.maxContribBase >= 0n && taxParams_0.maxContribBase <= 1152921504606846975n && typeof(taxParams_0.contribRate) === 'bigint' && taxParams_0.contribRate >= 0n && taxParams_0.contribRate <= 65535n)) {
           __compactRuntime.typeError('claim',
                                      'argument 14 (argument 15 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'struct TaxParams<version: Uint<0..65536>, validFrom: Uint<0..4294967296>, threshold1: Uint<0..1152921504606846976>, threshold2: Uint<0..1152921504606846976>, rate1: Uint<0..65536>, rate2: Uint<0..65536>, rate3: Uint<0..65536>, maxContribBase: Uint<0..1152921504606846976>, contribRate: Uint<0..65536>>',
                                      taxParams_0)
         }
         if (!(typeof(benefitQ_0) === 'bigint' && benefitQ_0 >= 0n && benefitQ_0 <= 1152921504606846975n)) {
           __compactRuntime.typeError('claim',
                                      'argument 15 (argument 16 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..1152921504606846976>',
                                      benefitQ_0)
         }
         if (!(typeof(benefitTaxQ_0) === 'bigint' && benefitTaxQ_0 >= 0n && benefitTaxQ_0 <= 1152921504606846975n)) {
           __compactRuntime.typeError('claim',
                                      'argument 16 (argument 17 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..1152921504606846976>',
                                      benefitTaxQ_0)
         }
         if (!(typeof(benefitSocialQ_0) === 'bigint' && benefitSocialQ_0 >= 0n && benefitSocialQ_0 <= 1152921504606846975n)) {
           __compactRuntime.typeError('claim',
                                      'argument 17 (argument 18 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'Uint<0..1152921504606846976>',
                                      benefitSocialQ_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n && typeof(coin_0.mt_index) === 'bigint' && coin_0.mt_index >= 0n && coin_0.mt_index <= 18446744073709551615n)) {
           __compactRuntime.typeError('claim',
                                      'argument 18 (argument 19 as invoked from Typescript)',
-                                     'fund.compact line 365 char 1',
+                                     'fund.compact line 368 char 1',
                                      'struct QualifiedShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>, mt_index: Uint<0..18446744073709551616>>',
                                      coin_0)
         }
@@ -730,14 +730,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('remitBenefitTax',
                                      'argument 1 (as invoked from Typescript)',
-                                     'fund.compact line 568 char 1',
+                                     'fund.compact line 571 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n && typeof(coin_0.mt_index) === 'bigint' && coin_0.mt_index >= 0n && coin_0.mt_index <= 18446744073709551615n)) {
           __compactRuntime.typeError('remitBenefitTax',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'fund.compact line 568 char 1',
+                                     'fund.compact line 571 char 1',
                                      'struct QualifiedShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>, mt_index: Uint<0..18446744073709551616>>',
                                      coin_0)
         }
@@ -766,14 +766,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('remitBenefitSocial',
                                      'argument 1 (as invoked from Typescript)',
-                                     'fund.compact line 593 char 1',
+                                     'fund.compact line 596 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n && typeof(coin_0.mt_index) === 'bigint' && coin_0.mt_index >= 0n && coin_0.mt_index <= 18446744073709551615n)) {
           __compactRuntime.typeError('remitBenefitSocial',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'fund.compact line 593 char 1',
+                                     'fund.compact line 596 char 1',
                                      'struct QualifiedShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>, mt_index: Uint<0..18446744073709551616>>',
                                      coin_0)
         }
@@ -851,14 +851,14 @@ export class Contract {
     if (!(typeof(taxTo_0) === 'object' && taxTo_0.bytes.buffer instanceof ArrayBuffer && taxTo_0.bytes.BYTES_PER_ELEMENT === 1 && taxTo_0.bytes.length === 32)) {
       __compactRuntime.typeError('Contract state constructor',
                                  'argument 1 (argument 2 as invoked from Typescript)',
-                                 'fund.compact line 240 char 1',
+                                 'fund.compact line 243 char 1',
                                  'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                  taxTo_0)
     }
     if (!(typeof(socialTo_0) === 'object' && socialTo_0.bytes.buffer instanceof ArrayBuffer && socialTo_0.bytes.BYTES_PER_ELEMENT === 1 && socialTo_0.bytes.length === 32)) {
       __compactRuntime.typeError('Contract state constructor',
                                  'argument 2 (argument 3 as invoked from Typescript)',
-                                 'fund.compact line 240 char 1',
+                                 'fund.compact line 243 char 1',
                                  'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                  socialTo_0)
     }
@@ -2093,7 +2093,7 @@ export class Contract {
                                        { ins: { cached: true, n: 1 } }]);
     const tmp_2 = ((t1) => {
                     if (t1 > 4294967295n) {
-                      throw new __compactRuntime.CompactError('fund.compact line 329 char 19: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
+                      throw new __compactRuntime.CompactError('fund.compact line 332 char 19: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
                     }
                     return t1;
                   })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -2175,7 +2175,7 @@ export class Contract {
                       0n;
     const tmp_3 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('fund.compact line 334 char 28: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('fund.compact line 337 char 28: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(already_0 + amount_0);
@@ -2242,7 +2242,7 @@ export class Contract {
     }
     const tmp_4 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('fund.compact line 342 char 22: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('fund.compact line 345 char 22: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_12.fromValue(__compactRuntime.queryLedgerState(context,
@@ -2281,7 +2281,7 @@ export class Contract {
                                        { ins: { cached: true, n: 1 } }]);
     const tmp_5 = ((t1) => {
                     if (t1 > 4294967295n) {
-                      throw new __compactRuntime.CompactError('fund.compact line 343 char 23: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
+                      throw new __compactRuntime.CompactError('fund.compact line 346 char 23: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
                     }
                     return t1;
                   })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -2657,7 +2657,7 @@ export class Contract {
                                          { ins: { cached: true, n: 1 } }]);
       const tmp_1 = ((t1) => {
                       if (t1 > 4294967295n) {
-                        throw new __compactRuntime.CompactError('fund.compact line 554 char 21: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
+                        throw new __compactRuntime.CompactError('fund.compact line 557 char 21: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
                       }
                       return t1;
                     })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -2697,7 +2697,7 @@ export class Contract {
     }
     const tmp_2 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('fund.compact line 557 char 13: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('fund.compact line 560 char 13: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_12.fromValue(__compactRuntime.queryLedgerState(context,
@@ -2736,7 +2736,7 @@ export class Contract {
                                        { ins: { cached: true, n: 1 } }]);
     const tmp_3 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('fund.compact line 558 char 16: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('fund.compact line 561 char 16: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_12.fromValue(__compactRuntime.queryLedgerState(context,
@@ -2935,7 +2935,7 @@ export class Contract {
                                          { ins: { cached: true, n: 1 } }]);
       const tmp_1 = ((t1) => {
                       if (t1 > 4294967295n) {
-                        throw new __compactRuntime.CompactError('fund.compact line 585 char 21: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
+                        throw new __compactRuntime.CompactError('fund.compact line 588 char 21: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
                       }
                       return t1;
                     })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -2993,7 +2993,7 @@ export class Contract {
                                        { ins: { cached: true, n: 1 } }]);
     const tmp_3 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('fund.compact line 589 char 17: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('fund.compact line 592 char 17: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_12.fromValue(__compactRuntime.queryLedgerState(context,
@@ -3173,7 +3173,7 @@ export class Contract {
                                          { ins: { cached: true, n: 1 } }]);
       const tmp_1 = ((t1) => {
                       if (t1 > 4294967295n) {
-                        throw new __compactRuntime.CompactError('fund.compact line 611 char 21: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
+                        throw new __compactRuntime.CompactError('fund.compact line 614 char 21: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
                       }
                       return t1;
                     })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -3231,7 +3231,7 @@ export class Contract {
                                        { ins: { cached: true, n: 1 } }]);
     const tmp_3 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('fund.compact line 615 char 20: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('fund.compact line 618 char 20: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_12.fromValue(__compactRuntime.queryLedgerState(context,
@@ -3478,7 +3478,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 65535n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'fund.compact line 168 char 1',
+                                     'fund.compact line 171 char 1',
                                      'Uint<0..65536>',
                                      key_0)
         }
@@ -3510,7 +3510,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 65535n)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'fund.compact line 168 char 1',
+                                     'fund.compact line 171 char 1',
                                      'Uint<0..65536>',
                                      key_0)
         }
@@ -3616,7 +3616,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'fund.compact line 176 char 1',
+                                     'fund.compact line 179 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -3648,7 +3648,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'fund.compact line 176 char 1',
+                                     'fund.compact line 179 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -3737,7 +3737,7 @@ export function ledger(stateOrChargedState) {
         if (!(key_0.buffer instanceof ArrayBuffer && key_0.BYTES_PER_ELEMENT === 1 && key_0.length === 32)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'fund.compact line 183 char 1',
+                                     'fund.compact line 186 char 1',
                                      'Bytes<32>',
                                      key_0)
         }
@@ -3769,7 +3769,7 @@ export function ledger(stateOrChargedState) {
         if (!(key_0.buffer instanceof ArrayBuffer && key_0.BYTES_PER_ELEMENT === 1 && key_0.length === 32)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'fund.compact line 183 char 1',
+                                     'fund.compact line 186 char 1',
                                      'Bytes<32>',
                                      key_0)
         }
@@ -3858,7 +3858,7 @@ export function ledger(stateOrChargedState) {
         if (!(elem_0.buffer instanceof ArrayBuffer && elem_0.BYTES_PER_ELEMENT === 1 && elem_0.length === 32)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'fund.compact line 187 char 1',
+                                     'fund.compact line 190 char 1',
                                      'Bytes<32>',
                                      elem_0)
         }
@@ -4081,7 +4081,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'fund.compact line 230 char 1',
+                                     'fund.compact line 233 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -4113,7 +4113,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'fund.compact line 230 char 1',
+                                     'fund.compact line 233 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -4202,7 +4202,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'fund.compact line 231 char 1',
+                                     'fund.compact line 234 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -4234,7 +4234,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'fund.compact line 231 char 1',
+                                     'fund.compact line 234 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -4334,7 +4334,7 @@ export const pureCircuits = {
     if (!(typeof(leaf_0) === 'object' && leaf_0.commitment.buffer instanceof ArrayBuffer && leaf_0.commitment.BYTES_PER_ELEMENT === 1 && leaf_0.commitment.length === 32 && leaf_0.payeeBinding.buffer instanceof ArrayBuffer && leaf_0.payeeBinding.BYTES_PER_ELEMENT === 1 && leaf_0.payeeBinding.length === 32 && leaf_0.claimKeyHash.buffer instanceof ArrayBuffer && leaf_0.claimKeyHash.BYTES_PER_ELEMENT === 1 && leaf_0.claimKeyHash.length === 32 && typeof(leaf_0.finalPeriod) === 'bigint' && leaf_0.finalPeriod >= 0n && leaf_0.finalPeriod <= 4294967295n && typeof(leaf_0.monthsWorked) === 'bigint' && leaf_0.monthsWorked >= 0n && leaf_0.monthsWorked <= 65535n && leaf_0.instance.buffer instanceof ArrayBuffer && leaf_0.instance.BYTES_PER_ELEMENT === 1 && leaf_0.instance.length === 32)) {
       __compactRuntime.typeError('leafDigest',
                                  'argument 1',
-                                 'fund.compact line 628 char 1',
+                                 'fund.compact line 631 char 1',
                                  'struct ClaimLeaf<commitment: Bytes<32>, payeeBinding: Bytes<32>, claimKeyHash: Bytes<32>, finalPeriod: Uint<0..4294967296>, monthsWorked: Uint<0..65536>, instance: Bytes<32>>',
                                  leaf_0)
     }
@@ -4348,7 +4348,7 @@ export const pureCircuits = {
     if (!(digest_0.buffer instanceof ArrayBuffer && digest_0.BYTES_PER_ELEMENT === 1 && digest_0.length === 32)) {
       __compactRuntime.typeError('treeLeaf',
                                  'argument 1',
-                                 'fund.compact line 633 char 1',
+                                 'fund.compact line 636 char 1',
                                  'Bytes<32>',
                                  digest_0)
     }
@@ -4363,14 +4363,14 @@ export const pureCircuits = {
     if (!(typeof(leftNode_0) === 'bigint' && leftNode_0 >= 0 && leftNode_0 <= __compactRuntime.MAX_FIELD)) {
       __compactRuntime.typeError('treeNode',
                                  'argument 1',
-                                 'fund.compact line 638 char 1',
+                                 'fund.compact line 641 char 1',
                                  'Field',
                                  leftNode_0)
     }
     if (!(typeof(rightNode_0) === 'bigint' && rightNode_0 >= 0 && rightNode_0 <= __compactRuntime.MAX_FIELD)) {
       __compactRuntime.typeError('treeNode',
                                  'argument 2',
-                                 'fund.compact line 638 char 1',
+                                 'fund.compact line 641 char 1',
                                  'Field',
                                  rightNode_0)
     }
@@ -4384,7 +4384,7 @@ export const pureCircuits = {
     if (!(typeof(path_0) === 'object' && path_0.leaf.buffer instanceof ArrayBuffer && path_0.leaf.BYTES_PER_ELEMENT === 1 && path_0.leaf.length === 32 && Array.isArray(path_0.path) && path_0.path.length === 16 && path_0.path.every((t) => typeof(t) === 'object' && typeof(t.sibling) === 'object' && typeof(t.sibling.field) === 'bigint' && t.sibling.field >= 0 && t.sibling.field <= __compactRuntime.MAX_FIELD && typeof(t.goes_left) === 'boolean'))) {
       __compactRuntime.typeError('pathRoot',
                                  'argument 1',
-                                 'fund.compact line 649 char 1',
+                                 'fund.compact line 652 char 1',
                                  'struct MerkleTreePath<leaf: Bytes<32>, path: Vector<16, struct MerkleTreePathEntry<sibling: struct MerkleTreeDigest<field: Field>, goes_left: Boolean>>>',
                                  path_0)
     }
@@ -4398,7 +4398,7 @@ export const pureCircuits = {
     if (!(typeof(params_0) === 'object' && typeof(params_0.version) === 'bigint' && params_0.version >= 0n && params_0.version <= 65535n && typeof(params_0.validFrom) === 'bigint' && params_0.validFrom >= 0n && params_0.validFrom <= 4294967295n && typeof(params_0.threshold1) === 'bigint' && params_0.threshold1 >= 0n && params_0.threshold1 <= 1152921504606846975n && typeof(params_0.threshold2) === 'bigint' && params_0.threshold2 >= 0n && params_0.threshold2 <= 1152921504606846975n && typeof(params_0.rate1) === 'bigint' && params_0.rate1 >= 0n && params_0.rate1 <= 65535n && typeof(params_0.rate2) === 'bigint' && params_0.rate2 >= 0n && params_0.rate2 <= 65535n && typeof(params_0.rate3) === 'bigint' && params_0.rate3 >= 0n && params_0.rate3 <= 65535n && typeof(params_0.maxContribBase) === 'bigint' && params_0.maxContribBase >= 0n && params_0.maxContribBase <= 1152921504606846975n && typeof(params_0.contribRate) === 'bigint' && params_0.contribRate >= 0n && params_0.contribRate <= 65535n)) {
       __compactRuntime.typeError('taxParamsHash',
                                  'argument 1',
-                                 'fund.compact line 661 char 1',
+                                 'fund.compact line 664 char 1',
                                  'struct TaxParams<version: Uint<0..65536>, validFrom: Uint<0..4294967296>, threshold1: Uint<0..1152921504606846976>, threshold2: Uint<0..1152921504606846976>, rate1: Uint<0..65536>, rate2: Uint<0..65536>, rate3: Uint<0..65536>, maxContribBase: Uint<0..1152921504606846976>, contribRate: Uint<0..65536>>',
                                  params_0)
     }
@@ -4412,7 +4412,7 @@ export const pureCircuits = {
     if (!(claimKey_0.buffer instanceof ArrayBuffer && claimKey_0.BYTES_PER_ELEMENT === 1 && claimKey_0.length === 32)) {
       __compactRuntime.typeError('claimKeyHash',
                                  'argument 1',
-                                 'fund.compact line 674 char 1',
+                                 'fund.compact line 677 char 1',
                                  'Bytes<32>',
                                  claimKey_0)
     }
@@ -4428,21 +4428,21 @@ export const pureCircuits = {
     if (!(claimKey_0.buffer instanceof ArrayBuffer && claimKey_0.BYTES_PER_ELEMENT === 1 && claimKey_0.length === 32)) {
       __compactRuntime.typeError('claimNullifier',
                                  'argument 1',
-                                 'fund.compact line 704 char 1',
+                                 'fund.compact line 707 char 1',
                                  'Bytes<32>',
                                  claimKey_0)
     }
     if (!(typeof(window_0) === 'bigint' && window_0 >= 0n && window_0 <= 4294967295n)) {
       __compactRuntime.typeError('claimNullifier',
                                  'argument 2',
-                                 'fund.compact line 704 char 1',
+                                 'fund.compact line 707 char 1',
                                  'Uint<0..4294967296>',
                                  window_0)
     }
     if (!(fund_0.buffer instanceof ArrayBuffer && fund_0.BYTES_PER_ELEMENT === 1 && fund_0.length === 32)) {
       __compactRuntime.typeError('claimNullifier',
                                  'argument 3',
-                                 'fund.compact line 704 char 1',
+                                 'fund.compact line 707 char 1',
                                  'Bytes<32>',
                                  fund_0)
     }

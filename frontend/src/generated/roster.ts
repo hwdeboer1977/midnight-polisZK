@@ -1,3 +1,6 @@
+// Copyright 2026 Henk Wim de Boer
+// SPDX-License-Identifier: Apache-2.0
+
 import ExcelJS from "exceljs";
 import { bech32m } from "@scure/base";
 import { PEUR_DECIMALS, PEUR_SCALE } from "./constructor-args.js";

@@ -1216,12 +1216,15 @@ export async function remitWithholding(options: {
   await submitCallTx(contractProviders, {
     compiledContract,
     contractAddress,
-    circuitId: what === "tax" ? "remitTax" : "remitSocial",
+    // One circuit for both halves since the payroll contract was cut down to
+    // fit the deploy ceiling — `remitTax` and `remitSocial` were the same
+    // circuit twice, and `isTax` now selects which pools and totals it touches.
+    circuitId: "remit",
     // The treasury is passed and the circuit asserts it equals the frozen
     // ledger value, so this cannot redirect anything. It is an argument rather
     // than a ledger read so the recipient reaches `sendShielded` disclosed,
     // exactly as `payPeriod` passes its payees.
-    args: [key, { bytes: treasury.bytes }, coin],
+    args: [key, what === "tax", { bytes: treasury.bytes }, coin],
     additionalCoinEncPublicKeyMappings: new Map([[recipient, encryptionKey]]),
   } as any);
 
