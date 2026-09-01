@@ -3,14 +3,15 @@
 
 import { useEffect, useState } from "react";
 import { apiUrl } from "../lib/origin";
-import { signIn, signOut, storedSession } from "../lib/walletAuth";
-import { useWallet } from "../wallet/WalletContext";
 import { loadDeployments } from "../lib/deployments";
 import { formatPeur, parsePeurInput, toPeurInput } from "../lib/format";
 import { readNationalDeposits, type NationalDeposits } from "../lib/nationalDeposits";
 import { NationalArrivals } from "./NationalArrivals";
 
 type TreasuryName = "social-treasury" | "tax-treasury" | "platform";
+
+/** Where the typed platform token is remembered between reloads. */
+const TOKEN_KEY = "polisZK/platform-token";
 
 interface TreasuryBalance {
   from: TreasuryName;
@@ -116,66 +117,43 @@ export function FundDeposit({
    * first place. Wrapped in try/catch: a browser with site data blocked throws
    * on access, and that must not take the panel down.
    */
-  const [token, setToken] = useState<string>(() => storedSession() ?? "");
-  const [signingIn, setSigningIn] = useState(false);
   /**
-   * Why sign-in failed, kept apart from the card's operation error.
+   * The platform token, remembered for this browser.
    *
-   * They shared one state and that hid the answer: a failed sign-in set
-   * `error`, then pressing any gated button immediately overwrote it with the
-   * generic "you need to sign in" guard. The operator saw the instruction they
-   * had just followed and no trace of what went wrong.
-   */
-  const [authError, setAuthError] = useState<string | null>(null);
-  /** Which step of sign-in is running, shown on the page. */
-  const [signInStep, setSignInStep] = useState<string | null>(null);
-  const { api, wallet, networkId: walletNetworkId } = useWallet();
-
-  /**
-   * Trades a wallet signature for a session.
+   * It cannot arrive from `.env`: that file is read by the SERVICE, on another
+   * machine. Shipping it as a `VITE_` variable would be worse than typing it,
+   * since Vite inlines those into the public bundle — the secret that mints
+   * pEUR would be readable by anyone who opens the JS.
    *
-   * Replaces pasting `PLATFORM_API_TOKEN` into the page. The operator already
-   * connects the platform wallet here, and a signature over a challenge the
-   * service just chose proves they hold it — which a pasted string never did,
-   * it only proved they had been told it.
+   * Wallet-signature sign-in was built to remove this field and is still live
+   * on the service (`server/wallet-auth.ts`, `lib/walletAuth.ts`). It was taken
+   * back out of the UI because 1AM does not raise its window for a `signData`
+   * request: the prompt queues invisibly inside the extension, so the page
+   * waits on a dialog the operator has no reason to know exists, and the wallet
+   * eventually cancels it. Transaction requests DO raise the window, which is
+   * why every other page feels normal. Nothing on a web page can focus an
+   * extension window, so until the wallet raises its own prompt this field is
+   * the honest option.
+   *
+   * `localStorage` because retyping a 64 character secret on every reload is
+   * how a truncated paste happens. Wrapped in try/catch: a browser with site
+   * data blocked throws on access, and that must not take the panel down.
    */
-  async function authenticate() {
-    if (!api && !wallet) {
-      setAuthError("Connect the platform wallet first — the signature comes from it.");
-      return;
-    }
-    setAuthError(null);
-    setSignInStep("starting…");
-    setSigningIn(true);
+  const [token, setToken] = useState(() => {
     try {
-      /**
-       * Reconnect before signing, rather than reusing the stored handle.
-       *
-       * The `ConnectedAPI` held in context is from whenever the wallet was
-       * connected, and its channel to the extension can be dead by the time
-       * anyone presses this — an extension reload or an update leaves the
-       * object in place with nothing on the other end. The failure mode is the
-       * worst kind: `signData` neither resolves nor rejects, so the wallet
-       * shows no prompt, the console shows no error, and the button sits on
-       * "Waiting for your wallet…" forever. The give-away is
-       * `[1AM Content] Error forwarding message` in the console.
-       *
-       * Calling `connect` again is cheap where the site is already authorised —
-       * no second approval — and it hands back a live handle. Falls back to the
-       * stored one only if there is no initial API to reconnect through.
-       */
-      setSignInStep("Reconnecting to the wallet…");
-      const signer = wallet ? await wallet.connect(walletNetworkId) : api;
-      setToken(
-        await signIn(signer as unknown as Parameters<typeof signIn>[0], setSignInStep)
-      );
-    } catch (cause) {
-      setAuthError(cause instanceof Error ? cause.message : String(cause));
-      setSignInStep(null);
-    } finally {
-      setSigningIn(false);
+      return localStorage.getItem(TOKEN_KEY) ?? "";
+    } catch {
+      return "";
     }
-  }
+  });
+  useEffect(() => {
+    try {
+      if (token.trim()) localStorage.setItem(TOKEN_KEY, token.trim());
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch {
+      // The field still works for this page view.
+    }
+  }, [token]);
 
   /**
    * What the two receiving contracts already hold for the period being typed.
@@ -285,8 +263,8 @@ export function FundDeposit({
   function blockedWithoutToken(): boolean {
     if (!needsToken) return false;
     setError(
-      "This service needs proof you hold the platform wallet. Press " +
-        '"Sign in with wallet" at the top of this card and approve the signature.'
+      "This service requires a platform token. Paste PLATFORM_API_TOKEN from the " +
+        "service's environment into the field at the top of this card, then try again."
     );
     return true;
   }
@@ -479,69 +457,39 @@ export function FundDeposit({
           that, and `server/wallet-auth.ts` checks it against the verifying key
           it derives from its own seed. Nothing to paste, nothing worth stealing
           in storage, and no secret to rotate. */}
+      {/* The token gates every privileged action on this card, so it sits above
+          all of them rather than inside one. It used to live in the remit row,
+          which read as belonging to that form alone — it never did: remit,
+          "Check balances" and the NIGHT top-up all send the same header. */}
       {authenticated ? (
-        <div className="settlement-token">
-          {token ? (
-            <p className="note" style={{ margin: 0 }}>
-              ✓ Signed in as the platform wallet.{" "}
-              <button
-                type="button"
-                className="linklike"
-                disabled={working}
-                onClick={() => {
-                  const current = token;
-                  setToken("");
-                  void signOut(current);
-                }}
-              >
-                Sign out
-              </button>
-            </p>
-          ) : (
-            <>
-              {/* Deliberately NOT disabled by `working`.
-
-                  Every other control on this card is, and sign-in used to be
-                  too — which meant one stuck operation disabled the very button
-                  that unsticks the card, silently. A disabled ghost button looks
-                  almost identical to an enabled one, so pressing it produced no
-                  prompt, no log and no error, and looked like the wallet
-                  ignoring the click. Signing in touches nothing the other
-                  operations touch, so it has no reason to wait for them. */}
-              <button
-                type="button"
-                className="ghost"
-                disabled={signingIn}
-                onClick={() => void authenticate()}
-              >
-                {signingIn ? "Waiting — approve in your wallet" : "Sign in with wallet"}
-              </button>
-              <p className="note" style={{ marginTop: 6 }}>
-                Everything on this card spends the platform wallet, so it asks that
-                wallet to sign a one-off challenge. Nothing is transferred and no
-                fee is paid.
-              </p>
-              {/* Loud, because the thing it is asking for is INVISIBLE: 1AM
-                  queues a `signData` request without raising its window, so the
-                  page waits on a dialog the operator has no reason to know
-                  exists. Transaction requests do raise it, which makes this the
-                  one action in the app where nothing appears to happen. */}
-              {signInStep ? (
-                <p
-                  className={signingIn ? "status error" : "note"}
-                  style={{ marginTop: 6 }}
-                >
-                  {signInStep}
-                </p>
-              ) : null}
-              {authError ? (
-                <p className="status error" style={{ marginTop: 6 }}>
-                  {authError}
-                </p>
-              ) : null}
-            </>
-          )}
-        </div>
+        <label className="field settlement-token">
+          <span>
+            Platform token
+            {/* The length, because this is a password field and a wrong token
+                is invisible. A truncated paste, a stray character or a password
+                manager filling something else all look identical to a correct
+                one until the service refuses it — and the service will not say
+                which, on purpose. The token is 64 characters, so anything else
+                is a bad paste rather than a wrong secret. */}
+            {needsToken ? (
+              <em className="note" style={{ marginLeft: 8, fontStyle: "normal" }}>
+                required for every action on this card
+              </em>
+            ) : (
+              <em className="note" style={{ marginLeft: 8, fontStyle: "normal" }}>
+                {token.trim().length} characters
+              </em>
+            )}
+          </span>
+          <input
+            type="password"
+            value={token}
+            disabled={working}
+            placeholder="PLATFORM_API_TOKEN from the service's environment"
+            autoComplete="off"
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </label>
       ) : null}
 
       {/* The hop as one line, left to right, in the order it is decided: what is
@@ -787,8 +735,8 @@ function TreasuryBalances({
       ) : null}
       {needsToken ? (
         <p className="note" style={{ marginTop: 6 }}>
-          These read and spend the platform wallet, so sign in with it first —
-          the button is at the top of this card.
+          These read and spend the platform wallet, so they need the platform
+          token at the top of this card.
         </p>
       ) : null}
       {balances?.some((b) => b.minor !== "0" && b.nightMinor === "0") ? (
