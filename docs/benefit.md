@@ -232,11 +232,12 @@ filed. So the employer says it, once, on chain.
 
 `endEmployment(period, index, attestation)` writes **one commitment per slot**,
 write-once. What it commits to is `Termination { finalPeriod, monthsWorked,
-claimKeyHash, nonce }`. None of those figures is published: months worked per
-slot would be a tenure record for a worker, and a claim-key hash per slot would
-be a stable handle appearing identically at every employer that person uses it
-with — rebuilding the cross-employer linkage `payeeFor` gives up convenience to
-prevent.
+nonce }`. Neither figure is published: months worked per slot would be a tenure
+record for a worker.
+
+> **Changed 2026-09-02.** `claimKeyHash` used to be the third field, and its
+> removal is the largest simplification in the system — see
+> [What the employee no longer needs](#what-the-employee-no-longer-needs).
 
 Write-once matters: an employer who could reissue a termination could restate the
 final month after seeing what it entitled someone to. Correcting one means
@@ -245,34 +246,47 @@ re-filing the period, which has its own guards.
 **The employer cannot claim on it.** `claim` requires the payee's own wallet key,
 which `payeeFor` binds and no employer holds.
 
-### The claim key has to exist before the dismissal
+### Nothing has to be collected first
 
-The claim-key hash goes into the attestation, which only the employer can write.
-So the order is:
+The employer needs **nothing from the employee** to end their employment. Every
+field of the attestation is theirs already: the final period and slot from
+`payeeFor`, the months worked counted from the same place, and the nonce derived
+from their payroll passphrase.
+
+That was not true until 2026-09-02. The attestation used to anchor a
+`claimKeyHash` the employee had to generate and hand over **before** the
+dismissal — so the order was:
 
 > employee creates a claim key → hands the **hash** to her employer → employer
 > ends the employment → employee claims
 
-She has to be in the loop at the moment she is being dismissed, holding a secret
-she generated earlier. That is not how a benefit office works, where you turn up
-afterwards with nothing but your identity. The alternative — anchoring the hash
-at hire, carried in the roster and written by `setPayroll` — is a contract change
-and a redeploy, and has not been made.
+She had to be in the loop at the moment she was being dismissed, holding a
+secret generated earlier. That is not how a benefit office works, where you turn
+up afterwards with nothing but your identity. Worse, the attestation is
+write-once: an employer who anchored the wrong hash stranded the claimant
+permanently, undetectably until she tried to claim months later.
 
-The employer only ever sees the hash, never the key, so neither arrangement lets
-them compute her nullifier.
+The claim key is gone, and with it the ordering constraint, the hand-over, and
+that failure mode. What it cost is set out under
+[What was traded away](#what-was-traded-away).
 
 ### Two routes
 
 | | Browser | CLI |
 | --- | --- | --- |
-| Where | `/employer/payroll` → **End employment** | `npm run terminate -- <instance> <period> <slot> --payee <key> --claim-key-hash <hash>` |
+| Where | `/employer/employees` → a row → **End employment** | `npm run terminate -- <instance> <period> <slot> --payee <key>` |
 | Signs with | the employer's wallet extension | `.env` |
 | Works for | any employer | only when employer == operator |
 
-Both produce an **opening file** — the figures behind the commitment. It is not
-stored anywhere and cannot be recovered from the page afterwards. Download it and
-put it in `terminations/`; the relay reads that directory.
+Both produce an **opening** — the figures behind the commitment. The browser
+route publishes the month's claim tree in the same step, so in the ordinary case
+there is nothing further to do.
+
+The opening is still offered as a download, but **losing it costs nothing**:
+every field is derivable. `Publish their claim tree` on the employee's row
+rebuilds it from the payroll passphrase alone, because the nonce is
+`sha256("polisZK/termination/v1", employerKey, "period:slot")` and the slot and
+month count are read from the chain. The CLI still reads `terminations/`.
 
 ## The relay and the claim tree
 
@@ -292,8 +306,12 @@ its own claim about someone's employment.
 
 What the relay never sees: any salary. Leaves are built from commitments and
 payee bindings, both already public and both opaque. The one non-public input is
-the termination opening, which carries months worked and a claim-key hash — not
-an amount.
+the termination opening, which carries months worked — not an amount.
+
+It also records the tree's **leaf digests** under `DATA_DIR/claim-digests.json`,
+which is what `GET /api/claim-tree` serves. Digests, never leaves: a digest is
+the hash of a leaf nobody can invert, and it is all a claimant needs to build a
+path.
 
 ### What the trust actually is
 
@@ -306,26 +324,31 @@ same root. Only the platform's root lands in `rootFor` today; widening that is a
 policy change, not a contract change, because the roots are all there and
 attributable.
 
-### The bundle carries a pool coin, and that is a real cost
+### The pool coin, and why it is the last thing a browser cannot derive
 
-`claim` takes the fund's coin as an argument — nonce, value and leaf — so a
-claimant cannot claim without being handed one. Two consequences follow, and
-neither is fixable from the relay:
+`claim` takes the fund's coin as an argument — nonce, value and leaf. The chain
+records that a fund-owned coin exists and publishes `poolOrdinal`, but never its
+nonce or value, which is the point of a shielded coin. Those live in
+`fund-pool.json`, written when the deposit was made.
+
+So `GET /api/pool-coin` serves those two fields, and it is the only part of a
+claim that still needs the service. It discloses nothing about who is asking: a
+request names a network and gets a coin, never which leaf in a period is the
+caller's.
+
+Two consequences remain, and neither is fixable from the relay:
 
 - she **learns that coin's value**;
 - two claimants handed the same coin would **race**, the second losing to a spent
-  input. So each gets a distinct one, and the relay warns when there are fewer
-  coins than claimants.
+  input (node error 103, which does not say so). The fund holds many coins — one
+  per deposit, plus a change coin per settled claim — so the fix is to hand out
+  different ones. `/api/pool-coin` returns the largest available and takes **no
+  lease**: with a single claimant in a period there is nothing to race, which is
+  the pilot's case and not a general answer.
 
 The relay also **cannot size them**. It sees commitments, never salaries, so it
 has no idea what any benefit comes to. An undersized coin surfaces as a claim
 that will not prove, and the fix is a deposit rather than a change to the relay.
-
-⚠️ **`terminations/…json` and `claims/…json` are not interchangeable.** The
-employer's opening travels employer → relay; the bundle travels relay →
-claimant, and only the bundle has a path. They were one character apart in
-filename until the bundle was renamed to `claim-bundle-…`; the claim page now
-recognises an opening loaded by mistake and says which is which.
 
 ## Claiming
 
@@ -336,62 +359,92 @@ fund, not by a relay, not by an agency acting for her. That assertion is what
 stops an employer collecting on their own leavers, so it cannot be relaxed for
 convenience.
 
-### Three inputs, and the split is the architecture
+### One input, and what removed the other two
 
 | Input | From | Why it cannot come from anywhere else |
 | --- | --- | --- |
-| **Claim bundle** | the relay | a path through a tree over everyone else terminated that month — being unable to build it alone is what keeps her anonymous inside it |
 | **Payslip** | her employer | the nonce that opens the commitment derives from *their* passphrase |
-| **Passphrase** | her | the one input nobody else can supply |
 
-Everything else is read from the chain rather than trusted from a file: the
-employer key and the tax `paramsHash` come from the payroll ledger.
+That is the whole list. Two inputs were removed on 2026-09-02:
 
-### Her claim key is random, and she keeps the file
+**The claim bundle** is assembled in her browser. Her leaf is reconstructed from
+`commitmentsFor` and her own key, her slot and month count recounted from
+`payeeFor`, her path built from the digests at `/api/claim-tree`, and the fund
+coin fetched from `/api/pool-coin`. Nobody tells her which leaf is hers — she
+recomputes her own digest and looks for the match, which is better than being
+told, because being told would mean the service knew.
 
-On `/employee` → **Your claim key** → *Create my claim key*: 32 bytes from
-`crypto.getRandomValues`, downloaded as `claim-key-xxxxxxxx.json` — the same
-name the CLI writes, so neither half of the system renames the other's file
-(not `identity` or `account` — there is no account here, and the wallet is the
-identity). Only the
-**hash** is displayed and only the hash is remembered; the key itself is the
-nullifier secret and a page that shows it invites it into a screenshot.
+**The claim key** is gone from the protocol entirely.
 
-**It was a passphrase until 2026-08-26** — PBKDF2-SHA256 at 600,000 iterations,
-salted with her coin public key — and the reason it is not one any more is worth
-keeping. `claimKeyHash` is not secret: it travels in clear in her claim bundle
-and in the employer's termination opening, and the salt is her coin public key,
-an address she hands out to be paid. Anyone holding a bundle therefore had an
-offline grinding target. Money was never at risk — `claim` also asserts
-`payeeBinding` against `ownPublicKey()`, so a guessed key spends nothing — but
-the linkability the key exists to protect was recoverable at the strength of
-whatever words she chose, and nothing in the UI said so. Random bytes end that.
+A bundle was a poor thing to hand over anyway: it names a fund coin, and any
+earlier claimant spending that coin invalidates it. One handed over in September
+was likely worthless by November, so she needed a fresh one regardless — and
+fetching it herself keeps her former employer out of the claim path.
 
-The obvious alternative, sealing the key to her wallet so there is nothing to
-keep, is not available. The connector exposes **no decrypt operation** — checked
-against 4.0.1 and against the 4.1.0 canary of 2026-08-19, which adds only
-proving surface — so a key encrypted to her `shieldedEncryptionPublicKey` would
-be ciphertext with no reader, forever. That also rules out sealing it on chain:
-a seal needs a holder, her employer must not be one, her wallet cannot be one,
-and a password reintroduces exactly what this removed.
+### What the employee no longer needs
 
-She now keeps a file. That is a smaller change than it sounds — the final
-payslip is already required to claim, and it carries her salary in clear, so the
-bar for "a file she looks after" was set higher than this already. A file can
-also be backed up, where a memorised passphrase can only be backed up by writing
-it down.
+Until 2026-09-02 a claim took **three files**: a claim bundle from the relay, a
+payslip from her employer, and a claim key she had generated herself and kept.
+It now takes one, and it is the one her employer would have sent anyway.
 
-**The CLI and the browser no longer diverge.** `npm run payee <seed> --
---claim-key` still derives `sha256("polisZK/claim/v1", shieldedSeed)`, because a
-CLI holds a seed and that is high-entropy already — but it now also writes the
-same `claim-key-….json`. The two roots are not reconciled by making the
-derivations agree, which they never could: a browser cannot reach a seed. They
-are reconciled by the file. A claim key is 32 bytes, and where they came from
-stops mattering once both sides load the same file.
+| | Before | Now |
+| --- | --- | --- |
+| Claim bundle | file from the relay | assembled in her browser |
+| Payslip | file from her employer | unchanged |
+| Claim key | 32-byte file, unrecoverable | **gone** |
 
-⚠️ Anyone whose employer already anchored a passphrase-derived hash still claims
-with that passphrase. `/claim` keeps the route behind a disclosure and it cannot
-be removed: the anchor is write-once, so there is no migration, only a fallback.
+The claim key was the sharpest edge in the system. It existed in one download
+and nowhere else — it could not be sealed to her wallet (the DApp connector
+exposes `shieldedEncryptionPublicKey` and `signData`, and **no decrypt
+operation**) nor derived from a signature (the connector signs
+non-deterministically, so the same message yields a different key each time).
+Losing it forfeited the benefit. Creating a second one silently invalidated the
+first. And her employer had to anchor its hash in a write-once statement before
+dismissing her, so a wrong value stranded her with no way to notice until she
+claimed.
+
+### What was traded away
+
+The claim key did three jobs. Two were replaceable and one was not.
+
+| Job | After removal |
+| --- | --- |
+| Seed the nullifier, so a window cannot be claimed twice | `ClaimNullifier { payee, window, fund }` from `ownPublicKey()` — the wallet cannot lie about its own key |
+| Bound the number of windows | unrelated to the key; see the `durationMonths` fix below |
+| Keep the nullifier **unlinkable** | **lost** |
+
+The third is the real cost and should be stated plainly: the nullifier is now
+`hash(ownPublicKey, window, fund)`, so **anyone holding a claimant's payment
+address can compute it and test the public `spent` set** — learning *that* she
+claimed, and for how many windows. Never how much, never her salary, never which
+employer.
+
+Not the world: `payeeFor` publishes only a hash, so a passer-by cannot do it. But
+a former employer can, from the workbook, and so can anyone she has given that
+address to in order to be paid.
+
+`fund.compact` records the reasoning at `ClaimNullifier`, including the shape
+that would restore unlinkability without a file: a secret her wallet can
+reproduce on demand. **WebAuthn PRF** is that shape; nothing in the connector is,
+today. See [wave 2](privacy.md#wave-2-hardening).
+
+### The number of windows is now enforced
+
+⚠️ **It was not.** `claim` took `window` as an argument, put it in the nullifier
+and asserted nothing about it. `PILOT_DURATION_MONTHS = 3` lived only in
+TypeScript, so a claimant calling the circuit directly passed window 0, 1, 2,
+3 … and drew a distinct nullifier — and a distinct payment — for each, until the
+fund was empty. Everything else about them was genuine; only the *number* of
+payments was theirs to choose.
+
+`BenefitParams` now carries `durationMonths`, and `claim` asserts
+`window < params.durationMonths`. Windows are zero-based **indices**, not
+periods — a YYYYMM value could never satisfy that bound. The month each index
+falls in is shown for readability and is not what the circuit sees.
+
+The cost was the one the old note in `utils/benefit-params.ts` predicted: the
+struct hash changed, so every published version had to be republished and the
+fund redeployed.
 
 ### Every assertion is checked before proving
 
@@ -399,29 +452,34 @@ The circuit's checks are re-run off-circuit first, against the same pure
 circuits, so a wrong file names itself instead of costing minutes of proving and
 then reporting `assertion failed`:
 
-- the payslip is for this contract, this period, this slot;
-- the bundle was filed for the connected wallet (`payeeHash`);
+- the payslip is for this contract, this period, this slot — and when it is
+  not, the message **names both addresses**, because after a redeploy every
+  payslip the previous contract issued keeps naming it, and "a different
+  contract" sends someone hunting for a file that does not exist yet;
+- the leaf was filed for the connected wallet (`payeeHash`);
 - the payslip figures open the published commitment (`commitmentFor`);
-- **the claim-key file reproduces the anchored hash** — the likeliest failure in
-  the whole flow, and the one worth naming precisely, since the anchor is
-  write-once. Checked as soon as the bundle and the key are both loaded rather
-  than at submit: `leaf.claimKeyHash` is in the bundle in clear, so it costs a
-  string comparison, and the moment she is still looking at her downloads folder
-  is the only useful one to tell her in;
+- the rebuilt path reproduces the published root;
 - the pool coin covers the benefit.
+
+The anchored-key check is gone with the key it checked. It used to be the
+likeliest failure in the whole flow.
 
 ### She can check what she has already claimed
 
-`/employee` → *Have I already claimed?* → her claim-key file. The page computes
-`claimNullifier(claimKey, window, fund)` for each month of the entitlement and
-looks it up in the public `spent` set, reporting claimed, remaining, and
-anything outside the entitlement.
+`/employee` → *Have I already claimed?*. It runs on its own, with **no file**:
+the page computes `claimNullifier(ownPublicKey, index, fund)` for each window of
+the entitlement and looks it up in the public `spent` set, reporting claimed and
+remaining.
 
-This was documented as impossible and it was not. The premise — nobody else may
-compute her nullifiers — is exactly why `fund.compact` keys them on her secret
-claim key, and it never implied she could not compute her own. What was missing
-was a pure circuit, because reimplementing a contract hash in TypeScript is what
-`claim-tree.ts` exists to forbid.
+This was documented as impossible, then became possible with a file, and is now
+automatic. The premise was that nobody else may compute her nullifiers, which
+was true while they were keyed on a secret — and it never implied she could not
+compute her own. What was missing was a pure circuit, because reimplementing a
+contract hash in TypeScript is what `claim-tree.ts` exists to forbid.
+
+The page is now explicit that the convenience has a price: anyone holding her
+payment address can run the same check. That is the linkability traded away with
+the claim key, said where it matters rather than left for a reader to infer.
 
 **Adding it cost nothing on chain**, which is worth recording generally: pure
 circuits carry no prover or verifier keys. Recompiling `fund.compact` with

@@ -30,9 +30,12 @@ changing anything.
 | Ending employment | **working** — from the employer's browser and from the CLI |
 | Claim tree relay | **working** — root published for 202601 |
 | Claims and benefit payment | **working** — €154.00 claimed end to end from the claimant's browser on the pre-withholding fund; see **A benefit claimed** |
-| Claimant's claim key in the browser | **working** — 32 random bytes kept in a downloaded file (passphrase route retained for anchors written before 2026-08-26) |
+| Claimant's claim key | **removed 2026-09-02** — the protocol no longer has one; the nullifier is seeded from the claimant's wallet |
+| Claim assembled in the claimant's browser | **working** — leaf, path and fund coin gathered without a bundle file |
+| Benefit duration enforced on chain | **working** — `claim` asserts `window < params.durationMonths`; it asserted nothing before 2026-09-02 |
 | Recovering a post-claim change coin | **working** — `fund reconcile`, verified against the on-chain commitment |
-| Anchoring the claim key at hire rather than termination | **not built** — needs a contract change; today she must hand the hash over before being dismissed |
+| Unlinkable nullifiers | **not built** — traded away with the claim key; needs a secret the wallet can reproduce, e.g. WebAuthn PRF. See privacy.md |
+| Pool-coin leasing | **not built** — one claimant per period races nobody; two would |
 | Benefit withholding | **working** — tax and contribution withheld under the schedule the final month was filed under, pinned by hash |
 | Remitting withheld benefit tax | **working** — €55.055 and €4.62 sent to their treasuries and confirmed received |
 | Stepped benefit rate | **not modelled** — `BenefitParams` carries one flat rate, not a schedule |
@@ -72,7 +75,17 @@ changing anything.
 - **A termination opening is not a claim bundle.** `terminations/…json` goes
   employer → relay; `claims/<period>/claim-bundle-…json` goes relay → claimant,
   and only the second has a path. Their filenames were nearly identical until the
-  bundle was renamed.
+  bundle was renamed. Less consequential now: the browser assembles its own
+  bundle, so the second file is a fallback rather than the route.
+- **The write-once guard fired on the rebuild path.** `surveyEmployment` refused
+  a period whose slot was already terminated — right for *ending* employment,
+  and exactly backwards for *rebuilding* the opening of one, which by definition
+  only happens after a termination exists. It is now opt-in (`allowEnded`).
+- **A payslip names the contract that issued it.** After a redeploy, every
+  payslip the previous instance issued is refused — correctly, since the
+  commitment it opens lives elsewhere now. The message names both addresses,
+  because "a different contract" sends someone hunting for a file that does not
+  exist yet.
 - **`connectContract` took a `contractName` it did not use.** It always imported
   the payroll module while pointing the ZK provider at the named contract's
   assets, so the first non-payroll caller fetched a verifier key for a circuit
@@ -159,10 +172,14 @@ In order:
    nothing carries payroll contributions *into* the fund. Closing that loop is an
    operational design — who holds the key between `remitSocial` and
    `fund deposit` — before it is code.
-3. **Anchor the claim key at hire.** Today it is written into the termination
-   attestation, so an employee must hand the hash to her employer *before* being
-   dismissed. Carrying it in the roster and writing it in `setPayroll` is the
-   faithful shape, and it needs a contract change and a redeploy.
+3. ~~**Anchor the claim key at hire.**~~ **Done differently, 2026-09-02.** The
+   problem was that an employee had to hand a hash to her employer *before*
+   being dismissed, into a write-once statement that stranded her if it was
+   wrong. Rather than move the anchor earlier, the claim key was removed: the
+   nullifier is now seeded from `ownPublicKey()`, which the wallet cannot lie
+   about. The ordering constraint, the hand-over and the failure mode all went
+   with it. What it cost is unlinkability — see
+   [privacy.md](privacy.md#wave-2-hardening).
 4. **Model the benefit properly.** ~~Withholding~~ is done — the benefit is taxed
    under the same schedule the final salary was, so it can no longer exceed net
    pay. Still missing: a rate that **steps down** after the opening months, which
@@ -170,9 +187,9 @@ In order:
    the benefit from a **reference year** rather than the final month alone.
 5. **Employees holding their own keys** is **done for wallet-based employees**:
    both employees in the 2026-08-25 run held their own 1AM wallets, supplied
-   their own coin and encryption public keys, and one derived her own claim key
-   and claimed with it. What remains custodial is the seed-based test employees
-   the CLI generates.
+   their own coin and encryption public keys, and one claimed with her own
+   wallet. What remains custodial is the seed-based test employees the CLI
+   generates.
 
 The tax-and-vault appendix describes a four-contract version of this with
 separate tax and contribution vaults. It is superseded — see **What the compiler

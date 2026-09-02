@@ -29,11 +29,30 @@ field when there is nothing to send.
 | `GET  /api/job/:id`          | none              | progress for a long-running job                 |
 | `POST /api/onboard`          | signup limit      | assigns the payroll contract to an employer     |
 | `POST /api/claim`            | signup limit      | the once-only employer starter allowance        |
-| `POST /api/relay`            | work limit        | builds a period's claim bundles, optionally publishes |
-| `GET/POST /api/claim-keys`   | work limit (POST) | employees publish a claim-key hash; employers read it |
+| `POST /api/relay`            | work limit        | builds a period's claim tree, optionally publishes the root |
+| `GET  /api/claim-tree`       | none              | a period's leaf **digests**, so a claimant builds their own path |
+| `GET  /api/pool-coin`        | none              | the nonce and value of a fund coin to claim against |
 | `GET/POST /api/sealed-roster`| work limit (POST) | the employer's roster, sealed under their passphrase |
 | `GET  /api/registrations`    | none              | the registry of onboarded companies             |
 | `POST /api/platform/*`       | platform token    | treasuries, fund deposits, mint, faucet, reset  |
+
+⚠️ **`/api/claim-keys` is gone**, along with the `claim_key_hashes` table, when
+the claim key was removed from the protocol on 2026-09-02. Nothing replaced it:
+a termination no longer anchors anything the employee has to supply.
+
+**Neither new route is logged, and that is a policy rather than a mechanism.** A
+period, an IP and a timestamp is a claim-timing record, and it would reconstruct
+off chain the linkage the rest of the design pays to avoid. Nothing in the code
+enforces it, so the next person to add request logging has to read
+`utils/pool-coin.ts` and decide deliberately.
+
+**Why they are unauthenticated.** A digest is the hash of a leaf nobody can
+invert, so the list discloses nothing about who was terminated — and it must be
+served **whole**, because a request naming one leaf would tell the service which
+leaf is the caller's, which is exactly the anonymity `claim` provides by proving
+membership without disclosing the leaf. Neither is authoritative either: the root
+on chain is, and a path built against a tampered list fails to reproduce it. A
+wrong list costs an attempt, never a payment.
 
 **Two rate-limit buckets, because the risks differ.** `signupLimit` (3/hour,
 `SIGNUP_LIMIT_PER_HOUR`) covers what spends the *platform's* money — a deploy, a
@@ -52,18 +71,23 @@ write rather than by a migration step, so a fresh machine needs no setup command
 | Table               | Written by                     | Contents                                        |
 | ------------------- | ------------------------------ | ----------------------------------------------- |
 | `registrations`     | onboarding                     | company name, instance, contract, employer key   |
-| `claim_key_hashes`  | employee, on *Send to my employer* | network, **hex** coin public key, claim-key hash |
 | `sealed_rosters`    | employer, on filing a period   | network, contract, **AES-GCM ciphertext**        |
 
-**`claim_key_hashes` is inert.** It stores `persistentHash(claimKey)` over 32
-random bytes: not reversible, no dictionary to guess against, and no route to a
-payment — `claim` binds to `ownPublicKey()` separately. It removes a courier step
-that was failing in practice, since an employee who never sent their hash cannot
-be helped after the write-once attestation exists. It is a **suggestion**: the
-employer's field is pre-filled and stays editable, and the employee is shown what
-the service holds for them while a mismatch can still be fixed. It carries no
-contract address, so it says "this key has a benefit key", never "this key works
-for X".
+⚠️ **`claim_key_hashes` was here and is gone**, dropped on 2026-09-02 with the
+claim key itself. Two things are worth recording rather than deleting, because
+both were live for a time and both were found the hard way:
+
+- It was unique on `(network_id, coin_public_key)` with **no contract address**,
+  so one hash published at one employer answered for that person at *every*
+  employer on the network, permanently. That surfaced as a ✓ Collected against
+  an employee nobody had collected anything from.
+- `GET /api/claim-keys` with no key returned **every row** to anyone — a
+  downloadable map of coin public key to claim-key hash, which is the stable
+  per-person handle `payeeFor` gives up convenience to avoid. The chain refuses
+  to publish it; that endpoint handed it over on request.
+
+Both were fixed by scoping the table to `(network, contract, coin key)` and
+requiring a contract on GET. Removing the claim key removed the table.
 
 **`sealed_rosters` the service cannot read.** A plaintext roster would rebuild
 the employment map the whole design avoids — the chain stores
@@ -91,10 +115,15 @@ satisfied neither. `npm run build:server` compiles only what the service needs.
 
 ### `DATA_DIR`
 
-Three files are written at run time and are not source: `deployment.json`,
-`.onboarded-keys.json` and the wallet's sync position — plus `claims.json`, which
-bounds a public route. All four resolve through `dataDir()`, so a managed host
-can point them at storage that outlives a deploy.
+Five files are written at run time and are not source: `deployment.json`,
+`.onboarded-keys.json` and the wallet's sync position; `claims.json`, which
+bounds a public route; and `claim-digests.json`, the per-period claim-tree leaf
+digests `/api/claim-tree` serves. All five resolve through `dataDir()`, so a
+managed host can point them at storage that outlives a deploy.
+
+Losing `claim-digests.json` is not fatal but it is not free: the root stays on
+chain and stays valid, while every claimant loses the list they build their path
+from until the period is relayed again.
 
 Unset, it is the working directory and every local workflow behaves as before.
 On a managed host it must be set, or a push replaces the code directory and takes

@@ -19,7 +19,7 @@ Runs `node dist/server/index.js`. It must have:
 | `PROOF_SERVER_URL` | **critical** — defaults to `127.0.0.1:6300`, which does not exist in a container, so every proving operation fails without it |
 | `payroll_address`, `peur_address`, `taxparams_address`, `fund_address`, `taxvault_address` | `deployment.json` is gitignored, so on a fresh disk the env baseline is the **only** source of addresses |
 | `DATA_DIR` | storage that outlives a deploy |
-| `DATABASE_URL` | the registry, claim-key hashes and sealed rosters |
+| `DATABASE_URL` | the registry and sealed rosters |
 | `PLATFORM_API_TOKEN` | required to bind anywhere but loopback |
 | `ALLOWED_ORIGINS` | must include the frontend's origin, or CORS blocks it |
 

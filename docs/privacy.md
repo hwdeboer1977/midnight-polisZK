@@ -24,10 +24,11 @@ something is unproven it says so.
 | **Who each employee is** | no | `payeeFor` stores a hash of the coin public key |
 | **The openings** | no | sealed under the employer's key |
 | A termination happened, for some slot | **yes** | `terminationFor` has a key per terminated slot |
-| **Months worked, and the claim-key hash** | no | committed inside the attestation |
+| **Months worked** | no | committed inside the attestation |
+| How many monthly windows anyone gets | **yes** | `durationMonths` in `BenefitParams` — a rule, not a fact about a person |
 | Which periods have a claim tree | **yes** | `rootFor` |
 | How many claims have settled | **yes** | `claimsPaid` — a count, never an amount |
-| One spent nullifier per claim | **yes** | opaque; the image of a secret, linked to nobody |
+| One spent nullifier per claim | **yes** | ⚠️ derived from the claimant's wallet — see below |
 | **Who claimed, and for how much** | no | the benefit is a shielded coin |
 | **The fund's balance** | no | a shielded coin, so the fund is *not* publicly solvent |
 | Tax and contribution withheld from benefits, in total | **yes** | `taxPool`/`taxRemitted` — deliberate, and it discloses aggregate outflow |
@@ -35,6 +36,23 @@ something is unproven it says so.
 
 The public total is deliberate and useful: an auditor can check what a company
 paid in a month without learning what anyone earns.
+
+⚠️ **The nullifier stopped being unlinkable on 2026-09-02.** It was
+`hash(claimKey, window, fund)` over a secret only the claimant held, so the
+`spent` set was a list of values nothing could tie to a person. It is now
+`hash(ownPublicKey, window, fund)`, so **anyone holding a claimant's payment
+address can compute it and test the set** — learning *that* she claimed and for
+how many windows.
+
+Not the world: `payeeFor` publishes only a hash, so a passer-by cannot. But a
+former employer can, from the workbook, and so can anyone she has given that
+address to in order to be paid. What is still hidden: the amount, the salary it
+derives from, and which employer she left.
+
+That was a deliberate trade for removing a 32-byte file that could not be
+reissued, could not be sealed to her wallet, and had to be handed to her employer
+*before* a write-once statement. [Wave 2](#wave-2-hardening) records what would
+buy it back.
 
 The fund's opposite is deliberate too, and costs something real. It publishes
 **counts, not amounts**, and its balance is a shielded coin — so it cannot
@@ -187,10 +205,10 @@ operator are genuinely separate there.**
 
 ### The 2026-08-25 run was not custodial at all
 
-Both employees held their own 1AM wallets, supplied their own coin and encryption
-public keys into the roster, and one derived her own claim key from her own
-passphrase and claimed with it. No key in that chain was derived from the
-employer's passphrase.
+Both employees held their own 1AM wallets and supplied their own coin and
+encryption public keys into the roster. No key in that chain was derived from the
+employer's passphrase. (That run predates the claim key's removal — one of them
+derived her own claim key from her own passphrase and claimed with it.)
 
 `claim` makes that structural rather than a matter of good practice: it rebuilds
 `payeeBinding` from `ownPublicKey()`, so a benefit can only be claimed by the
@@ -201,3 +219,86 @@ benefits are involved**.
 
 What is still custodial: the seed-based test employees `npm run payee`
 generates, and any roster still using employer-derived keys.
+
+
+## Wave 2 hardening
+
+What is knowingly unfinished, in the order I would fix it. Each names the
+mechanism rather than an intention, because a roadmap that cannot be checked is
+a wish.
+
+### 1. Make the nullifier unlinkable again
+
+**Now:** `hash(ownPublicKey, window, fund)` — computable by anyone with the
+claimant's payment address.
+
+**Needs:** a secret her wallet can reproduce on demand. Two candidates, and the
+constraint that kills the obvious ones is recorded in `lib/payslip.ts`: the DApp
+connector exposes `shieldedEncryptionPublicKey` and `signData`, **no decrypt
+operation**, and it signs **non-deterministically**.
+
+- **WebAuthn PRF.** A passkey's PRF extension yields a deterministic
+  per-credential secret, so the key comes back from a touch — no file, nothing
+  guessable. Strongest of the three; depends on authenticator support, and an
+  unsynced authenticator lost is the key lost.
+- **A claimant passphrase.** `PBKDF2(passphrase, coinPublicKey)`, mirroring the
+  employer's payroll passphrase exactly. Reproducible anywhere, nothing stored —
+  but the claim-key hash would be public again, so a weak passphrase becomes an
+  offline target.
+
+### 2. Allocate pool coins with a lease
+
+**Now:** `/api/pool-coin` returns the largest confirmed coin and takes no lease.
+With one claimant per period there is nothing to race; with two, the second loses
+to a spent input and sees node error 103, which does not say so.
+
+**Needs:** a reservation with an expiry — five minutes is generous against a
+minute of proving — returning expired holds to the pool. The fund already holds
+many coins (one per deposit, plus a change coin per settled claim), so there is
+something to allocate; `poolOrdinal` is a bookmark to the newest, not the pool.
+
+### 3. Enforce the no-logging policy
+
+**Now:** stated in `utils/pool-coin.ts` and honoured by not having written any.
+A period, an IP and a timestamp on `/api/claim-tree` or `/api/pool-coin` is a
+claim-timing record that would rebuild off chain the linkage the design pays to
+avoid.
+
+**Needs:** something a future contributor cannot undo by accident — an explicit
+opt-out in the request logger rather than a comment.
+
+### 4. Seal the roster the way `sealed_rosters` is sealed
+
+**Now:** `registrations` holds `company_name` beside `contract_address` and
+`employer_key`, **in plaintext**, in the platform's own database. That
+reconstructs the company-to-contract map the rest of the design avoids.
+
+**Needs:** the pattern already two tables away. `sealed_rosters` holds AES-GCM
+ciphertext under a key derived from a passphrase the service never sees.
+
+### 5. A second payslip copy, sealed to the employee
+
+**Now:** the openings on chain are sealed under the **employer's** key, so a
+former employee needing a replacement has to ask a company she no longer works
+for — precisely when goodwill is thinnest.
+
+**Needs:** a second `Bytes<100>` field per slot, written by `setPayroll` and
+sealed to the employee. ⚠️ **Blocked**, and worth stating so nobody re-proposes
+it: the connector has no decrypt operation, so ciphertext sealed to her
+`shieldedEncryptionPublicKey` has no reader. This waits on the same capability
+as item 1.
+
+### What is not on this list, and why
+
+**Small-roster inference.** `totalPayrollFor` and `employeeCountFor` are both
+public and `setPayroll` is unrolled to two employees, so the average is within a
+whisker of each person's pay. That is inherent to publishing exact totals at
+small headcount. It eases as the roster grows and it does not go away; the fix
+is a bigger roster, not a code change.
+
+**The open pEUR mint.** `peur.compact`'s `mint` asserts nothing about its caller
+— the issuer check was removed so a demo can fund itself — so `totalSupply`
+measures nothing. A real deployment restores the check in the contract. No
+amount of frontend work substitutes for that, which is why minting now happens
+from the connected wallet: a service route in front of an open circuit is a door
+beside an open wall.

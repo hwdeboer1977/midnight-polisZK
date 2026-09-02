@@ -42,7 +42,7 @@ Everything below is world-readable and cannot be deleted. The privacy work is in
 | `coinsReceived`, `coinOrdinalFor`, `taxCoinFor`, `socialCoinFor` | Public | Zswap leaf ordinals, so a coin can be rebuilt. Values are not stored — an ordinal alone spends nothing. |
 | `payeeFor` | Hashed | `payeeHash(coinKey, period, contract)`. Bound to the month *and* the instance, so the same worker is a different value every month and at every employer. Bulk linkage is gone; a targeted guess still works. |
 | `commitmentsFor` | Hashed | The payslip commitment. Binds gross, tax, social, net, weeks, employer, period and a nonce — reveals none of them. |
-| `terminationFor` | Hashed | Presence = employment ended, publicly. The contents — final period, months worked, *and the claim-key hash* — are inside one hash with a random nonce, so none is readable or testable. |
+| `terminationFor` | Hashed | Presence = employment ended, publicly. The contents — final period and months worked — are inside one hash with a derived nonce, so neither is readable or testable. |
 | `sealedFor` | Sealed | 100 bytes: IV + AES-256-GCM of the four amounts, weeks worked and the nonce. Encrypted to **the employer's** passphrase key — the employer's own backup. *The employee cannot open it.* |
 
 ### fund.compact — the benefit pool
@@ -61,6 +61,7 @@ Everything below is world-readable and cannot be deleted. The privacy work is in
 | --- | --- | --- |
 | `taxvault.receivedFor`, `taxvault.sourceFor` | Public | Per period: how much tax arrived, and which payroll contract *claimed* to send it. The vault cannot verify the named contract really assessed that figure. |
 | `taxvault` totals & counts | Public | `heldTotal` is the current balance; `receivedTotal` and `withdrawnTotal` only ever rise, so a balance back at zero still shows what passed through. |
+| `fund.paramsFor` | Public | The benefit rules, including `durationMonths` — how many monthly windows *anyone* gets. A rule, not a fact about a person. |
 | `taxparams.paramsFor` | Public | The tax rules themselves — brackets, rates, contribution base — in the clear, versioned. These *should* be public: they are law. |
 | `peur.issuer`, `tokenId`, `totalSupply`, `mintCounter` | Public | Who may mint the payment token, and how much exists. |
 
@@ -82,7 +83,6 @@ publish actually lives.**
 | Table | Exposure | Columns, and who can read them |
 | --- | --- | --- |
 | `registrations` | Plaintext | `company_name`, `instance`, `network_id`, `contract_address`, `employer_key`, term and status. **A direct company name ↔ contract address ↔ employer wallet map, unencrypted, held by the platform.** The chain gives you the last two; this table adds the name. |
-| `claim_key_hashes` | Public | `network_id`, `coin_public_key`, `claim_key_hash`, `created_at`. Plaintext, unique on *(network, coin key)* — no contract scope — and readable by anyone with no arguments. See findings 01 and 02. |
 | `sealed_rosters` | Sealed | One base64 blob per *(network, contract)*: `iv ‖ AES-256-GCM ciphertext` under `SHA-256(employerKey ‖ "polisZK/roster/1")`, derived in the browser from the payroll passphrase. The server holds ciphertext and can do nothing with it. Contents: full name, coin key, encryption key — **deliberately no salaries and no home addresses.** |
 
 > **Why `sealed_rosters` is the right shape and `registrations` is not.** Both answer
@@ -103,8 +103,7 @@ been told, not what is true."*
 
 | Key | Held by | Contents |
 | --- | --- | --- |
-| `polisZK/collected/v1` | Employer | contract → coin key → `{ fullName, claimKeyHash, at }`. **Employee names in plaintext local storage.** This is what lets a rebuilt roster show a person instead of a slot number. |
-| `polisZK/claim-key-hash/<key>` | Employee | The employee's own claim-key *hash* — a reminder of what they generated. The key itself is never written here. |
+| `polisZK/collected/v1` | Employer | contract → coin key → `{ fullName, at }`. **Employee names in plaintext local storage.** This is what lets a rebuilt roster show a person instead of a slot number. |
 | `polisZK/fingerprint/pbkdf2-v1/<contract>` | Employer | A SHA-256 fingerprint of the payroll key that successfully filed a period, so a wrong passphrase is caught early. Written only *after* a successful submission — trying a passphrase does not bind the browser to it. |
 | `polisZK/platform-token` | Operator | **The `PLATFORM_API_TOKEN` bearer credential, in plaintext.** See finding 03. |
 | `polisZK/wallet-session` | — | Dead. Wallet auth was removed; `lib/walletAuth.ts` is no longer imported by anything. |
@@ -124,11 +123,10 @@ Postgres. **None of these files is backed up by anything.**
 
 | File | Whose | Exposure | Contents |
 | --- | --- | --- | --- |
-| `polisZK-claim-key-….json` | Employee | Secret | The 32 random bytes of the claim key, in hex, plus its hash and the owner's coin key. **The only copy in existence.** Lose it and the unemployment benefit cannot be claimed — by anyone, ever. |
 | the payroll workbook (`.xlsx`/`.csv`) | Employer | Secret | Six columns: *Full name · Address · Monthly gross salary · Weeks worked · Coin public key · Encryption public key.* **The single most sensitive artifact in the system** — and the only place a home address exists at all. The sealed roster carries a subset of this, never the salary or the address. |
 | `payslip-<period>-slot-N.json` | Employer → Employee | Plaintext | Gross, tax, social, net, weeks and the nonce, in the clear. Handed over out of band; `checkPayslip` lets the employee verify it against the on-chain commitment. Plaintext is correct here — they are the employee's own figures. |
 | `termination-opening-….json` | Employer | Secret | The opening of the write-once termination commitment. Without it the claim bundle cannot be rebuilt, and the commitment cannot be revised to compensate. |
-| `claim-bundle-….json` | Relay / Employee | Secret | Merkle path plus the fund coin to claim against. Goes stale when another claimant spends the named pool coin — rebuildable, which is why the rebuild is exposed in the UI. |
+| `claim-bundle-….json` | Relay / Employee | Secret | Merkle path plus the fund coin. **No longer handed over** — the claimant's browser assembles its own from `/api/claim-tree` and `/api/pool-coin`. Kept as a fallback for a browser that cannot reach the service. |
 
 ---
 
@@ -146,6 +144,7 @@ person's own machine.
 | `deployment.json` | Local | Contract addresses per network and instance. Gitignored. Losing it orphans a deployed payroll: `assignEmployer` cannot be repeated, so a lost address is only recoverable by finding it again on chain. |
 | `claims.json` | Local | Who has drawn the starter allowance. **This file *is* the bound on a public route** — `/api/claim` is gated on "has not claimed before", so losing it re-opens the allowance to everyone who already drew it. |
 | `fund-pool.json` | Secret | Deposit records including **coin nonces** for the fund's pool coins. Stays in cwd deliberately — it belongs to an operator CLI on a durable machine. |
+| `claim-digests.json` | Local | Per-period claim-tree **leaf digests**, served by `/api/claim-tree`. Digests only: a leaf's one non-public field is `monthsWorked`, and a digest discloses none of it. |
 | `claims/`, `terminations/` | Secret | Per-period termination openings and payslips accumulated by the CLIs. Plaintext salary figures for anyone processed through the command line. |
 
 ---
@@ -169,9 +168,9 @@ the public chain and the public API.
 | That a given slot was paid | yes | yes | yes | **yes** |
 | That a given slot was terminated | yes | yes | yes | **yes** |
 | Which person a slot is | self only | yes | — | guess only |
-| Someone's claim-key hash | own | yes | **plaintext** | **plaintext** |
-| Someone's claim key | own file | — | — | — |
-| Cross-employer work history | — | — | — | **via claim keys** |
+| ~~Someone's claim-key hash~~ | *removed from the protocol* | | | |
+| **That someone claimed a benefit** | own | **yes** | yes | **anyone with their payment address** |
+| How much they claimed | own | — | — | — |
 
 ---
 
@@ -180,22 +179,23 @@ the public chain and the public API.
 Each of these undoes, somewhere else in the stack, a property the contracts spend
 real effort to establish.
 
-### 01 — The claim-key table is publicly enumerable
+### 01 & 02 — ✅ resolved by removing the claim key
 
-`GET /api/claim-keys?networkId=preview` with no coin key returns *every* row to
-anyone — a downloadable map of coin public key → claim-key hash. That pairing is
-exactly the stable per-person handle `payeeFor` gives up convenience to prevent:
-the chain refuses to publish it, and this endpoint hands it over on request.
-Requiring `coinPublicKey` on GET turns it back into a lookup rather than a directory.
+Both were about `claim_key_hashes`. **01:** `GET /api/claim-keys` with no key
+returned every row to anyone — a downloadable map of coin public key to
+claim-key hash, the stable per-person handle `payeeFor` gives up convenience to
+avoid. **02:** the table was unique on *(network, coin key)* with no contract
+scope and no expiry, so one hash published anywhere marked that person collected
+at every employer on the network, forever.
 
-### 02 — Claim-key rows are network-global and permanent
+Both were fixed by scoping the table and requiring a contract on GET, and then
+made moot on 2026-09-02 when the claim key left the protocol. The table, the
+routes and the courier step are gone.
 
-The unique key is *(network, coin key)* — no contract address, no expiry, no delete
-route. A hash published once at one employer marks that person as "collected" at
-*every* employer on the network, forever. This is what put a stale **✓ Collected**
-against an employee who had published a hash on 29 August during an unrelated test.
-Scoping the table to *(network, contract, coin key)* fixes the bleed and the
-staleness together.
+⚠️ **A new exposure replaced them, and it is not smaller.** The nullifier is now
+`hash(ownPublicKey, window, fund)`, so anyone holding a claimant's payment
+address can test the public `spent` set and learn *that* she claimed. See
+[privacy.md](privacy.md#wave-2-hardening) item 1.
 
 ### 03 — The platform token sits in localStorage in plaintext
 

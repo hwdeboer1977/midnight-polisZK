@@ -18,11 +18,15 @@ field, and nothing an observer can enumerate to find one.
 
 | | |
 | --- | --- |
-| Payroll | `fac350489f46c3cc1893c18af83cac7e18b1f5bde34c452dfa8eb71b0a3e5938` |
+| Payroll | `fe2e98f8fbca0d9c3d9a63967de1bf814d51acf406de279594f3697efd623fa5` |
 | Settlement asset (pEUR) | `eefd3c255ed64dce05cd8c9b357b95aae94be6aef6ad009069af7836af481d91` |
 | Tax rules | `7feb657fb4a0541e3308d8fb14eca4538e6343d16f0a7540b620ed7547492910` |
-| Benefit fund | `f8e9e69a15eb3074fd851235bc4d851bffd223113e723fd5915703fc7ca47106` |
-| Tax vault | `8fd9f343910c8e96028279c1e560524af32753ea18c594e91844ec8b3941ecc1` |
+| Benefit fund | `eb40dcadbff3af16ee9b614d30332c2e4ad63b94f27c3199cc780bae477cf391` |
+| Tax vault | `d49344be86c6fc839581cf430edeafce6bb4fd3eab9e30a9450fa3259b81b4f4` |
+
+Payroll and the fund were **redeployed on 2026-09-02**, when the claim key was
+removed from the protocol and the benefit duration became a contract rule. Both
+struct layouts changed, so the previous instances cannot be read by this build.
 
 Two payroll periods have been filed, funded, paid and remitted end to end, and a
 benefit has been claimed against the fund — from the browser, with the salaries
@@ -82,7 +86,7 @@ flowchart TB
     EES --> WAL
     EMS --> WAL
 
-    EES -->|claim-key hash| API
+    EES -->|claim tree, pool coin| API
     EMS -->|relay, sealed roster| API
     OPS -->|platform token| API
 
@@ -107,7 +111,7 @@ for a period, and settles in `peur`. Everything else is a transaction.
 | Actor | Uses | Signs with | Needs the service? |
 | --- | --- | --- | --- |
 | **Public** | `/app` | — | no — every figure is a public chain read |
-| **Employee** | `/employee` | own wallet | only to publish a claim-key hash |
+| **Employee** | `/employee` | own wallet | reads only — the period's leaf digests and a fund coin |
 | **Employer** | `/employer` | own wallet | for the relay and the sealed roster |
 | **Operator** | `/operator` | platform wallet, held by the service | yes — it holds the seeds |
 
@@ -143,15 +147,27 @@ its commitment has a position in the Zswap tree.
 
 ## How a claim works
 
-An employee creates a **claim key** while still employed and sends its *hash* to
-their employer. When employment ends, the employer signs a write-once attestation
-containing that hash. A relay folds every termination for the month into one
-Merkle tree and publishes the root.
+When employment ends, the employer signs a write-once attestation — needing
+**nothing from the employee** to do it — and the month's terminations are folded
+into one Merkle tree whose root is published.
 
-To claim, she proves — in zero knowledge — that she holds the key behind a leaf
-in that tree, that she worked long enough, and what her final salary was. The
-chain learns the period, that *a* claim happened, and one opaque nullifier. Not
-who, not which employer, not how much.
+To claim, she proves — in zero knowledge — that a leaf naming her wallet is in
+that tree, that she worked long enough, and what her final salary was. The chain
+learns the period, that *a* claim happened, and one nullifier. Not who, not
+which employer, not how much.
+
+**She needs one file: the payslip her employer already sends her.** Everything
+else is assembled in her browser — her leaf reconstructed from public payroll
+state and her own key, her path built from the period's published leaf digests.
+Nobody tells her which leaf is hers; she recomputes her own digest and finds the
+match.
+
+⚠️ One thing this buys convenience with: the nullifier is derived from her
+wallet, so **anyone holding her payment address can tell that she claimed** —
+never how much, never her salary, never which employer. Removing the claim key
+is what traded that away, and
+[docs/privacy.md](docs/privacy.md#wave-2-hardening) records what would restore
+it.
 
 The anonymity set is everyone terminated in the same month, platform-wide. That
 is the design, and it is why the fund is one shared contract rather than one per
@@ -206,7 +222,7 @@ midnight-polisZK/
 │   ├── relay.ts                   # build + publish a period's claim tree
 │   ├── check-balance.ts           # address + tNIGHT/tDUST
 │   ├── server/                    # the platform service (Express)
-│   │   ├── app.ts                 # routes: onboard, relay, claim-keys, sealed-roster, platform/*
+│   │   ├── app.ts                 # routes: onboard, relay, claim-tree, pool-coin, sealed-roster, platform/*
 │   │   ├── config.ts              # host/port/token rules, the two rate-limit buckets
 │   │   └── guards.ts              # rate limiting, platform token, signup code
 │   ├── providers/                 # midnight-js provider wiring
@@ -227,7 +243,7 @@ midnight-polisZK/
 │       └── lib/                       # claim.ts, claimKey.ts, runMonth.ts, sealedRoster.ts,
 │                                      #   publishedClaimKeys.ts, useRunGuard.ts, …
 ├── terminations/                  # employers' termination openings — input to the relay
-├── claims/<period>/               # claim bundles the relay writes, one per claimant
+├── claims/<period>/               # claim bundles the CLI relay writes — a fallback; the browser assembles its own
 ├── .env                           # config (keep private!)
 ├── deployment.json                # addresses, keyed <network>/<contract>[:instance]
 ├── fund-pool.json                 # ⚠️ the ONLY copy of the fund's coin nonces (gitignored)

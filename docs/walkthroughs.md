@@ -19,10 +19,10 @@ Rewritten for the flow as it now stands.
 3. **Collect two public keys per employee** — coin public key and encryption
    public key. Both, every time: with only the first, a payment succeeds, the
    contract marks the slot paid, and the wallet can never find the coin.
-4. **Collect a claim-key hash per employee.** They create it on their own
-   Employee page and press *Send to my employer*, which publishes the hash to the
-   service; the Employees table then shows ✓ Collected. It can still be pasted by
-   hand. This must happen **before** anyone is dismissed.
+There is no fourth step. Collecting a claim-key hash per employee used to be
+one, and it had to happen **before** anyone was dismissed — the attestation is
+write-once, so an employee who never sent theirs could not be helped afterwards.
+The claim key is gone and so is the deadline.
 
 ### Every month
 
@@ -65,12 +65,19 @@ month and sign. One action covers three technical acts:
 ```
 
 The relay runs from the opening already in memory — the download-and-re-upload
-round trip existed only because two panels could not talk to each other. You get
-the **claim bundle** to hand over, and the opening as a backup.
+round trip existed only because two panels could not talk to each other.
 
-**Rebuild their claim bundle** stays available on the row whenever a termination
-exists, not only after a failure: a bundle goes stale when the fund coin it names
-is spent by an earlier claimant, and that is not a failure of anything.
+**Nothing has to be collected from the employee first, and nothing is sent to
+them afterwards.** Every field of the attestation is already the employer's: the
+final period and slot from `payeeFor`, the months worked counted from the same
+place, the nonce derived from the payroll passphrase. The claimant assembles
+their own proof from the tree you just published.
+
+**Publish their claim tree** stays on the row whenever a termination exists, for
+when the publish half fails on its own — the attestation is write-once and
+lands regardless, while publishing is permissionless and can be redone by anyone
+at any time. It needs the payroll passphrase and **no file**: the opening is
+rebuilt, not found.
 
 ## What an employee does
 
@@ -78,16 +85,11 @@ is spent by an earlier claimant, and that is not a failure of anything.
 ### When hired
 
 1. **Connect a wallet** on `/employee` and send the employer **both** public keys.
-2. **Create a benefit key** on `/employee/benefit`. One press produces two things
-   with opposite destinations:
+That is the whole list.
 
-   - 🔒 **A file to keep.** Store it where you keep your wallet's recovery
-     phrase. Nobody can reissue it.
-   - ↗ **A hash to send your employer.** Public and safe; press *Send to my
-     employer* or copy it.
-
-   Do this **while still employed**. The employer writes the hash into a
-   write-once statement, so a key made afterwards is one no claim can use.
+⚠️ **There used to be a second step**: create a benefit key, keep the file
+forever, and send its hash to the employer *before* being dismissed. It is gone.
+Nothing about a claim now depends on something you did while still employed.
 
 ### While employed
 
@@ -95,25 +97,42 @@ Pay arrives as a shielded transfer; the payslip arrives out of band. Check it on
 `/employee` — the page verifies it against the commitment the employer filed and
 confirms the period was filed for the connected wallet.
 
-⚠️ **Keep every payslip.** The openings on chain are sealed under the
-*employer's* key, so only they can produce one again — and without the payslip
-for the final period there is no claim at all.
+**Keep the payslips.** The openings on chain are sealed under the *employer's*
+key, so the copy you hold is the only one **you** can open. If you lose one your
+employer can regenerate it from the chain, so a lost payslip is a request to
+make, not a claim you forfeit.
 
 ### Claiming
 
-`/employee/benefit` needs three files, and the split is the architecture:
+`/employee/benefit` needs **one file**: the payslip for your final month.
 
-| File          | From          | If it goes astray                                        |
-| ------------- | ------------- | -------------------------------------------------------- |
-| Claim bundle  | the relay     | names your employer, final month and months worked, and carries a fund coin someone could spend first |
-| Payslip       | your employer | your actual salary                                        |
-| Claim key     | only you      | not your benefit — claiming needs your wallet too — but which months you claimed |
+Everything else assembles itself when the page loads — your leaf reconstructed
+from public payroll state and your own wallet key, your path built from the
+period's published leaf digests, the fund coin fetched from the service. You
+should see:
 
-**None of the three lets anybody take the benefit.** `claim` binds separately to
-`ownPublicKey()`. What they cost is privacy, plus one nuisance the bundle can
-cause. Saying "keep this secret or someone will claim with it" would be a false
-reason for a true instruction, and it collapses the moment somebody reads the
-contract.
+```
+✓ Claim assembled for September 2026 — no file needed
+```
+
+Nobody tells you which leaf is yours. The page recomputes your own digest and
+finds the match, which is better than being told — being told would mean the
+service knew.
+
+| File     | From          | If it goes astray            |
+| -------- | ------------- | ---------------------------- |
+| Payslip  | your employer | your actual salary           |
+
+**It does not let anybody take the benefit.** `claim` binds separately to
+`ownPublicKey()`, so a claim needs your wallet whatever else someone holds.
+Saying "keep this secret or someone will claim with it" would be a false reason
+for a true instruction, and it collapses the moment somebody reads the contract.
+
+⚠️ **What a claim now reveals about you.** The nullifier is derived from your
+wallet rather than a secret file, so anyone holding your payment address can
+test the public `spent` set and learn *that* you claimed, and for how many
+months. Never how much, never your salary, never which employer. That is the
+price of not needing a file nobody could reissue.
 
 ## Pilot flow
 
@@ -280,23 +299,25 @@ termination; it never looks at `fundedFor` or `paidFor`.
 ```bash
 # platform, once per fund
 npm run deploy:fund
-npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1
+npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1 --duration-months 3
 npm run fund -- deposit --amount 200
 ```
 
 Then, in order and each by the party that must do it:
 
-1. **Employee** — `/employee` → **Your claim key** → *Create my claim key* → keep the file, copy the hash.
-   Also **View my payroll keys**, which is what the roster needs.
-2. **Employer** — `/employer/payroll` → **End employment** → look the employee up
-   by coin public key, paste her claim-key hash and the payroll passphrase.
-   Download the opening into `terminations/`.
+1. **Employee** — `/employee` → **View my payroll keys**, which is what the
+   roster needs. Nothing else is required of them in advance.
+2. **Employer** — `/employer/employees` → their row → **End employment** → pick
+   the final month and the payroll passphrase. This publishes the month's claim
+   tree in the same step. If that half fails, **Publish their claim tree** on the
+   same row redoes it from the passphrase, with no file.
 3. **Employer** — **Get payslips** for that period and send the employee hers.
-4. **Relay** — `npm run relay -- <period> --publish`.
-5. **Employee** — `/claim` → her bundle from `claims/<period>/`, her payslip, her
-   passphrase → **Claim my benefit**.
-6. **Operator** — `npm run fund -- reconcile --value <EUR>` to recover the change
+   Make sure it is from the payroll contract currently in use: after a redeploy,
+   payslips issued by the previous instance name it and are refused by name.
+4. **Employee** — `/employee/benefit` → her payslip → **Claim my benefit**. The
+   bundle assembles itself; there is nothing to fetch.
+5. **Operator** — `npm run fund -- reconcile --value <EUR>` to recover the change
    coin the claim left behind, so the pool stays spendable.
 
-Step 6 is not optional bookkeeping. Until it runs, the fund's remaining balance
+Step 5 is not optional bookkeeping. Until it runs, the fund's remaining balance
 is a coin whose nonce exists nowhere.
