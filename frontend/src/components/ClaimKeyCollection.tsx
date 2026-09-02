@@ -67,13 +67,13 @@ export function ClaimKeyCollection({
   const [published, setPublished] = useState<Record<string, string>>({});
   useEffect(() => {
     let cancelled = false;
-    void readPublishedClaimKeys(networkId).then((rows) => {
+    void readPublishedClaimKeys(networkId, contractAddress).then((rows) => {
       if (!cancelled) setPublished(rows);
     });
     return () => {
       cancelled = true;
     };
-  }, [networkId]);
+  }, [networkId, contractAddress]);
   /**
    * What a row's field shows: what the employer typed, else what the employee
    * published. Typed always wins — the employer is the one signing.

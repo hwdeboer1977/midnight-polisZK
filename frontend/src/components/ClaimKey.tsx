@@ -67,12 +67,26 @@ function remember(coinPublicKey: string, hash: string): void {
 
 export function ClaimKey({
   coinPublicKey,
+  contractAddresses = [],
   bare,
   employerOf,
   registered = true,
   ended,
 }: {
   coinPublicKey: string;
+  /**
+   * The payrolls this wallet actually appears on, from `payeeFor`.
+   *
+   * A hash is published TO an employer, not to the network — the employer is
+   * the one who anchors it in a write-once statement, and nobody else has any
+   * business reading it. These addresses come from the attestation scan, which
+   * matched this wallet's payee hash against each contract's own ledger, so
+   * they are established from chain rather than asserted by the page.
+   *
+   * Empty is the ordinary case for someone not on any payroll: there is no
+   * employer to send anything to, and the button says so instead of failing.
+   */
+  contractAddresses?: string[];
   bare?: boolean;
   /**
    * The instance this wallet is the EMPLOYER of, if any.
@@ -131,21 +145,56 @@ export function ClaimKey({
   // What the service already holds for this wallet, so a mismatch with the file
   // in hand is visible NOW rather than at claim time — which is after the
   // termination statement has fixed it and is too late to matter.
+  // Joined so the effect re-runs when the scan resolves, rather than on every
+  // render that rebuilds an equal array.
+  const addressKey = contractAddresses.join(",");
+
   useEffect(() => {
     let cancelled = false;
-    void readMyClaimKeyHash(networkId, coinPublicKey).then((row) => {
-      if (!cancelled) setPublishedHash(row?.claimKeyHash ?? null);
+    const addresses = addressKey ? addressKey.split(",") : [];
+    if (addresses.length === 0) {
+      setPublishedHash(null);
+      return;
+    }
+    // The first employer holding one is enough to show. They are the same hash
+    // in the ordinary case — one key, published to whoever will anchor it —
+    // and a mismatch between two employers is not something this panel can
+    // resolve, only report, which the comparison against the file already does.
+    void Promise.all(
+      addresses.map((address) => readMyClaimKeyHash(networkId, address, coinPublicKey))
+    ).then((found) => {
+      if (cancelled) return;
+      setPublishedHash(found.find((row) => row)?.claimKeyHash ?? null);
     });
     return () => {
       cancelled = true;
     };
-  }, [networkId, coinPublicKey]);
+  }, [networkId, addressKey, coinPublicKey]);
 
   async function send(hash: string) {
     setPublishing(true);
     setPublishError(null);
-    const failure = await publishClaimKeyHash(networkId, coinPublicKey, hash);
-    if (failure) setPublishError(failure);
+    const addresses = addressKey ? addressKey.split(",") : [];
+    if (addresses.length === 0) {
+      setPublishError(
+        "No employer found for this wallet on chain, so there is nobody to send it to. " +
+          "Give the hash to your employer directly — the field on their side takes it either way."
+      );
+      setPublishing(false);
+      return;
+    }
+    // One row per employer this wallet is actually on. Someone with two jobs
+    // needs both to hold it: whichever one ends first is the one that anchors
+    // the hash, and neither can read the other's row.
+    const failures = (
+      await Promise.all(
+        addresses.map((address) =>
+          publishClaimKeyHash(networkId, address, coinPublicKey, hash)
+        )
+      )
+    ).filter((failure): failure is string => Boolean(failure));
+
+    if (failures.length === addresses.length) setPublishError(failures[0]);
     else setPublishedHash(hash.toLowerCase());
     setPublishing(false);
   }

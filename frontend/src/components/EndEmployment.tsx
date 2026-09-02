@@ -151,13 +151,16 @@ export function EndEmployment({
   })();
   useEffect(() => {
     let cancelled = false;
-    void readPublishedClaimKeys(networkId).then((rows) => {
+    // Scoped to this payroll, and here it matters most: whatever this form
+    // pre-fills goes into a write-once attestation, and a hash published to a
+    // different employer is one this employee cannot open a claim against.
+    void readPublishedClaimKeys(networkId, contractAddress).then((rows) => {
       if (!cancelled) setPublishedHashes(rows);
     });
     return () => {
       cancelled = true;
     };
-  }, [networkId]);
+  }, [networkId, contractAddress]);
 
   /**
    * The hash that is actually going to be sent, from three sources in order of

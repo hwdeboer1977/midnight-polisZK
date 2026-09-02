@@ -273,11 +273,25 @@ export function createApp(config: ServerConfig): Express {
         ? String(req.query.coinPublicKey)
         : null;
 
-      if (coinPublicKey) {
-        res.json({ claimKey: await findClaimKeyHash(networkId, coinPublicKey) });
+      // ⚠️ Required, and this is the whole point of it. Without a contract this
+      // route answered "every hash on the network" to anyone who asked — a
+      // downloadable map of coin public key to claim-key hash, which is the
+      // stable per-person handle the chain deliberately refuses to publish.
+      // Naming a contract makes it a lookup against one payroll rather than a
+      // directory of everybody.
+      const contractAddress = String(req.query.contractAddress ?? "").trim();
+      if (!contractAddress) {
+        res.status(400).json({ error: "contractAddress is required" });
         return;
       }
-      res.json({ claimKeys: await listClaimKeyHashes(networkId) });
+
+      if (coinPublicKey) {
+        res.json({
+          claimKey: await findClaimKeyHash(networkId, contractAddress, coinPublicKey),
+        });
+        return;
+      }
+      res.json({ claimKeys: await listClaimKeyHashes(networkId, contractAddress) });
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : String(cause);
       // A service with no database configured is a normal deployment, not a
@@ -293,12 +307,19 @@ export function createApp(config: ServerConfig): Express {
     async (req: Request, res: Response) => {
       const body = req.body ?? {};
       const coinPublicKey = String(body.coinPublicKey ?? "").trim();
+      const contractAddress = String(body.contractAddress ?? "").trim().replace(/^0x/, "");
       const claimKeyHash = String(body.claimKeyHash ?? "").trim().replace(/^0x/, "");
       const networkId =
         String(body.networkId ?? "") || EnvironmentManager.getNetworkConfig().networkId;
 
       if (!coinPublicKey) {
         res.status(400).json({ error: "coinPublicKey is required" });
+        return;
+      }
+      // Which payroll this hash is for. An employee publishes to the employer
+      // who will anchor it, not to the network at large.
+      if (!/^[0-9a-f]{64}$/i.test(contractAddress)) {
+        res.status(400).json({ error: "contractAddress must be 64 hex characters" });
         return;
       }
       // Checked here rather than trusted, because a malformed hash pre-fills an
@@ -310,7 +331,7 @@ export function createApp(config: ServerConfig): Express {
       }
 
       try {
-        await publishClaimKeyHash(networkId, coinPublicKey, claimKeyHash);
+        await publishClaimKeyHash(networkId, contractAddress, coinPublicKey, claimKeyHash);
         res.json({ ok: true });
       } catch (cause) {
         res.status(503).json({

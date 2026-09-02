@@ -110,16 +110,20 @@ export function EmployerEmployees() {
    * employee had sent showed as Missing.
    */
   const [published, setPublished] = useState<Record<string, string>>({});
+  const address = mine[0]?.deployment.contractAddress ?? null;
   useEffect(() => {
+    if (!address) return;
     let cancelled = false;
-    void readPublishedClaimKeys(networkId).then((rows) => {
+    // Scoped to THIS payroll. Read network-wide, it reported a hash published
+    // to some other employer as collected here — which is what put a false
+    // ✓ Collected on a row nobody had collected anything for.
+    void readPublishedClaimKeys(networkId, address).then((rows) => {
       if (!cancelled) setPublished(rows);
     });
     return () => {
       cancelled = true;
     };
-  }, [networkId, collectedNonce]);
-  const address = mine[0]?.deployment.contractAddress ?? null;
+  }, [networkId, address, collectedNonce]);
   const periodKey = mine[0]?.state
     ? [...mine[0].state.periods].map(String).sort().join(",")
     : "";

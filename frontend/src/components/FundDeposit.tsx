@@ -441,8 +441,27 @@ export function FundDeposit({
       const token = String(import.meta.env.VITE_PEUR_TOKEN_ID ?? "")
         .replace(/^0x/, "")
         .toLowerCase();
+      /**
+       * Matched on normalised keys rather than by exact lookup.
+       *
+       * The connector types these as "a hex-encoded string relating to ledger's
+       * raw token type" and says nothing about the casing or the `0x`. An exact
+       * lookup that misses does not fail — it returns zero, which renders as a
+       * balance of €0.00 and reads as an empty wallet rather than a key that did
+       * not match. That is precisely how it presented: a treasury holding €16.80
+       * shown as empty.
+       */
+      const normalise = (key: string) => key.replace(/^0x/, "").toLowerCase();
       const peur =
-        shielded[token] ?? shielded[`0x${token}`] ?? 0n;
+        Object.entries(shielded).find(([key]) => normalise(key) === token)?.[1] ?? 0n;
+      if (peur === 0n && Object.keys(shielded).length > 0) {
+        // Only useful when the figure looks wrong, and the tokens a wallet holds
+        // are not a secret — the amounts stay out of it.
+        console.info("[balances] no pEUR match", {
+          want: token,
+          walletHolds: Object.keys(shielded).map(normalise),
+        });
+      }
       const night = Object.values(unshielded).reduce((a, b) => a + b, 0n);
       return {
         from: which,

@@ -129,18 +129,78 @@ export async function initSchema(): Promise<void> {
    * convenience.
    *
    * Keyed on the coin public key, which is the same thing the employer's roster
-   * is keyed on, so a row can be matched to a person without storing a name.
+   * is keyed on, so a row can be matched to a person without storing a name —
+   * and on the CONTRACT, so the match is only ever made by the employer that
+   * hash was published to. See the migration below for what scoping it fixed.
    */
   await getPool().query(`
     CREATE TABLE IF NOT EXISTS claim_key_hashes (
-      id              SERIAL PRIMARY KEY,
-      network_id      TEXT        NOT NULL,
-      coin_public_key TEXT        NOT NULL,
-      claim_key_hash  TEXT        NOT NULL,
-      created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-      UNIQUE (network_id, coin_public_key)
+      id               SERIAL PRIMARY KEY,
+      network_id       TEXT        NOT NULL,
+      contract_address TEXT        NOT NULL,
+      coin_public_key  TEXT        NOT NULL,
+      claim_key_hash   TEXT        NOT NULL,
+      created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (network_id, contract_address, coin_public_key)
     )
   `);
+
+  /**
+   * Migration: scope an existing table to one payroll contract.
+   *
+   * ⚠️ The unique key was `(network_id, coin_public_key)` — no contract at all.
+   * One hash published once therefore marked that person "collected" at EVERY
+   * employer on the network, permanently, with no expiry and no delete route.
+   * That is the cross-employer handle `payeeFor` gives up convenience to
+   * prevent, rebuilt off chain; and it showed up as a false ✓ Collected against
+   * an employee who had published a hash weeks earlier at a different instance.
+   *
+   * Pre-existing rows are DELETED rather than backfilled, because they cannot
+   * be attributed: the table never recorded which contract a hash was published
+   * against, and guessing the current one would re-assert exactly the false
+   * positive this migration exists to remove. The cost is that an employee who
+   * published before this publishes again — one button on a page they have
+   * already used — and the employer's own local record is untouched either way.
+   */
+  const { rows: scoped } = await getPool().query(`
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'claim_key_hashes' AND column_name = 'contract_address'
+  `);
+  if (scoped.length === 0) {
+    // Every unique constraint on the table, by lookup rather than by its
+    // generated name.
+    //
+    // ⚠️ Naming it `claim_key_hashes_network_id_coin_public_key_key` and
+    // trusting `DROP CONSTRAINT IF EXISTS` would fail SILENTLY against a table
+    // whose constraint was named anything else — leaving the old
+    // `(network, coin key)` uniqueness in force, so two employers could never
+    // both hold a hash for the same person. A no-op drop and a successful drop
+    // are indistinguishable to `IF EXISTS`, which is the wrong failure mode for
+    // the one statement this migration depends on.
+    const { rows: constraints } = await getPool().query(`
+      SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+       WHERE rel.relname = 'claim_key_hashes' AND con.contype = 'u'
+    `);
+    for (const { conname } of constraints) {
+      await getPool().query(
+        `ALTER TABLE claim_key_hashes DROP CONSTRAINT "${String(conname).replace(/"/g, '""')}"`
+      );
+    }
+    await getPool().query(`DELETE FROM claim_key_hashes`);
+    await getPool().query(`
+      ALTER TABLE claim_key_hashes ADD COLUMN contract_address TEXT NOT NULL DEFAULT ''
+    `);
+    await getPool().query(`
+      ALTER TABLE claim_key_hashes ALTER COLUMN contract_address DROP DEFAULT
+    `);
+    await getPool().query(`
+      ALTER TABLE claim_key_hashes
+        ADD CONSTRAINT claim_key_hashes_network_contract_key
+        UNIQUE (network_id, contract_address, coin_public_key)
+    `);
+  }
 
   /**
    * The employer's roster, sealed under their payroll passphrase.
@@ -222,26 +282,42 @@ export interface PublishedClaimKey {
  */
 export async function publishClaimKeyHash(
   networkId: string,
+  contractAddress: string,
   coinPublicKey: string,
   claimKeyHash: string
 ): Promise<void> {
   await initSchema();
   await getPool().query(
-    `INSERT INTO claim_key_hashes (network_id, coin_public_key, claim_key_hash)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (network_id, coin_public_key)
+    `INSERT INTO claim_key_hashes
+       (network_id, contract_address, coin_public_key, claim_key_hash)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (network_id, contract_address, coin_public_key)
      DO UPDATE SET claim_key_hash = EXCLUDED.claim_key_hash, created_at = now()`,
-    [networkId, coinPublicKey.toLowerCase(), claimKeyHash.toLowerCase()]
+    [
+      networkId,
+      contractAddress.toLowerCase(),
+      coinPublicKey.toLowerCase(),
+      claimKeyHash.toLowerCase(),
+    ]
   );
 }
 
-/** Every published hash on a network, for an employer to match against a roster. */
-export async function listClaimKeyHashes(networkId: string): Promise<PublishedClaimKey[]> {
+/**
+ * Every hash published for ONE payroll contract.
+ *
+ * Scoped rather than network-wide, which is what stops a hash published at one
+ * employer from answering for the same person at another. An employer reads
+ * their own contract and learns nothing about anyone else's.
+ */
+export async function listClaimKeyHashes(
+  networkId: string,
+  contractAddress: string
+): Promise<PublishedClaimKey[]> {
   await initSchema();
   const { rows } = await getPool().query(
     `SELECT coin_public_key, claim_key_hash, created_at
-       FROM claim_key_hashes WHERE network_id = $1`,
-    [networkId]
+       FROM claim_key_hashes WHERE network_id = $1 AND contract_address = $2`,
+    [networkId, contractAddress.toLowerCase()]
   );
   return rows.map((row: Record<string, any>) => ({
     coinPublicKey: row.coin_public_key,
@@ -250,16 +326,18 @@ export async function listClaimKeyHashes(networkId: string): Promise<PublishedCl
   }));
 }
 
-/** What this table holds for one person, so they can check it against their file. */
+/** What this table holds for one person at one employer, so they can check it. */
 export async function findClaimKeyHash(
   networkId: string,
+  contractAddress: string,
   coinPublicKey: string
 ): Promise<PublishedClaimKey | null> {
   await initSchema();
   const { rows } = await getPool().query(
     `SELECT coin_public_key, claim_key_hash, created_at
-       FROM claim_key_hashes WHERE network_id = $1 AND coin_public_key = $2`,
-    [networkId, coinPublicKey.toLowerCase()]
+       FROM claim_key_hashes
+      WHERE network_id = $1 AND contract_address = $2 AND coin_public_key = $3`,
+    [networkId, contractAddress.toLowerCase(), coinPublicKey.toLowerCase()]
   );
   if (rows.length === 0) return null;
   return {

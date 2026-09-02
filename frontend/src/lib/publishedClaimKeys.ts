@@ -45,6 +45,7 @@ export interface PublishedClaimKey {
 /** Publishes one employee's hash. Returns the failure text, or null on success. */
 export async function publishClaimKeyHash(
   networkId: string,
+  contractAddress: string,
   coinPublicKey: string,
   claimKeyHash: string
 ): Promise<string | null> {
@@ -54,6 +55,7 @@ export async function publishClaimKeyHash(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         networkId,
+        contractAddress,
         coinPublicKey: keyToHex(coinPublicKey),
         claimKeyHash,
       }),
@@ -69,12 +71,14 @@ export async function publishClaimKeyHash(
 /** What this service holds for one person — for them to compare against their file. */
 export async function readMyClaimKeyHash(
   networkId: string,
+  contractAddress: string,
   coinPublicKey: string
 ): Promise<PublishedClaimKey | null> {
   try {
     const response = await fetch(
       apiUrl(
         `/api/claim-keys?networkId=${encodeURIComponent(networkId)}` +
+          `&contractAddress=${encodeURIComponent(contractAddress)}` +
           `&coinPublicKey=${encodeURIComponent(keyToHex(coinPublicKey))}`
       ),
       { cache: "no-store" }
@@ -87,13 +91,26 @@ export async function readMyClaimKeyHash(
   }
 }
 
-/** Every hash published on this network, keyed by coin public key, lowercased. */
+/**
+ * Every hash published TO ONE PAYROLL, keyed by coin public key, lowercased.
+ *
+ * ⚠️ This used to read the whole network. The table was unique on
+ * `(network, coin key)` with no contract and no expiry, so one hash published
+ * once answered for that person at every employer on the network, forever —
+ * and an employer's status column showed ✓ Collected for someone who had
+ * published weeks earlier at a different instance. Both ends are scoped now.
+ */
 export async function readPublishedClaimKeys(
-  networkId: string
+  networkId: string,
+  contractAddress: string
 ): Promise<Record<string, string>> {
+  if (!contractAddress) return {};
   try {
     const response = await fetch(
-      apiUrl(`/api/claim-keys?networkId=${encodeURIComponent(networkId)}`),
+      apiUrl(
+        `/api/claim-keys?networkId=${encodeURIComponent(networkId)}` +
+          `&contractAddress=${encodeURIComponent(contractAddress)}`
+      ),
       { cache: "no-store" }
     );
     if (!response.ok) return {};

@@ -103,6 +103,12 @@ export function EmployeeBenefit() {
   const { account, networkId } = useWallet();
   const { rows, employerOf, ended, finalPeriod, loading, error } = useAttestations();
 
+  // The payrolls this wallet is actually on, deduplicated across periods. A
+  // claim-key hash goes to the employer who will anchor it, so this is the
+  // address list the publish step needs — and it comes from the scan, which
+  // matched the wallet's payee hash against each contract's ledger.
+  const payrollsOf = [...new Set(rows.map((row) => row.contractAddress))];
+
   if (!account) {
     return (
       <>
@@ -156,6 +162,7 @@ export function EmployeeBenefit() {
       {ended ? null : (
         <ClaimKey
           coinPublicKey={account.coinPublicKey}
+          contractAddresses={payrollsOf}
           employerOf={employerOf}
           registered={loading || rows.length > 0}
         />
@@ -205,7 +212,14 @@ export function EmployeeBenefit() {
         <ClaimStatus networkId={networkId} finalPeriod={finalPeriod ?? 0} />
       ) : null}
 
-      {ended ? <ClaimKey coinPublicKey={account.coinPublicKey} employerOf={employerOf} ended /> : null}
+      {ended ? (
+        <ClaimKey
+          coinPublicKey={account.coinPublicKey}
+          contractAddresses={payrollsOf}
+          employerOf={employerOf}
+          ended
+        />
+      ) : null}
 
       <Eligibility rows={rows} />
 
