@@ -23,6 +23,7 @@ import { deploymentKey, getDeployment, listDeployments } from "./deployments.js"
 import { buildWallet, makeWalletProviders, waitForSync } from "./wallet.js";
 import { MidnightProviders } from "../providers/midnight-providers.js";
 import { contractLeaves, contractModulePath, loadCompiledContract } from "./contract.js";
+import { putClaimDigests } from "./claim-digests.js";
 import { buildTree, type ClaimLeafInput } from "./claim-tree.js";
 import { BASIS_POINTS, PUBLISHED } from "./benefit-params.js";
 import { formatPeur } from "./constructor-args.js";
@@ -72,8 +73,6 @@ export interface TerminationOpening {
   slot: number;
   finalPeriod: number;
   monthsWorked: number;
-  /** Hex, 32 bytes. hash(claimKey), from the employee. */
-  claimKeyHash: string;
   /** Hex, 32 bytes. The employer's blinding nonce for the attestation. */
   nonce: string;
 }
@@ -87,7 +86,6 @@ export interface ClaimBundle {
   leaf: {
     commitment: string;
     payeeBinding: string;
-    claimKeyHash: string;
     finalPeriod: number;
     monthsWorked: number;
     instance: string;
@@ -337,7 +335,6 @@ export async function runRelay(options: {
       (await payroll()).pureCircuits.terminationCommitment(
         BigInt(opening.finalPeriod),
         BigInt(opening.monthsWorked),
-        fromHex(opening.claimKeyHash),
         fromHex(opening.nonce)
       )
     );
@@ -349,7 +346,6 @@ export async function runRelay(options: {
     leaves.push({
       commitment: ledger.commitmentsFor.lookup(p).lookup(slot),
       payeeBinding: ledger.payeeFor.lookup(p).lookup(slot),
-      claimKeyHash: fromHex(opening.claimKeyHash),
       finalPeriod: BigInt(opening.finalPeriod),
       monthsWorked: BigInt(opening.monthsWorked),
       instance: fromHex(record.contractAddress),
@@ -364,6 +360,12 @@ export async function runRelay(options: {
 
   const tree = buildTree(leaves);
   log(`Root: ${tree.root.toString()} over ${leaves.length} leaf/leaves`);
+
+  // The digests, so a claimant can build their own path without this service
+  // ever handing out a leaf. Recorded here rather than at publish time: the
+  // tree is the same whether or not the root is submitted, and a run that only
+  // rebuilds bundles should still leave the list current.
+  putClaimDigests(network.networkId, period, tree.root, tree.digests);
 
   // The pool coin each bundle carries. `relay.ts` explains what handing one out
   // discloses and why two claimants must not share: she learns that coin's
@@ -499,7 +501,6 @@ export async function runRelay(options: {
       leaf: {
         commitment: hex(leaves[index]!.commitment),
         payeeBinding: hex(leaves[index]!.payeeBinding),
-        claimKeyHash: hex(leaves[index]!.claimKeyHash),
         finalPeriod: Number(leaves[index]!.finalPeriod),
         monthsWorked: Number(leaves[index]!.monthsWorked),
         instance: hex(leaves[index]!.instance),

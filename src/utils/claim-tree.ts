@@ -37,7 +37,6 @@ export const TREE_DEPTH = 16;
 export interface ClaimLeafInput {
   commitment: Uint8Array;
   payeeBinding: Uint8Array;
-  claimKeyHash: Uint8Array;
   finalPeriod: bigint;
   monthsWorked: bigint;
   instance: Uint8Array;

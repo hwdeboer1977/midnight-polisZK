@@ -84,10 +84,21 @@ struct PayrollCommitment {
 // the two must stay identical: payroll publishes the hash, the fund's claim
 // checks a leaf built from the opening, and a reordered field would stop every
 // claim from verifying with nothing to indicate why.
+// What a termination attestation binds.
+//
+// ⚠️ `claimKeyHash` was here and is gone. It anchored a secret the employee had
+// to hand over BEFORE this write-once statement was signed — the coordination
+// step that could strand a claimant permanently if the employer anchored the
+// wrong value, and which existed only because a claim key could not be stored
+// anywhere but a file.
+//
+// Nothing about WHO may claim depended on it. That is `payeeFor`, which the
+// fund's leaf copies as `payeeBinding` and `claim` checks against
+// `ownPublicKey()` — so the employer still cannot spend what they attest to,
+// and no third party can either.
 struct Termination {
   finalPeriod: Uint<32>;
   monthsWorked: Uint<16>;
-  claimKeyHash: Bytes<32>;
   nonce: Bytes<32>;
 }
 
@@ -1232,14 +1243,12 @@ export pure circuit bandsFor(
 export pure circuit terminationCommitment(
   finalPeriod: Uint<32>,
   monthsWorked: Uint<16>,
-  claimKeyHash: Bytes<32>,
   nonce: Bytes<32>
 ): Bytes<32> {
   return persistentHash<Termination>(
     Termination {
       finalPeriod: finalPeriod,
       monthsWorked: monthsWorked,
-      claimKeyHash: claimKeyHash,
       nonce: nonce
     }
   );

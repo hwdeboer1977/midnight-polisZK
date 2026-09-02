@@ -25,14 +25,13 @@ import {
 } from "../utils/funding.js";
 import { parsePeurAmount } from "../utils/constructor-args.js";
 import { EnvironmentManager } from "../utils/environment.js";
+import { getClaimDigests } from "../utils/claim-digests.js";
+import { findPoolCoin } from "../utils/pool-coin.js";
 import {
   getSealedRoster,
   putSealedRoster,
-  findClaimKeyHash,
   findRegistration,
-  listClaimKeyHashes,
   listRegistrations,
-  publishClaimKeyHash,
   setStatus,
 } from "../utils/registry.js";
 import { listDeployments } from "../utils/deployments.js";
@@ -265,87 +264,6 @@ export function createApp(config: ServerConfig): Express {
    * Rate-limited on the same bucket shape as the other public routes, because
    * the cost of abuse here is rows in a table rather than money.
    */
-  app.get("/api/claim-keys", async (req: Request, res: Response) => {
-    try {
-      const network = EnvironmentManager.getNetworkConfig();
-      const networkId = String(req.query.networkId ?? network.networkId);
-      const coinPublicKey = req.query.coinPublicKey
-        ? String(req.query.coinPublicKey)
-        : null;
-
-      // ⚠️ Required, and this is the whole point of it. Without a contract this
-      // route answered "every hash on the network" to anyone who asked — a
-      // downloadable map of coin public key to claim-key hash, which is the
-      // stable per-person handle the chain deliberately refuses to publish.
-      // Naming a contract makes it a lookup against one payroll rather than a
-      // directory of everybody.
-      const contractAddress = String(req.query.contractAddress ?? "").trim();
-      if (!contractAddress) {
-        res.status(400).json({ error: "contractAddress is required" });
-        return;
-      }
-
-      if (coinPublicKey) {
-        res.json({
-          claimKey: await findClaimKeyHash(networkId, contractAddress, coinPublicKey),
-        });
-        return;
-      }
-      res.json({ claimKeys: await listClaimKeyHashes(networkId, contractAddress) });
-    } catch (cause) {
-      const detail = cause instanceof Error ? cause.message : String(cause);
-      // A service with no database configured is a normal deployment, not a
-      // fault: the direct hand-over still works and the employer's paste field
-      // is untouched. Answering empty keeps that path clear of an error banner.
-      res.json({ claimKeys: [], claimKey: null, unavailable: detail });
-    }
-  });
-
-  app.post(
-    "/api/claim-keys",
-    rateLimit({ ...config.workLimit, bucket: "claim-keys", noun: "claim-key publications" }),
-    async (req: Request, res: Response) => {
-      const body = req.body ?? {};
-      const coinPublicKey = String(body.coinPublicKey ?? "").trim();
-      const contractAddress = String(body.contractAddress ?? "").trim().replace(/^0x/, "");
-      const claimKeyHash = String(body.claimKeyHash ?? "").trim().replace(/^0x/, "");
-      const networkId =
-        String(body.networkId ?? "") || EnvironmentManager.getNetworkConfig().networkId;
-
-      if (!coinPublicKey) {
-        res.status(400).json({ error: "coinPublicKey is required" });
-        return;
-      }
-      // Which payroll this hash is for. An employee publishes to the employer
-      // who will anchor it, not to the network at large.
-      if (!/^[0-9a-f]{64}$/i.test(contractAddress)) {
-        res.status(400).json({ error: "contractAddress must be 64 hex characters" });
-        return;
-      }
-      // Checked here rather than trusted, because a malformed hash pre-fills an
-      // employer's form with something that cannot possibly be right and fails
-      // only when a claim is attempted, months later.
-      if (!/^[0-9a-f]{64}$/i.test(claimKeyHash)) {
-        res.status(400).json({ error: "claimKeyHash must be 64 hex characters" });
-        return;
-      }
-
-      try {
-        await publishClaimKeyHash(networkId, contractAddress, coinPublicKey, claimKeyHash);
-        res.json({ ok: true });
-      } catch (cause) {
-        res.status(503).json({
-          error:
-            "This service has no registration database, so the hash could not be " +
-            "published. Send it to your employer directly — the field on their " +
-            "side takes it either way. (" +
-            (cause instanceof Error ? cause.message : String(cause)) +
-            ")",
-        });
-      }
-    }
-  );
-
   /**
    * The employer's roster, sealed under their payroll passphrase.
    *
@@ -356,12 +274,69 @@ export function createApp(config: ServerConfig): Express {
    * leaves the employer's browser.
    *
    * Writing is bounded by size and rate rather than by a token, on the same
-   * reasoning as `/api/claim-keys`: the worst an attacker achieves is replacing
+   * reasoning as `/api/onboard`: the worst an attacker achieves is replacing
    * a blob with junk, which costs the employer the convenience and not the data
    * — the workbook is still the source of truth and the local record still
    * works. That is a nuisance, not a loss, and it is the honest trade for a
    * demo with no employer login.
    */
+  /**
+   * A period's claim-tree leaf digests, so a claimant can build their own path.
+   *
+   * Public and unauthenticated on purpose. A digest is the hash of a leaf
+   * nobody can invert, so the list discloses nothing about who was terminated —
+   * and it has to be served whole rather than per claimant, because a request
+   * naming one leaf would tell this service which leaf is theirs. `claim`
+   * proves membership WITHOUT disclosing the leaf; an endpoint that identified
+   * the claimant would give away off chain exactly what the circuit protects.
+   *
+   * Not authoritative either, which is what makes it safe to hand out: the root
+   * on chain is, and a path built against a tampered list fails to reproduce
+   * it. A wrong list costs an attempt, never a payment.
+   *
+   * ⚠️ Do not log these requests — see `utils/pool-coin.ts`. A period, an IP
+   * and a timestamp is a claim-timing record.
+   */
+  app.get("/api/claim-tree", (req: Request, res: Response) => {
+    const network = EnvironmentManager.getNetworkConfig();
+    const networkId = String(req.query.networkId ?? network.networkId);
+    const period = Number(req.query.period);
+
+    if (!Number.isInteger(period) || period < 200001 || period > 299912) {
+      res.status(400).json({ error: "period must be YYYYMM, e.g. 202609" });
+      return;
+    }
+
+    // A period with no relay run yet is a normal answer, not a fault: the tree
+    // is built when the first termination in that month is relayed.
+    res.json({ tree: getClaimDigests(networkId, period) });
+  });
+
+  /**
+   * A fund coin to claim against, so a claimant needs no bundle file.
+   *
+   * The last field a browser cannot derive. See `utils/pool-coin.ts` for what
+   * this discloses (nothing about who is asking), what it deliberately does not
+   * do yet (leases, for more than one claimant in a period), and why these
+   * requests must not be logged.
+   */
+  app.get("/api/pool-coin", async (req: Request, res: Response) => {
+    const network = EnvironmentManager.getNetworkConfig();
+    const networkId = String(req.query.networkId ?? network.networkId);
+    try {
+      res.json(await findPoolCoin(networkId));
+    } catch (cause) {
+      // A fund with no pool file, or an indexer that will not answer, is a
+      // claimant who cannot claim yet — not a server fault. Answering with a
+      // reason keeps the page able to say which.
+      res.json({
+        coin: null,
+        fund: null,
+        warning: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  });
+
   app.get("/api/sealed-roster", async (req: Request, res: Response) => {
     try {
       const network = EnvironmentManager.getNetworkConfig();
@@ -511,7 +486,7 @@ export function createApp(config: ServerConfig): Express {
       // fails as a 400 naming the field instead of as a job that dies minutes
       // later during proving.
       for (const [i, opening] of openings.entries()) {
-        for (const field of ["instance", "claimKeyHash", "nonce"] as const) {
+        for (const field of ["instance", "nonce"] as const) {
           if (typeof opening?.[field] !== "string" || !opening[field]) {
             res.status(400).json({ error: `openings[${i}].${field} is required` });
             return;

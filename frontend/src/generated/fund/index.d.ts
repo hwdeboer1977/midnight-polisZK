@@ -9,7 +9,8 @@ export type ImpureCircuits<PS> = {
                             validFrom: bigint,
                             maxMonthlyGross: bigint,
                             rate: bigint,
-                            minMonths: bigint
+                            minMonths: bigint,
+                            durationMonths: bigint
                           }): __compactRuntime.CircuitResults<PS, []>;
   publishRoot(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
@@ -25,7 +26,6 @@ export type ImpureCircuits<PS> = {
                 },
         leaf_0: { commitment: Uint8Array,
                   payeeBinding: Uint8Array,
-                  claimKeyHash: Uint8Array,
                   finalPeriod: bigint,
                   monthsWorked: bigint,
                   instance: Uint8Array
@@ -38,13 +38,13 @@ export type ImpureCircuits<PS> = {
         employer_0: { bytes: Uint8Array },
         payrollParamsHash_0: Uint8Array,
         nonce_0: Uint8Array,
-        claimKey_0: Uint8Array,
         window_0: bigint,
         params_0: { version: bigint,
                     validFrom: bigint,
                     maxMonthlyGross: bigint,
                     rate: bigint,
-                    minMonths: bigint
+                    minMonths: bigint,
+                    durationMonths: bigint
                   },
         taxParams_0: { version: bigint,
                        validFrom: bigint,
@@ -84,7 +84,8 @@ export type ProvableCircuits<PS> = {
                             validFrom: bigint,
                             maxMonthlyGross: bigint,
                             rate: bigint,
-                            minMonths: bigint
+                            minMonths: bigint,
+                            durationMonths: bigint
                           }): __compactRuntime.CircuitResults<PS, []>;
   publishRoot(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
@@ -100,7 +101,6 @@ export type ProvableCircuits<PS> = {
                 },
         leaf_0: { commitment: Uint8Array,
                   payeeBinding: Uint8Array,
-                  claimKeyHash: Uint8Array,
                   finalPeriod: bigint,
                   monthsWorked: bigint,
                   instance: Uint8Array
@@ -113,13 +113,13 @@ export type ProvableCircuits<PS> = {
         employer_0: { bytes: Uint8Array },
         payrollParamsHash_0: Uint8Array,
         nonce_0: Uint8Array,
-        claimKey_0: Uint8Array,
         window_0: bigint,
         params_0: { version: bigint,
                     validFrom: bigint,
                     maxMonthlyGross: bigint,
                     rate: bigint,
-                    minMonths: bigint
+                    minMonths: bigint,
+                    durationMonths: bigint
                   },
         taxParams_0: { version: bigint,
                        validFrom: bigint,
@@ -156,7 +156,6 @@ export type ProvableCircuits<PS> = {
 export type PureCircuits = {
   leafDigest(leaf_0: { commitment: Uint8Array,
                        payeeBinding: Uint8Array,
-                       claimKeyHash: Uint8Array,
                        finalPeriod: bigint,
                        monthsWorked: bigint,
                        instance: Uint8Array
@@ -176,8 +175,9 @@ export type PureCircuits = {
                             maxContribBase: bigint,
                             contribRate: bigint
                           }): Uint8Array;
-  claimKeyHash(claimKey_0: Uint8Array): Uint8Array;
-  claimNullifier(claimKey_0: Uint8Array, window_0: bigint, fund_0: Uint8Array): Uint8Array;
+  claimNullifier(payee_0: { bytes: Uint8Array },
+                 window_0: bigint,
+                 fund_0: Uint8Array): Uint8Array;
 }
 
 export type Circuits<PS> = {
@@ -186,7 +186,8 @@ export type Circuits<PS> = {
                             validFrom: bigint,
                             maxMonthlyGross: bigint,
                             rate: bigint,
-                            minMonths: bigint
+                            minMonths: bigint,
+                            durationMonths: bigint
                           }): __compactRuntime.CircuitResults<PS, []>;
   publishRoot(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
@@ -202,7 +203,6 @@ export type Circuits<PS> = {
                 },
         leaf_0: { commitment: Uint8Array,
                   payeeBinding: Uint8Array,
-                  claimKeyHash: Uint8Array,
                   finalPeriod: bigint,
                   monthsWorked: bigint,
                   instance: Uint8Array
@@ -215,13 +215,13 @@ export type Circuits<PS> = {
         employer_0: { bytes: Uint8Array },
         payrollParamsHash_0: Uint8Array,
         nonce_0: Uint8Array,
-        claimKey_0: Uint8Array,
         window_0: bigint,
         params_0: { version: bigint,
                     validFrom: bigint,
                     maxMonthlyGross: bigint,
                     rate: bigint,
-                    minMonths: bigint
+                    minMonths: bigint,
+                    durationMonths: bigint
                   },
         taxParams_0: { version: bigint,
                        validFrom: bigint,
@@ -256,7 +256,6 @@ export type Circuits<PS> = {
   leafDigest(context: __compactRuntime.CircuitContext<PS>,
              leaf_0: { commitment: Uint8Array,
                        payeeBinding: Uint8Array,
-                       claimKeyHash: Uint8Array,
                        finalPeriod: bigint,
                        monthsWorked: bigint,
                        instance: Uint8Array
@@ -280,10 +279,8 @@ export type Circuits<PS> = {
                             maxContribBase: bigint,
                             contribRate: bigint
                           }): __compactRuntime.CircuitResults<PS, Uint8Array>;
-  claimKeyHash(context: __compactRuntime.CircuitContext<PS>,
-               claimKey_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
   claimNullifier(context: __compactRuntime.CircuitContext<PS>,
-                 claimKey_0: Uint8Array,
+                 payee_0: { bytes: Uint8Array },
                  window_0: bigint,
                  fund_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
 }

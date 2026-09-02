@@ -167,19 +167,6 @@ export function deriveTerminationNonce(
   return new Uint8Array(sha256(DOMAIN.termination, employerKey, `${period}:${index}`));
 }
 
-/**
- * A claimant's claim key, from their own shielded seed.
- *
- * Never from the coin public key. That key is an address handed out to be paid,
- * so anything derived from it is computable by everyone who has ever paid this
- * person — and the nullifier built on this key would then reveal their benefit
- * history to exactly those people. Domain-separated so it is unrelated to any
- * other key the same seed produces.
- */
-export function deriveClaimKey(shieldedSeed: Uint8Array): Uint8Array {
-  return new Uint8Array(sha256(DOMAIN.claim, Buffer.from(shieldedSeed)));
-}
-
 function sealingKey(employerKey: Buffer): Buffer {
   return sha256(DOMAIN.seal, employerKey);
 }

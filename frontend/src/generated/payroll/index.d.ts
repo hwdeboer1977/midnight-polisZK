@@ -215,7 +215,6 @@ export type PureCircuits = {
   bandsFor(gross_0: bigint, threshold1_0: bigint, threshold2_0: bigint): bigint[];
   terminationCommitment(finalPeriod_0: bigint,
                         monthsWorked_0: bigint,
-                        claimKeyHash_0: Uint8Array,
                         nonce_0: Uint8Array): Uint8Array;
   payeeHash(payee_0: { bytes: Uint8Array },
             period_0: bigint,
@@ -340,7 +339,6 @@ export type Circuits<PS> = {
   terminationCommitment(context: __compactRuntime.CircuitContext<PS>,
                         finalPeriod_0: bigint,
                         monthsWorked_0: bigint,
-                        claimKeyHash_0: Uint8Array,
                         nonce_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
   payeeHash(context: __compactRuntime.CircuitContext<PS>,
             payee_0: { bytes: Uint8Array },

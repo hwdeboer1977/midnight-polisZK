@@ -335,6 +335,12 @@ async function main(): Promise<void> {
   const minMonths = Number(
     requireFlag(args, "min-months", "months of employment required to claim")
   );
+  // Part of the struct, so it is part of the hash, so it has to be published
+  // with the rest. `claim` asserts `window < durationMonths` — this figure is
+  // what makes the number of monthly payments a rule rather than a convention.
+  const durationMonths = Number(
+    requireFlag(args, "duration-months", "monthly windows one termination entitles a claimant to")
+  );
   const validFrom = Number(flag(args, "valid-from") ?? "200001");
 
   const cap = parseEur(capEur);
@@ -349,12 +355,14 @@ async function main(): Promise<void> {
     (recorded.maxMonthlyGross !== cap ||
       recorded.rate !== rate ||
       recorded.minMonths !== minMonths ||
+      recorded.durationMonths !== durationMonths ||
       recorded.validFrom !== validFrom)
   ) {
     throw new Error(
       `utils/benefit-params.ts already records v${version} with different figures ` +
         `(cap €${formatPeur(recorded.maxMonthlyGross)}, ${recorded.rate}bp, ` +
-        `${recorded.minMonths} month(s), from ${recorded.validFrom}). The registry is ` +
+        `${recorded.minMonths} month(s), ${recorded.durationMonths} window(s), ` +
+        `from ${recorded.validFrom}). The registry is ` +
         "append-only: publish a new version rather than restating this one."
     );
   }
@@ -392,6 +400,7 @@ async function main(): Promise<void> {
       maxMonthlyGross: cap,
       rate: BigInt(rate),
       minMonths: BigInt(minMonths),
+      durationMonths: BigInt(durationMonths),
     });
     console.log(chalk.green(`   ✅ ${tx.public?.txHash ?? ""}`));
     if (!recorded) {

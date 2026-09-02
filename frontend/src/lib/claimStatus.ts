@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { fetchContractState } from "./chain";
+import { keyToHex } from "./keys";
 import { loadContract } from "./contracts";
 import { fromHex } from "./payslip";
 import { PILOT_DURATION_MONTHS, entitlementWindows } from "../generated/benefit-params";
@@ -40,9 +41,10 @@ import { PILOT_DURATION_MONTHS, entitlementWindows } from "../generated/benefit-
  *
  * It is APP policy, not contract policy, and that distinction matters here more
  * than anywhere else in this file. `BenefitParams` carries no duration, and
- * `claim` never constrains `window`: it is an argument, it appears in the
- * nullifier, and no assertion ties it to `leaf.finalPeriod` or to any limit.
- * Every distinct window is simply a fresh nullifier.
+ * `claim` now asserts `window < params.durationMonths`, so a window outside the
+ * entitlement is refused on chain rather than merely absent from this table.
+ * Windows are zero-based indices; the month each one falls in is shown for
+ * readability and is not what the circuit sees.
  *
  * So "2 remaining" means "2 remaining under the rule this app displays", not
  * "the fund would refuse a third". Which is why the scan does not stop at the
@@ -102,12 +104,13 @@ export async function readClaimHistory(options: {
   networkId: string;
   /** The fund's contract address, hex. */
   fundAddress: string;
-  claimKey: Uint8Array;
+  /** The connected wallet's coin public key, hex or Bech32m. */
+  coinPublicKey: string;
   /** The month her employer attested as final. The entitlement starts here. */
   finalPeriod: number;
   entitlementMonths?: number;
 }): Promise<ClaimHistory> {
-  const { networkId, fundAddress, claimKey, finalPeriod } = options;
+  const { networkId, fundAddress, coinPublicKey, finalPeriod } = options;
   const entitlementMonths = options.entitlementMonths ?? PILOT_DURATION_MONTHS;
 
   const state = await fetchContractState(networkId, fundAddress);
@@ -128,20 +131,30 @@ export async function readClaimHistory(options: {
   }
 
   const fundBytes = fromHex(fundAddress.replace(/^0x/, ""));
-  const isClaimed = (window: number): boolean =>
+  const payeeBytes = fromHex(keyToHex(coinPublicKey));
+
+  // ⚠️ `window` is an INDEX now, not a period. `claim` asserts
+  // `window < params.durationMonths`, which YYYYMM could never satisfy — and
+  // the assert is the point: the number of windows is the published rule set's
+  // answer rather than whatever the caller passes. The month each index falls
+  // in is still shown, from `entitlementWindows`, because an index is not a
+  // thing anybody wants to read.
+  const isClaimed = (index: number): boolean =>
     ledger.spent.member(
-      fund.pureCircuits.claimNullifier(claimKey, BigInt(window), fundBytes)
+      fund.pureCircuits.claimNullifier({ bytes: payeeBytes }, BigInt(index), fundBytes)
     ) as boolean;
 
   const entitlement = entitlementWindows(finalPeriod, entitlementMonths);
-  const windows = entitlement.map((window) => ({ window, claimed: isClaimed(window) }));
+  const windows = entitlement.map((period, index) => ({
+    window: period,
+    index,
+    claimed: isClaimed(index),
+  }));
 
+  // Nothing can fall outside the entitlement any more: a window at or beyond
+  // `durationMonths` is refused by the circuit, so there is no set of stray
+  // nullifiers left to go looking for.
   const outside: WindowStatus[] = [];
-  let period = entitlement[entitlement.length - 1] ?? finalPeriod;
-  for (let i = 0; i < OVERRUN_MONTHS; i += 1) {
-    period = nextPeriod(period);
-    if (isClaimed(period)) outside.push({ window: period, claimed: true });
-  }
 
   const claimedCount = windows.filter((entry) => entry.claimed).length;
 

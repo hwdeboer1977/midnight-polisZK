@@ -2,26 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * What an employer has collected from each employee, remembered locally.
+ * Who is on an employer's payroll, remembered locally.
  *
- * Two things have to travel from an employee to their employer before the
- * system can do its job, and **the chain records neither of them**:
+ * `payeeFor` publishes only a hash of the coin key, so the chain can say a slot
+ * has a payee and never who. A page rebuilding the roster from chain therefore
+ * shows slot numbers unless something local recognises them, and this is that
+ * something: name and public key, per contract.
  *
- *   - the two public keys, which go into the roster workbook. `payeeFor`
- *     publishes only a hash of the coin key, so the chain can say a slot has a
- *     payee and never who;
- *   - the claim-key hash, which goes into a termination attestation. Until that
- *     attestation exists there is nothing on chain about it at all — and by
- *     then it is too late to collect one, because the attestation is write-once.
+ * ⚠️ It used to track a claim-key hash per employee too, and that was the whole
+ * point of it — the outstanding-work signal nothing could derive. Removing the
+ * claim key removed the signal and the work: a termination now binds only what
+ * the chain and the employer's passphrase reproduce, so there is nothing left
+ * to collect from anybody.
  *
- * So the outstanding-work signal an employer most needs is the one nothing can
- * derive. This is that signal, and it is honest about its limits: it is what
- * THIS BROWSER has been told, not what is true. It can only ever undercount —
- * a hash collected on another machine shows as missing here — which is the
- * right direction for a reminder to be wrong in.
+ * Honest about its limits either way: this is what THIS BROWSER has been told,
+ * not what is true. A roster loaded on another machine is not here — which is
+ * what the sealed roster exists to repair.
  *
- * Only hashes and public keys are stored. Nothing here is a secret, and nothing
- * here can spend or claim anything.
+ * Only names and public keys. Nothing here is a secret, and nothing here can
+ * spend or claim anything.
  */
 
 const KEY = "polisZK/collected/v1";
@@ -29,8 +28,6 @@ const KEY = "polisZK/collected/v1";
 export interface CollectedFrom {
   /** The employee's coin public key, as it appears in the roster. */
   coinPublicKey: string;
-  /** Their claim-key hash, once they have sent it. */
-  claimKeyHash?: string;
   /**
    * Their name, from the workbook.
    *
@@ -58,8 +55,8 @@ function write(store: Store): void {
   try {
     window.localStorage.setItem(KEY, JSON.stringify(store));
   } catch {
-    // A browser refusing storage costs the reminder, not the data — the hash
-    // still reaches the termination form by being pasted.
+    // A browser refusing storage costs the names, not the data — the workbook
+    // and the sealed roster both still carry them.
   }
 }
 
@@ -71,9 +68,9 @@ export function collectedFor(contractAddress: string): Record<string, CollectedF
 /**
  * Remembers who is on a workbook, so pages rebuilt from chain can name them.
  *
- * Called whenever a workbook is parsed. It never overwrites a claim-key hash
- * already collected — the two facts arrive from different directions and a
- * fresh workbook should not forget one.
+ * Called whenever a workbook is parsed, and whenever the sealed roster is
+ * unlocked. Merges rather than replaces, so a second source adds names without
+ * discarding what the first one knew.
  */
 export function recordRoster(
   contractAddress: string,
@@ -94,75 +91,6 @@ export function recordRoster(
   write(store);
 }
 
-/**
- * Records a hash against one employee, keeping whatever else is known of them.
- *
- * ⚠️ This used to REPLACE the entry, which quietly discarded the `fullName`
- * that `recordRoster` had put there. Two things read that name — the employee
- * picker on the termination form and `namesBySlot`, which is the only way a
- * page rebuilt from chain can show a person instead of a slot number — so
- * collecting a hash made its owner anonymous, and only for the employees
- * furthest along in the process.
- */
-export function recordClaimKeyHash(
-  contractAddress: string,
-  coinPublicKey: string,
-  claimKeyHash: string
-): void {
-  const store = read();
-  const key = contractAddress.toLowerCase();
-  const forContract = store[key] ?? {};
-  forContract[coinPublicKey] = {
-    ...forContract[coinPublicKey],
-    coinPublicKey,
-    claimKeyHash,
-    at: new Date().toISOString(),
-  };
-  store[key] = forContract;
-  write(store);
-}
-
-export function forgetClaimKeyHash(contractAddress: string, coinPublicKey: string): void {
-  const store = read();
-  const key = contractAddress.toLowerCase();
-  if (store[key]?.[coinPublicKey]) {
-    delete store[key][coinPublicKey];
-    write(store);
-  }
-}
-
-export interface CollectionStatus {
-  /** Employees on the loaded workbook, or null when none is open. */
-  total: number | null;
-  /** How many of them have a claim-key hash recorded here. */
-  withHash: number;
-  /** Those that do not, by name, so the reminder can be specific. */
-  missing: { fullName: string; coinPublicKey: string }[];
-}
-
-/**
- * Progress against the roster currently open.
- *
- * The denominator comes from the workbook rather than the chain, because the
- * chain knows how many payees a period had and not who they are. With no
- * workbook loaded there is no denominator, and the panel says so rather than
- * inventing one.
- */
-export function collectionStatus(
-  contractAddress: string,
-  rows: { fullName: string; coinPublicKey: string }[] | null
-): CollectionStatus {
-  const known = collectedFor(contractAddress);
-  if (!rows) {
-    return {
-      total: null,
-      withHash: Object.values(known).filter((e) => e.claimKeyHash).length,
-      missing: [],
-    };
-  }
-  const missing = rows.filter((row) => !known[row.coinPublicKey]?.claimKeyHash);
-  return { total: rows.length, withHash: rows.length - missing.length, missing };
-}
 
 /**
  * Slot → name for one period, by recognising payee hashes.

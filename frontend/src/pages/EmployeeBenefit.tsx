@@ -5,7 +5,6 @@ import { Link } from "react-router-dom";
 import { periodName } from "../generated/roster";
 import { useWallet } from "../wallet/WalletContext";
 import { ClaimForm } from "../components/ClaimForm";
-import { ClaimKey } from "../components/ClaimKey";
 import { ClaimStatus } from "../components/ClaimStatus";
 import { WalletPicker } from "../components/WalletPicker";
 import { useAttestations } from "../lib/useAttestations";
@@ -103,11 +102,6 @@ export function EmployeeBenefit() {
   const { account, networkId } = useWallet();
   const { rows, employerOf, ended, finalPeriod, loading, error } = useAttestations();
 
-  // The payrolls this wallet is actually on, deduplicated across periods. A
-  // claim-key hash goes to the employer who will anchor it, so this is the
-  // address list the publish step needs — and it comes from the scan, which
-  // matched the wallet's payee hash against each contract's ledger.
-  const payrollsOf = [...new Set(rows.map((row) => row.contractAddress))];
 
   if (!account) {
     return (
@@ -159,14 +153,6 @@ export function EmployeeBenefit() {
       {/* `registered` is optimistic while the scan runs: "not on a payroll yet"
           is the wrong thing to show someone who is, and it would appear and
           then correct itself on every visit. Wrong in the harmless direction. */}
-      {ended ? null : (
-        <ClaimKey
-          coinPublicKey={account.coinPublicKey}
-          contractAddresses={payrollsOf}
-          employerOf={employerOf}
-          registered={loading || rows.length > 0}
-        />
-      )}
 
       {ended ? (
         <section className="callout outcome">
@@ -184,14 +170,13 @@ export function EmployeeBenefit() {
               .join(", ")}{" "}
             was attested on chain as your final employment period.
           </p>
-          {/* "You will need three things for each" read as "upload all three
-              every month", which would be alarming: two of the three cannot be
-              obtained again. Verified against the contract — the nullifier is
-              `hash(claimKey, window, fund)`, so what changes month to month is
-              the WINDOW and nothing else. The files are collected once. */}
+          {/* Two files now, not three — the claim key is gone. The nullifier
+              is `hash(ownPublicKey, window, fund)`, so what changes month to
+              month is the WINDOW and nothing else, and the wallet supplies the
+              rest. */}
           <p className="note" style={{ marginTop: 0 }}>
             Each payment is a separate claim against a different month, made
-            with the <em>same</em> three files every time. You collect them once:
+            with the <em>same</em> two files every time. You collect them once:
           </p>
           <ul className="needs">
             <li>
@@ -212,14 +197,6 @@ export function EmployeeBenefit() {
         <ClaimStatus networkId={networkId} finalPeriod={finalPeriod ?? 0} />
       ) : null}
 
-      {ended ? (
-        <ClaimKey
-          coinPublicKey={account.coinPublicKey}
-          contractAddresses={payrollsOf}
-          employerOf={employerOf}
-          ended
-        />
-      ) : null}
 
       <Eligibility rows={rows} />
 

@@ -19,16 +19,57 @@ import { bytesToHex as hex, keyToHex, sameKey } from "../lib/keys";
 const MAX_MINT = (1n << 48n) - 1n;
 
 export function Peur() {
-  const { account, networkId, refresh: refreshWallet } = useWallet();
+  const { account, api, networkId, refresh: refreshWallet } = useWallet();
   const [deployments, setDeployments] = useState<Deployments>({});
   const [amount, setAmount] = useState("");
   const { job: mintJob, submitting: minting, unavailable, mint } = useFaucet();
+
+  /**
+   * Minting from the connected wallet instead of through the service.
+   *
+   * ⚠️ The service route needs a proof server, a platform token, and the
+   * platform wallet's dust state to be current — none of which the OPERATION
+   * needs. `peur.compact`'s `mint` asserts nothing about the caller and mints to
+   * `ownPublicKey()`, so the wallet already on this page can do it for itself.
+   *
+   * Kept as a fallback rather than deleted: a CLI or a cron job has no wallet
+   * extension, and the platform top-up still runs that way.
+   */
+  const [walletMinting, setWalletMinting] = useState(false);
+  const [walletMintLog, setWalletMintLog] = useState<string[]>([]);
+  const [walletMintError, setWalletMintError] = useState<string | null>(null);
+  const [walletMintTx, setWalletMintTx] = useState<string | null>(null);
+
+  async function mintHere(amountMinor: bigint) {
+    if (!api || !peurAddress) return;
+    setWalletMinting(true);
+    setWalletMintError(null);
+    setWalletMintTx(null);
+    setWalletMintLog([]);
+    try {
+      const { mintFromWallet } = await import("../lib/mintFromWallet");
+      const result = await mintFromWallet({
+        api,
+        networkId,
+        contractAddress: peurAddress,
+        amountMinor,
+        provingMode: "wallet",
+        onProgress: (line) => setWalletMintLog((lines) => [...lines, line]),
+      });
+      setWalletMintTx(result.txHash);
+    } catch (cause) {
+      setWalletMintError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setWalletMinting(false);
+    }
+  }
 
   useEffect(() => {
     void loadDeployments().then(setDeployments);
   }, []);
 
   const deployment = deployments[`${networkId}/peur`];
+  const peurAddress = deployment?.contractAddress ?? null;
   const { state, blockHeight, loading, error, refresh: refreshChain } = useContractState<PeurLedger>(
     networkId,
     "peur",
@@ -168,26 +209,69 @@ export function Peur() {
               </p>
             ) : null}
 
+            {/* Wallet first, service second.
+                
+                The circuit mints to `ownPublicKey()` and checks nothing about
+                the caller, so the connected wallet can do this for itself — no
+                proof server, no platform token, and none of the platform
+                wallet's dust-state failures. The service route stays for a
+                machine with no wallet extension. */}
             <button
-              disabled={!platformActions || !mintable || minting || mintJob?.status === "running"}
-              onClick={() =>
-                // The connector speaks Bech32m; the service speaks hex. Converting
-                // here rather than there keeps the one decoder in the browser,
-                // where the 11 MB address-format WASM is already avoided.
-                mintable &&
-                void mint(
-                  keyToHex(account.coinPublicKey),
-                  keyToHex(account.encryptionPublicKey),
-                  mintable.toString()
-                )
-              }
+              disabled={!mintable || walletMinting || !api || !peurAddress}
+              onClick={() => mintable && void mintHere(mintable)}
             >
-              {mintJob?.status === "running"
-                ? "Minting…"
-                : minting
-                  ? "Starting…"
-                  : "Mint to my wallet"}
+              {walletMinting ? "Minting…" : "Mint to my wallet"}
             </button>
+
+            {walletMintLog.length > 0 ? (
+              <div className="joblog">
+                {walletMintLog.map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))}
+              </div>
+            ) : null}
+            {walletMintError ? <p className="problems">{walletMintError}</p> : null}
+            {walletMintTx ? (
+              <>
+                <p className="ok-line">
+                  ✅ Minted {formatPeur(mintable ?? 0n)} pEUR to your wallet
+                </p>
+                <CopyRow label="Transaction" value={walletMintTx} />
+              </>
+            ) : null}
+
+            <details className="details" style={{ marginTop: 8 }}>
+              <summary>Mint through the service instead</summary>
+              <p className="note">
+                Signed by the platform wallet rather than yours, and needs a proof
+                server plus a platform token. Only useful where no wallet
+                extension exists — a CLI, or a cron job.
+              </p>
+              <button
+                className="ghost"
+                disabled={
+                  !platformActions || !mintable || minting || mintJob?.status === "running"
+                }
+                onClick={() =>
+                  // The connector speaks Bech32m; the service speaks hex.
+                  // Converting here rather than there keeps the one decoder in
+                  // the browser, where the 11 MB address-format WASM is already
+                  // avoided.
+                  mintable &&
+                  void mint(
+                    keyToHex(account.coinPublicKey),
+                    keyToHex(account.encryptionPublicKey),
+                    mintable.toString()
+                  )
+                }
+              >
+                {mintJob?.status === "running"
+                  ? "Minting…"
+                  : minting
+                    ? "Starting…"
+                    : "Mint through the service"}
+              </button>
+            </details>
 
             {mintJob?.status === "running" ? (
               <div className="joblog">

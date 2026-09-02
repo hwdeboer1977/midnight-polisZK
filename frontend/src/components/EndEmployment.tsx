@@ -8,9 +8,7 @@ import {
   surveyEmployment,
   type TerminationResult,
 } from "../lib/endEmployment";
-import { collectedFor, recordClaimKeyHash } from "../lib/collected";
-import { readPublishedClaimKeys } from "../lib/publishedClaimKeys";
-import { keyToHex } from "../lib/keys";
+import { collectedFor } from "../lib/collected";
 import { filenameSlug } from "../lib/payslip";
 import { walletCanProve } from "../lib/submitPayroll";
 import { useServiceJob } from "../lib/useServiceJob";
@@ -68,7 +66,6 @@ export function EndEmployment({
   const { api } = useWallet();
   const [period, setPeriod] = useState<number | null>(periods[0] ?? null);
   const [payee, setPayee] = useState(employee?.coinPublicKey ?? "");
-  const [claimKeyHash, setClaimKeyHash] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [survey, setSurvey] = useState<{
     slot: number;
@@ -119,67 +116,6 @@ export function EndEmployment({
    * `ClaimForm`: the wallet is already trusted with the employer's spending
    * keys, and it is the option that works without local infrastructure.
    */
-  /**
-   * The hash that is actually going to be sent.
-   *
-   * The field below displays `claimKeyHash || collectedFor(...)`, so a hash
-   * collected earlier appears in it without ever reaching state. Everything
-   * that ASKED about the hash asked the state instead: the button disabled
-   * itself on an empty `claimKeyHash` while showing a full one, and `submit`
-   * would have sent "" — an attestation anchored to a hash nobody holds, which
-   * is write-once and cannot be corrected.
-   *
-   * Derived once and used by the field, the button and the submit, so the three
-   * cannot disagree again.
-   */
-  /**
-   * Hashes employees published to this service, for whoever the row is about.
-   *
-   * The third source, and the one that removes the paste. `collectedFor` is
-   * this browser's own record and knows nothing an employer did on another
-   * machine; the published table is what the employee sent, so it is available
-   * wherever the employer signs in.
-   */
-  const [publishedHashes, setPublishedHashes] = useState<Record<string, string>>({});
-  // The published table is keyed on the hex key; `payee` may be either form.
-  const hexPayee = (() => {
-    try {
-      return payee ? keyToHex(payee) : "";
-    } catch {
-      return payee.toLowerCase();
-    }
-  })();
-  useEffect(() => {
-    let cancelled = false;
-    // Scoped to this payroll, and here it matters most: whatever this form
-    // pre-fills goes into a write-once attestation, and a hash published to a
-    // different employer is one this employee cannot open a claim against.
-    void readPublishedClaimKeys(networkId, contractAddress).then((rows) => {
-      if (!cancelled) setPublishedHashes(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [networkId, contractAddress]);
-
-  /**
-   * The hash that is actually going to be sent, from three sources in order of
-   * authority: typed, then this browser's record, then what the employee
-   * published.
-   *
-   * Typed wins because the employer signs a write-once statement with it. The
-   * published value is a suggestion — the same rule the collection panel
-   * follows — so a service holding a stale row cannot quietly anchor one.
-   */
-  const effectiveClaimKeyHash =
-    claimKeyHash ||
-    collectedFor(contractAddress)[payee]?.claimKeyHash ||
-    publishedHashes[hexPayee] ||
-    "";
-  const hashFromEmployee =
-    !claimKeyHash &&
-    !collectedFor(contractAddress)[payee]?.claimKeyHash &&
-    Boolean(publishedHashes[hexPayee]);
 
   /**
    * Who this employer can pick from, by name.
@@ -271,7 +207,6 @@ export function EndEmployment({
         period,
         slot: survey.slot,
         monthsWorked: survey.monthsWorked,
-        claimKeyHash: effectiveClaimKeyHash,
         passphrase,
         provingMode: delegateProving && canDelegate ? "wallet" : "local",
         onProgress: setStep,
@@ -284,7 +219,6 @@ export function EndEmployment({
       // thing that ever wrote to the store, so a hash pasted straight into
       // this form was used and forgotten. The counter then reported
       // outstanding work against people whose employment had already ended.
-      recordClaimKeyHash(contractAddress, payee, effectiveClaimKeyHash);
       // Held no longer than the derivation needs it.
       setPassphrase("");
       // Straight on to the publish, with the opening this run produced. The
@@ -395,10 +329,23 @@ export function EndEmployment({
 
         {relayBundle ? (
           <>
+            {/* ⚠️ This used to end "nothing here can rebuild it for them
+                later", which made the download look like a one-shot nobody
+                could recover from. It was never quite true — the relay rebuilds
+                a bundle from the opening — and it is now plainly false: the
+                nonce is derived from the payroll passphrase, so `RelayPanel`
+                regenerates the opening too, with no file at all.
+
+                Saying otherwise turned an ordinary "download this" into a
+                cliff, and a bundle that vanished on refresh then read as data
+                loss rather than as the disposable thing it is. */}
             <p className="note">
               The claim bundle below is what{" "}
               {employee ? employee.fullName : "this person"} needs to claim. Hand
-              it over — nothing here can rebuild it for them later.
+              it over. If it is lost — or goes stale because another claimant
+              spent the coin it names — rebuild it from their row under{" "}
+              <strong>Rebuild their claim bundle</strong>; your passphrase is
+              enough, no file needed.
             </p>
             <button type="button" className="primary" onClick={() => downloadBundle(relayBundle)}>
               Download claim bundle
@@ -423,7 +370,6 @@ export function EndEmployment({
                 setDone(null);
                 setSurvey(null);
                 setPayee("");
-                setClaimKeyHash("");
                 relay.reset();
               }}
             >
@@ -585,25 +531,12 @@ export function EndEmployment({
             not typed in — the attestation carries this number.
           </p>
 
-          {hashFromEmployee ? (
-            <p className="ok-line" style={{ marginTop: 0 }}>
-              ✓ Claim-key hash supplied by the employee
-            </p>
-          ) : null}
-
           <div className="actions" style={{ flexWrap: "wrap", gap: 8 }}>
-            {/* Prefilled from what was collected for this employee, or from
-                what they published — the hash is the same value either way, and
-                retyping it is one more chance to anchor a termination against a
-                key nobody holds. Editable regardless: this goes into a
-                write-once statement, so the employer keeps the last word. */}
-            <input
-              value={effectiveClaimKeyHash}
-              disabled={busy}
-              placeholder="Employee's claim key hash"
-              style={{ minWidth: 320 }}
-              onChange={(event) => setClaimKeyHash(event.target.value.trim())}
-            />
+            {/* No claim-key field. A termination binds the final period, the
+                months worked and a derived nonce — all of which the employer
+                already has — so ending employment no longer waits on anything
+                collected from the employee, and can no longer be anchored
+                against a hash nobody holds. */}
             <input
               type="password"
               value={passphrase}
@@ -651,7 +584,7 @@ export function EndEmployment({
           <button
             type="button"
             className="primary"
-            disabled={busy || !effectiveClaimKeyHash || !passphrase || !api}
+            disabled={busy || !passphrase || !api}
             onClick={() => void submit()}
           >
             {busy ? step : `End employment as of ${periodName(period!)}`}

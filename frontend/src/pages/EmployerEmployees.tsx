@@ -4,7 +4,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
-import { ClaimKeyCollection } from "../components/ClaimKeyCollection";
 import { EndEmployment } from "../components/EndEmployment";
 import { RelayPanel } from "../components/RelayPanel";
 import { StageGate } from "../components/StageGate";
@@ -13,7 +12,6 @@ import { loadDeployments, type Deployments } from "../lib/deployments";
 import { bytesToHex, keyToHex } from "../lib/keys";
 import { collectedFor, recordRoster } from "../lib/collected";
 import { fetchSealedRoster, openRoster } from "../lib/sealedRoster";
-import { readPublishedClaimKeys } from "../lib/publishedClaimKeys";
 import { fromHex } from "../lib/payslip";
 import { loadContract } from "../lib/contracts";
 import { usePayrollInstances } from "../lib/usePayrollInstances";
@@ -101,29 +99,7 @@ export function EmployerEmployees() {
    */
   const [collectedNonce, setCollectedNonce] = useState(0);
 
-  /**
-   * Claim-key hashes employees published to the service.
-   *
-   * Read HERE as well as inside the collection form, because the status column
-   * is what an employer looks at to decide whether anything is outstanding —
-   * and it was answering from this browser's local record alone, so a hash the
-   * employee had sent showed as Missing.
-   */
-  const [published, setPublished] = useState<Record<string, string>>({});
   const address = mine[0]?.deployment.contractAddress ?? null;
-  useEffect(() => {
-    if (!address) return;
-    let cancelled = false;
-    // Scoped to THIS payroll. Read network-wide, it reported a hash published
-    // to some other employer as collected here — which is what put a false
-    // ✓ Collected on a row nobody had collected anything for.
-    void readPublishedClaimKeys(networkId, address).then((rows) => {
-      if (!cancelled) setPublished(rows);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [networkId, address, collectedNonce]);
   const periodKey = mine[0]?.state
     ? [...mine[0].state.periods].map(String).sort().join(",")
     : "";
@@ -268,15 +244,6 @@ export function EmployerEmployees() {
   }
 
   /**
-   * Who has sent a claim-key hash — from this browser's record, and from what
-   * they published to the service.
-   *
-   * ⚠️ The published table was read by the collection FORM and not by this
-   * column, so an employee who pressed "Send to my employer" still showed as
-   * Missing here and in the warning above the table. The employer had no way to
-   * see the thing that had arrived.
-   */
-  /**
    * The period each employee's termination was attested for, if any.
    *
    * Read from `terminationFor`, which is keyed by period and slot — the same
@@ -305,15 +272,6 @@ export function EmployerEmployees() {
   }
 
   const collected = address ? collectedFor(address) : {};
-  const hashFor = (coinPublicKey: string | null): boolean | null => {
-    if (!coinPublicKey) return null;
-    if (collected[coinPublicKey]?.claimKeyHash) return true;
-    try {
-      return Boolean(published[keyToHex(coinPublicKey)]);
-    } catch {
-      return Boolean(published[coinPublicKey.toLowerCase()]);
-    }
-  };
 
   const employees = [...seen.entries()]
     .sort((a, b) => a[1].slot - b[1].slot)
@@ -325,14 +283,12 @@ export function EmployerEmployees() {
         coinPublicKey: known?.coinPublicKey ?? null,
         // `null` is "this browser does not recognise them", which is not the
         // same as "they have not sent one" and must not render as a warning.
-        claimKey: hashFor(known?.coinPublicKey ?? null),
         endedIn: endedIn.get(identity) ?? null,
         hash: identity,
         since: meta.first,
         active: meta.onLatest,
       };
     });
-  const missingClaimKeys = employees.filter((e) => e.claimKey === false);
 
   return (
     <>
@@ -415,20 +371,7 @@ export function EmployerEmployees() {
         </section>
       ) : null}
 
-      {/* One line, not a card. A secondary unemployment-benefit feature had a
-          headed panel with a paragraph and a form above the employee table,
-          which made it dominate a page about employees. The status is per
-          person in the table, and each row's own Manage panel carries the field
-          for fixing it — so this is a pointer, not a workflow. */}
-      {missingClaimKeys.length > 0 ? (
-        <p className="inline-warn">
-          ⚠ {missingClaimKeys.length}{" "}
-          {missingClaimKeys.length === 1 ? "employee needs" : "employees need"} a
-          benefit claim key. Open <strong>Manage</strong> on their row to add it.
-        </p>
-      ) : null}
-
-      {employees.length > 0 ? (
+          {employees.length > 0 ? (
         <section className="card employees-card">
           <h2>Employees</h2>
           <table className="roster">
@@ -438,7 +381,6 @@ export function EmployerEmployees() {
                 <th>Payment key</th>
                 <th>Since</th>
                 <th>Status</th>
-                <th>Benefit claim key</th>
                 <th />
               </tr>
             </thead>
@@ -593,7 +535,6 @@ function EmployeeRow({
     label: string;
     named: boolean;
     coinPublicKey: string | null;
-    claimKey: boolean | null;
     /** The period their termination was attested for, or null. */
     endedIn: number | null;
     hash: string;
@@ -619,22 +560,6 @@ function EmployeeRow({
           {employee.hash.slice(0, 4)}…{employee.hash.slice(-4)}
         </td>
         <td className="muted">{periodName(Number(employee.since))}</td>
-        <td>
-          {/* Never orange for "unknown". A person this browser has not seen on
-              a workbook is not a person anyone has failed to collect from. */}
-          {employee.claimKey === null ? (
-            <span
-              className="pill neutral"
-              title="This browser has not seen a workbook naming them"
-            >
-              Unknown
-            </span>
-          ) : employee.claimKey ? (
-            <span className="pill ok">✓ Collected</span>
-          ) : (
-            <span className="pill warn">⚠ Missing</span>
-          )}
-        </td>
         <td>
           {/* A termination outranks "on the latest period": someone can be
               attested as leaving in the very month they were last paid, and
@@ -717,30 +642,8 @@ function EmployeeRow({
                         )}
                       </dd>
                     </div>
-                    <div>
-                      <dt>Benefit claim key</dt>
-                      <dd>
-                        {employee.claimKey === null ? (
-                          <span className="pill neutral">Unknown</span>
-                        ) : employee.claimKey ? (
-                          <span className="pill ok">✓ Collected</span>
-                        ) : (
-                          <span className="pill warn">⚠ Missing</span>
-                        )}
-                      </dd>
-                    </div>
                   </dl>
 
-                  {employee.coinPublicKey && employee.claimKey === false ? (
-                    <ClaimKeyCollection
-                      contractAddress={address}
-                      rows={[
-                        { fullName: employee.label, coinPublicKey: employee.coinPublicKey },
-                      ]}
-                      onSaved={onChanged}
-                      compact
-                    />
-                  ) : null}
 
                   {/* Available whenever a termination exists, not only after a
                       failed run.
@@ -752,19 +655,22 @@ function EmployeeRow({
                       behind a failure left the only route through the CLI. */}
                   {employee.endedIn !== null ? (
                     <details className="details">
-                      <summary>Rebuild their claim bundle</summary>
-                      <p className="note">
-                        Employment ended {periodName(employee.endedIn)}. Upload the
-                        termination opening you downloaded then, and this rebuilds
-                        the bundle against the fund's coins as they are now — which
-                        is what a bundle naming a coin some other claimant has
-                        since spent needs.
-                      </p>
-                      <p className="note">
-                        The root for that month is already on chain and the same
-                        opening reproduces it, so publishing again is not needed.
-                      </p>
-                      <RelayPanel period={employee.endedIn} defaultPublish={false} bare />
+                      <summary>Publish their claim tree</summary>
+                      <RelayPanel
+                        period={employee.endedIn}
+                        defaultPublish={false}
+                        bare
+                        rebuild={
+                          employee.coinPublicKey
+                            ? {
+                                networkId,
+                                contractAddress: address,
+                                instance: instanceName,
+                                payee: employee.coinPublicKey,
+                              }
+                            : undefined
+                        }
+                      />
                     </details>
                   ) : null}
 
@@ -783,20 +689,9 @@ function EmployeeRow({
                       End employment
                     </button>
                     <p className="note" style={{ margin: 0 }}>
-                      {employee.claimKey === false ? (
-                        <>
-                          <strong>Save their claim-key hash first.</strong> It
-                          goes inside the statement you sign, and that statement
-                          is write-once — a key collected afterwards is one no
-                          claim can ever use.
-                        </>
-                      ) : (
-                        <>
-                          Creates the private record this person needs to prove
-                          eligibility for unemployment benefit, and publishes the
-                          month's claim tree in the same step.
-                        </>
-                      )}
+                      Creates the private record this person needs to prove
+                      eligibility for unemployment benefit, and publishes the
+                      month's claim tree in the same step.
                     </p>
                   </div>
                 </>

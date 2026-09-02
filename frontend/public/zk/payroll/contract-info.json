@@ -1055,13 +1055,6 @@
           }
         },
         {
-          "name": "claimKeyHash",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
           "name": "nonce",
           "type": {
             "type-name": "Bytes",

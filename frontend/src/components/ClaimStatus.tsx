@@ -1,12 +1,11 @@
 // Copyright 2026 Henk Wim de Boer
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from "react";
-import { FilePicker } from "./FilePicker";
-import { parseClaimKeyFile } from "../lib/claimKey";
+import { useState, useEffect } from "react";
 import { forNetwork, loadDeployments } from "../lib/deployments";
 import { periodName } from "../generated/roster";
 import { readClaimHistory, type ClaimHistory } from "../lib/claimStatus";
+import { useWallet } from "../wallet/WalletContext";
 
 /**
  * "Have I already claimed?" — answered, where it used to say it could not be.
@@ -36,39 +35,53 @@ export function ClaimStatus({
   /** The month her employer attested as final. Where the scan starts. */
   finalPeriod: number;
 }) {
+  const { account } = useWallet();
   const [history, setHistory] = useState<ClaimHistory | null>(null);
-  const [keyName, setKeyName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function check(text: string, name: string) {
+  /**
+   * Runs on its own, because there is nothing left to ask for.
+   *
+   * ⚠️ This used to want the claim-key FILE. The nullifier was keyed on that
+   * secret, so the one question a claimant most wants answered — how many
+   * months do I have left — was gated behind a download she might not have to
+   * hand. The nullifier is `hash(ownPublicKey, window, fund)` now, so the
+   * connected wallet is the whole input and the answer is simply shown.
+   *
+   * The trade is stated plainly on the page: what she gains in convenience,
+   * she loses in exclusivity — anyone holding her payment address can run the
+   * same check.
+   */
+  useEffect(() => {
+    if (!account) return;
+    let cancelled = false;
     setError(null);
-    setHistory(null);
-    setKeyName(name);
     setBusy(true);
-    try {
-      const identity = await parseClaimKeyFile(text);
-
-      const deployments = await loadDeployments();
-      const fund = forNetwork(deployments, networkId).find(([name]) => name === "fund");
-      if (!fund) {
-        throw new Error(`No fund is deployed on ${networkId}, so there is nothing to check.`);
-      }
-
-      setHistory(
-        await readClaimHistory({
+    void (async () => {
+      try {
+        const deployments = await loadDeployments();
+        const fund = forNetwork(deployments, networkId).find(([name]) => name === "fund");
+        if (!fund) {
+          throw new Error(`No fund is deployed on ${networkId}, so there is nothing to check.`);
+        }
+        const result = await readClaimHistory({
           networkId,
           fundAddress: fund[1].contractAddress,
-          claimKey: identity.claimKey,
+          coinPublicKey: account.coinPublicKey,
           finalPeriod,
-        })
-      );
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
+        });
+        if (!cancelled) setHistory(result);
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [account, networkId, finalPeriod]);
 
   return (
     /* A section rather than a disclosure.
@@ -86,19 +99,17 @@ export function ClaimStatus({
     <section className="card utility">
       <h2>Have you already claimed?</h2>
 
+      {/* Honest about what changed. The old copy said "nobody else can",
+          which was true of a nullifier keyed on a secret file and is not true
+          of one keyed on a payment address. Saying so here is cheaper than
+          letting a claimant assume the stronger property. */}
       <p className="note" style={{ marginTop: 0 }}>
-        You can check, and nobody else can. Each claim is recorded as a
-        nullifier built from your claim key, and the fund's list of them is
-        public — but finding yours in it needs the key. Load your file.
+        Each claim is recorded as a nullifier built from your wallet, and the
+        fund's list of them is public. Yours is computed here from the wallet
+        you have connected — no file needed. Anyone you have given your payment
+        address to could run the same check, which is the cost of not needing
+        one.
       </p>
-
-      <FilePicker
-        label="Choose your claim key…"
-        loaded={history ? "Claim key" : null}
-        filename={keyName}
-        disabled={busy}
-        onFile={async (file) => check(await file.text(), file.name)}
-      />
 
       {busy ? <p className="status">Reading the fund…</p> : null}
       {error ? <p className="problems">{error}</p> : null}

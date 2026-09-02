@@ -48,6 +48,13 @@
                   "type-name": "Uint",
                   "maxval": 65535
                 }
+              },
+              {
+                "name": "durationMonths",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
               }
             ]
           }
@@ -223,13 +230,6 @@
                 }
               },
               {
-                "name": "claimKeyHash",
-                "type": {
-                  "type-name": "Bytes",
-                  "length": 32
-                }
-              },
-              {
                 "name": "finalPeriod",
                 "type": {
                   "type-name": "Uint",
@@ -319,13 +319,6 @@
           }
         },
         {
-          "name": "claimKey",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
           "name": "window",
           "type": {
             "type-name": "Uint",
@@ -368,6 +361,13 @@
               },
               {
                 "name": "minMonths",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "durationMonths",
                 "type": {
                   "type-name": "Uint",
                   "maxval": 65535
@@ -637,13 +637,6 @@
                 }
               },
               {
-                "name": "claimKeyHash",
-                "type": {
-                  "type-name": "Bytes",
-                  "length": 32
-                }
-              },
-              {
                 "name": "finalPeriod",
                 "type": {
                   "type-name": "Uint",
@@ -856,33 +849,24 @@
       }
     },
     {
-      "name": "claimKeyHash",
-      "pure": true,
-      "proof": false,
-      "arguments": [
-        {
-          "name": "claimKey",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        }
-      ],
-      "result-type": {
-        "type-name": "Bytes",
-        "length": 32
-      }
-    },
-    {
       "name": "claimNullifier",
       "pure": true,
       "proof": false,
       "arguments": [
         {
-          "name": "claimKey",
+          "name": "payee",
           "type": {
-            "type-name": "Bytes",
-            "length": 32
+            "type-name": "Struct",
+            "name": "ZswapCoinPublicKey",
+            "elements": [
+              {
+                "name": "bytes",
+                "type": {
+                  "type-name": "Bytes",
+                  "length": 32
+                }
+              }
+            ]
           }
         },
         {

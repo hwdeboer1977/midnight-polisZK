@@ -42,6 +42,15 @@ export interface BenefitParams {
   rate: number;
   /** Months of employment required to claim. */
   minMonths: number;
+  /**
+   * Monthly windows one termination entitles her to.
+   *
+   * Part of the struct now, which is the whole point: `claim` asserts
+   * `window < durationMonths`, so the figure the page shows and the figure the
+   * contract allows are the same value. It used to be `PILOT_DURATION_MONTHS`
+   * alone — a constant the UI honoured and the circuit never saw.
+   */
+  durationMonths: number;
 }
 
 /**
@@ -69,6 +78,7 @@ export const BENEFIT_V1: BenefitParams = {
   maxMonthlyGross: 4_000n * SCALE,
   rate: 7000,
   minMonths: 1,
+  durationMonths: 3,
 };
 
 /** Every published version, newest last. */
@@ -97,23 +107,24 @@ export function paramsForVersion(version: number): BenefitParams {
  * compute it; this is a placeholder chosen so the pilot has an answer, and it
  * is deliberately flat rather than a plausible-looking formula nobody sourced.
  *
- * ⚠️ NOT PART OF `BenefitParams`, and that is not an oversight.
+ * ✅ NOW PART OF `BenefitParams`, and now enforced.
  *
- * `BenefitParams` mirrors the struct in `fund.compact` field for field. The
- * fund stores `persistentHash<BenefitParams>` in `paramsFor` and `claim`
- * recomputes it from what the claimant supplies, so adding a field here would
- * change the hash and every already-published version would stop opening —
- * v1 is published on chain and cannot be edited.
+ * It was neither. `claim` took `window` as an argument, put it in the nullifier
+ * and asserted nothing about it, so this figure was what the app SHOWED and not
+ * what the contract ALLOWED — a claimant calling the circuit directly passed
+ * window 0, 1, 2, 3 … and drew a distinct nullifier, and a distinct payment,
+ * for each. Everything else about them was genuine; only the NUMBER of payments
+ * was theirs to choose.
  *
- * ⚠️ NOT ENFORCED. `claim` never constrains `window`: it is an argument, it
- * appears in the nullifier, and no assertion relates it to `leaf.finalPeriod`
- * or to any limit. So this figure is what the app SHOWS, not what the contract
- * ALLOWS — the two agree only because nothing has tried otherwise. Closing that
- * needs the duration inside `BenefitParams` and an assertion in `claim`, which
- * means republishing every version and redeploying the fund, since `claim` is
- * impure and its verifier keys are fixed at deploy.
+ * `claim` now asserts `window < params.durationMonths`, so the two agree by
+ * construction rather than by nobody having tried. The cost was the one the old
+ * note predicted: the struct hash changed, so every version had to be
+ * republished and the fund redeployed.
+ *
+ * Read from the rule set rather than declared beside it, so the page cannot
+ * show a duration the contract would refuse.
  */
-export const PILOT_DURATION_MONTHS = 3;
+export const PILOT_DURATION_MONTHS = BENEFIT_V1.durationMonths;
 
 /**
  * The windows one termination entitles her to: the final month, then the next.
@@ -145,6 +156,7 @@ export function toCircuitParams(p: BenefitParams) {
     maxMonthlyGross: p.maxMonthlyGross,
     rate: BigInt(p.rate),
     minMonths: BigInt(p.minMonths),
+    durationMonths: BigInt(p.durationMonths),
   };
 }
 

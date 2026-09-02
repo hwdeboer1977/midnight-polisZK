@@ -36,7 +36,7 @@ import { periodName } from "./utils/roster.js";
  * which `payeeFor` binds and no employer holds.
  *
  *   read -s -p "passphrase: " P && export PAYROLL_PASSPHRASE=$P
- *   npm run terminate -- <instance> <period> <slot> --payee <hex> --claim-key-hash <hex>
+ *   npm run terminate -- <instance> <period> <slot> --payee <hex>
  */
 
 const CONTRACT_STATE_QUERY = `
@@ -65,22 +65,15 @@ async function main(): Promise<void> {
 
   if (!instance || !periodArg || slotArg === undefined) {
     throw new Error(
-      "Usage: npm run terminate -- <instance> <period> <slot> --payee <hex> --claim-key-hash <hex>"
+      "Usage: npm run terminate -- <instance> <period> <slot> --payee <hex>"
     );
   }
   const period = Number(periodArg);
   const slot = Number(slotArg);
 
   const payee = flag(args, "payee");
-  const claimKeyHash = flag(args, "claim-key-hash");
   if (!payee || !/^[0-9a-f]{64}$/i.test(payee)) {
     throw new Error("--payee must be the employee's coin public key, 64 hex characters");
-  }
-  if (!claimKeyHash || !/^[0-9a-f]{64}$/i.test(claimKeyHash)) {
-    throw new Error(
-      "--claim-key-hash must be 64 hex characters — the employee produces it with\n" +
-        "   npm run payee <seed> -- --claim-key"
-    );
   }
 
   const passphrase = process.env.PAYROLL_PASSPHRASE;
@@ -183,7 +176,6 @@ async function main(): Promise<void> {
   const attestation = (payrollContract as any).pureCircuits.terminationCommitment(
     BigInt(period),
     BigInt(months),
-    fromHex(claimKeyHash),
     nonce
   );
 
@@ -235,7 +227,6 @@ async function main(): Promise<void> {
         slot,
         finalPeriod: period,
         monthsWorked: months,
-        claimKeyHash: claimKeyHash.toLowerCase(),
         nonce: hex(nonce),
       },
       null,

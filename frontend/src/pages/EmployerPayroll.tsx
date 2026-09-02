@@ -11,7 +11,6 @@ import { SetupChecklist } from "../components/SetupChecklist";
 import { WalletPicker } from "../components/WalletPicker";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { periodName, type ParsedRoster } from "../generated/roster";
-import { collectionStatus } from "../lib/collected";
 import { bytesToHex as hex } from "../lib/keys";
 import { formatPeur, formatPeurTile, group } from "../lib/format";
 import { DUTCH_V1, computeLine } from "../generated/tax-params";
@@ -233,25 +232,6 @@ export function EmployerPayroll() {
       : (roster?.totalMinor ?? null);
 
   /**
-   * How many people still owe a claim-key hash.
-   *
-   * Can only UNDERCOUNT — a workbook loaded on another machine is not in this
-   * browser's record — which is the right direction for a reminder to be wrong
-   * in. `null` from `collectionStatus` means no workbook is open, and that is
-   * reported as nothing outstanding rather than as everyone outstanding: a
-   * page with no roster loaded knows nothing, and guessing would put a warning
-   * in front of an employer who has done everything.
-   */
-  const claimStatus = (() => {
-    if (!instance) return { missing: 0 };
-    const status = collectionStatus(
-      instance.deployment.contractAddress,
-      roster?.rows ?? null
-    );
-    return { missing: status.total === null ? 0 : status.missing.length };
-  })();
-
-  /**
    * What to call this employer, if anything.
    *
    * The registry knows the company name and the chain does not — it records a
@@ -349,30 +329,6 @@ export function EmployerPayroll() {
           already behind `latestDone`, which is false when there is none. */}
       {instance ? (
         <>
-          {/* What used to be a four-item "Set up once" strip, and before that a
-              card of four rows.
-              
-              Company and payroll key are answered by a contract existing at
-              all — restating them above the month's work said an employer was
-              still being configured every month for the life of the account,
-              which is how a working product comes to feel half-built. Employee
-              keys and claim-key hashes moved to Employees, where they belong:
-              both are facts about people rather than steps in configuring a
-              company.
-              
-              What survives is the one that can block a real operation. A
-              missing claim-key hash is unfixable AFTER a termination is
-              written, so it is worth a line here — and only when there is one
-              to report. */}
-          {claimStatus.missing > 0 ? (
-            <p className="inline-warn">
-              ⚠ {claimStatus.missing}{" "}
-              {claimStatus.missing === 1 ? "employee has" : "employees have"} not
-              provided a benefit claim key.{" "}
-              <Link to="/employer/employees">Review employees →</Link>
-            </p>
-          ) : null}
-
           {/* ── Every month ───────────────────────────────────────────────
               The hero workflow, in the tinted zone the design system reserves
               for the thing a page exists to do. It was a white card between two

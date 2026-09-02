@@ -44,7 +44,6 @@ export interface ClaimBundle {
   leaf: {
     commitment: string;
     payeeBinding: string;
-    claimKeyHash: string;
     finalPeriod: number;
     monthsWorked: number;
     instance: string;
@@ -77,8 +76,8 @@ export function parseBundle(text: string): ClaimBundle {
     // The near-miss worth naming: the employer's termination opening is the
     // same person, the same period, and an almost identical filename, but it
     // travels employer → relay and carries no path.
-    const opening = bundle as unknown as { claimKeyHash?: string; finalPeriod?: number };
-    if (opening?.claimKeyHash && opening?.finalPeriod) {
+    const opening = bundle as unknown as { nonce?: string; finalPeriod?: number };
+    if (opening?.nonce && opening?.finalPeriod) {
       throw new Error(
         "That is the termination opening your employer downloaded, which goes to " +
           "the fund's relay. The claim bundle is what the relay gives back — look " +
@@ -101,29 +100,20 @@ export async function submitClaim(options: {
   networkId: string;
   bundle: ClaimBundle;
   payslip: Payslip;
-  /**
-   * The 32-byte nullifier secret, already resolved.
-   *
-   * Taken as bytes rather than as a file or a passphrase so this function has
-   * one input for it. A claimant created under the current scheme loads a file;
-   * one anchored before 2026-08-26 derives it from her passphrase with
-   * `deriveLegacyClaimKey`. Both produce the same thing, the anchor check below
-   * cannot tell them apart, and neither route belongs in here.
-   */
-  claimKey: Uint8Array;
   /** The connected wallet's coin public key, Bech32m or hex. */
   coinPublicKey: string;
   /**
-   * The benefit window being claimed for, YYYYMM. One claim per window per
-   * claim key: the nullifier is `hash(claimKey, window, fund)` and the fund
-   * keeps the spent set, so re-claiming a window is refused on chain rather
-   * than merely discouraged.
+   * The benefit window being claimed for. One claim per window per WALLET: the
+   * nullifier is `hash(ownPublicKey, window, fund)` and the fund keeps the
+   * spent set, so re-claiming a window is refused on chain rather than merely
+   * discouraged. `claim` also asserts `window < durationMonths`, so the number
+   * of windows is the published rule set's answer and not the caller's.
    */
   window: number;
   provingMode?: ProvingMode;
   onProgress?: ClaimProgress;
 }): Promise<ClaimResult> {
-  const { api, networkId, bundle, payslip, claimKey, window, coinPublicKey } = options;
+  const { api, networkId, bundle, payslip, window, coinPublicKey } = options;
   const onProgress = options.onProgress ?? (() => {});
 
   const leaf = bundle.leaf;
@@ -132,7 +122,19 @@ export async function submitClaim(options: {
   // Every check below exists to fail here, with a sentence, rather than inside
   // a circuit after two minutes of proving with "assertion failed".
   if (payslip.contract.replace(/^0x/, "").toLowerCase() !== payrollAddress.toLowerCase()) {
-    throw new Error("That payslip is from a different payroll contract than the bundle.");
+    // Names both, because the usual cause is a REDEPLOY rather than a wrong
+    // file: an employer's contract changes address and every payslip issued by
+    // the previous one keeps naming it. The figures are still true; the
+    // commitment they open lives somewhere else now. Saying only "a different
+    // contract" sends someone hunting through their downloads for a file that
+    // does not exist yet.
+    const short = (v: string) => `${v.slice(0, 8)}…${v.slice(-6)}`;
+    throw new Error(
+      `That payslip was issued by payroll ${short(payslip.contract.replace(/^0x/, ""))}, ` +
+        `but your termination is on ${short(payrollAddress)}. If your employer ` +
+        "redeployed, ask them for a fresh payslip for that month — they can " +
+        "regenerate it from the chain with their payroll passphrase."
+    );
   }
   if (payslip.period !== leaf.finalPeriod) {
     throw new Error(
@@ -196,19 +198,6 @@ export async function submitClaim(options: {
     );
   }
 
-  onProgress("Checking your claim key…");
-  const fundContract = (await loadContract("fund")) as any;
-  const derivedAnchor = bytesToHex(fundContract.pureCircuits.claimKeyHash(claimKey));
-  if (derivedAnchor !== leaf.claimKeyHash.toLowerCase()) {
-    // The single most likely failure in the whole flow, and the one worth
-    // naming precisely: the anchor is write-once, so this is either the wrong
-    // claim key or one made after the termination was already filed.
-    throw new Error(
-      "That claim key is not the one your employer anchored. It must be the exact " +
-        "file you had before your employment ended — the anchor was written once " +
-        "and cannot be changed, so a key created afterwards can never match it."
-    );
-  }
 
   const params = paramsForVersion(bundle.paramsVersion!);
   const benefit = benefitFor(gross, params);
@@ -217,6 +206,7 @@ export async function submitClaim(options: {
   // month was filed under — the circuit pins that by hashing what we pass here
   // against the `paramsHash` bound into her salary commitment. Checked off
   // circuit first so a schedule mismatch names itself.
+  const fundContract = (await loadContract("fund")) as any;
   const schedule = fundContract.pureCircuits.taxParamsHash(toCircuitTaxParams(DUTCH_V1));
   if (bytesToHex(schedule) !== bytesToHex(paramsHash)) {
     throw new Error(
@@ -266,7 +256,6 @@ export async function submitClaim(options: {
     {
       commitment: fromHex(leaf.commitment),
       payeeBinding: fromHex(leaf.payeeBinding),
-      claimKeyHash: fromHex(leaf.claimKeyHash),
       finalPeriod: BigInt(leaf.finalPeriod),
       monthsWorked: BigInt(leaf.monthsWorked),
       instance: fromHex(leaf.instance),
@@ -279,7 +268,6 @@ export async function submitClaim(options: {
     { bytes: employerBytes },
     paramsHash,
     fromHex(payslip.nonce),
-    claimKey,
     BigInt(window),
     toCircuitParams(params),
     toCircuitTaxParams(DUTCH_V1),

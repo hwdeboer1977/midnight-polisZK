@@ -55,6 +55,20 @@ struct BenefitParams {
   rate: Uint<16>;
   // Months of employment required. Twelve, under the rules this models.
   minMonths: Uint<16>;
+  // How many monthly windows one termination entitles her to.
+  //
+  // ⚠️ Added because it was NOT here, and `claim` therefore never constrained
+  // `window` at all: it was an argument that appeared in the nullifier and in
+  // no assertion. The duration was a TypeScript constant the page displayed,
+  // so a claimant who called the circuit directly passed window 0, 1, 2, 3 …
+  // and drew a distinct nullifier — and a distinct payment — for each, until
+  // the fund was empty. Everything else about them was genuine; only the
+  // number of payments was decided by the caller.
+  //
+  // In `BenefitParams` rather than as a constant in the circuit because it is
+  // a policy figure like every other one here: published, versioned, and
+  // changeable by publishing a new version rather than by redeploying.
+  durationMonths: Uint<16>;
 }
 
 // What a claimant proves membership of.
@@ -73,10 +87,6 @@ struct ClaimLeaf {
   // `payeeFor[p][slot]`, which is what ties the leaf to a wallet without naming
   // one. Only the holder of that key can reproduce it.
   payeeBinding: Bytes<32>;
-  // hash(claimKey), anchored when she was hired. Without it a claimant could
-  // invent a fresh claimKey per claim and mint an endless series of distinct
-  // nullifiers, each looking unspent.
-  claimKeyHash: Bytes<32>;
   // The employer's attestation, and the reason the claimant cannot shop for her
   // best month: the final period is named by the employer, and the commitment
   // in this leaf is that period's.
@@ -136,12 +146,29 @@ struct PayeeBinding {
 
 // The nullifier's preimage.
 //
-// Keyed on a SECRET. The obvious construction — hash(domain, ownPublicKey,
-// window) — is computable by anyone who has ever been given her coin public
-// key, which is an address she hands out to be paid. They would enumerate
-// windows, test membership, and read her benefit history off a public Set. It
-// is the single most sensitive fact in the system and it would be recoverable
-// by every employer she ever had.
+// ⚠️ Keyed on her WALLET, and this is a deliberate trade rather than the
+// oversight it looks like. It used to be keyed on a secret claim key, precisely
+// because hash(payee, window) is computable by anyone who has ever been given
+// her coin public key — an address she hands out to be paid — who could then
+// enumerate windows, test membership against the public `spent` set, and read
+// her benefit history off it.
+//
+// That property was paid for with a file. The claim key existed only in one
+// download, could not be sealed to her wallet (the DApp connector exposes no
+// decrypt operation) or derived from a signature (it signs
+// non-deterministically), and every claim therefore rested on a 32-byte file
+// nobody could reproduce — including the employer, who had to collect its hash
+// BEFORE a write-once attestation and could silently strand a claimant by
+// anchoring the wrong one.
+//
+// What is NOT given up: only she can claim. `payeeBinding` binds the claim to
+// `ownPublicKey()` independently, so the wallet is still the gate. What is
+// given up is unlinkability — anyone holding her payment address can tell THAT
+// she claimed, never how much or for how long.
+//
+// The construction that restores unlinkability without a file needs a secret
+// her wallet can reproduce on demand. WebAuthn PRF is that shape; nothing in
+// the connector is, today.
 // Identifies one author's publication of one root, so two authors publishing
 // for the same period cannot collide and neither can lock the other out.
 struct RootAuthorSlot {
@@ -151,7 +178,7 @@ struct RootAuthorSlot {
 }
 
 struct ClaimNullifier {
-  claimKey: Bytes<32>;
+  payee: ZswapCoinPublicKey;
   window: Uint<32>;
   fund: Bytes<32>;
 }
@@ -379,7 +406,6 @@ export circuit claim(
   employer: ZswapCoinPublicKey,
   payrollParamsHash: Bytes<32>,
   nonce: Bytes<32>,
-  claimKey: Bytes<32>,
   window: Uint<32>,
   params: BenefitParams,
   // The tax schedule the benefit is withheld under. Not trusted: pinned below
@@ -421,6 +447,14 @@ export circuit claim(
   // Auditable after the fact — the period count really is public.
   assert(leaf.monthsWorked >= params.minMonths, "not enough months of employment");
 
+  // The window is within the entitlement. Zero-based, so a duration of three
+  // admits windows 0, 1 and 2 — and nothing else. Without this the `spent` set
+  // bounded repeats of ONE window and never the number of windows.
+  assert(
+    disclose(window) < params.durationMonths as Uint<32>,
+    "that window is beyond this entitlement"
+  );
+
   // Hers. Only the holder of the coin key that payroll filed can produce this,
   // which is what stops the employer who wrote the attestation from spending it.
   assert(
@@ -429,12 +463,6 @@ export circuit claim(
         PayeeBinding { payee: ownPublicKey(), period: p, instance: leaf.instance }
       ),
     "that leaf was not filed for this wallet"
-  );
-
-  // And the claim key is the one anchored for her at hire.
-  assert(
-    leaf.claimKeyHash == persistentHash<Bytes<32>>(claimKey),
-    "that claim key is not the one anchored for this claimant"
   );
 
   // The final salary, opened against the commitment payroll published for that
@@ -513,7 +541,7 @@ export circuit claim(
   // cannot slip through between the two.
   const nullifier = persistentHash<ClaimNullifier>(
     ClaimNullifier {
-      claimKey: claimKey,
+      payee: ownPublicKey(),
       window: disclose(window),
       fund: kernel.self().bytes
     }
@@ -665,18 +693,6 @@ export pure circuit taxParamsHash(params: TaxParams): Bytes<32> {
   return persistentHash<TaxParams>(params);
 }
 
-/**
- * The claim-key hash anchored at hire, exposed so a claimant and an employer
- * compute the identical value.
- *
- * `claim` asserts `leaf.claimKeyHash == persistentHash<Bytes<32>>(claimKey)`.
- * Without this, the hash would have to be reimplemented off-circuit, and a
- * mismatch would surface as a claimant unable to claim — with nothing to
- * indicate whether the key, the anchor, or the hashing was wrong.
- */
-export pure circuit claimKeyHash(claimKey: Bytes<32>): Bytes<32> {
-  return persistentHash<Bytes<32>>(claimKey);
-}
 
 /**
  * The nullifier for one claim key in one window, exposed so a claimant can
@@ -705,11 +721,11 @@ export pure circuit claimKeyHash(claimKey: Bytes<32>): Bytes<32> {
  * construction exists to deny it.
  */
 export pure circuit claimNullifier(
-  claimKey: Bytes<32>,
+  payee: ZswapCoinPublicKey,
   window: Uint<32>,
   fund: Bytes<32>
 ): Bytes<32> {
   return persistentHash<ClaimNullifier>(
-    ClaimNullifier { claimKey: claimKey, window: window, fund: fund }
+    ClaimNullifier { payee: payee, window: window, fund: fund }
   );
 }

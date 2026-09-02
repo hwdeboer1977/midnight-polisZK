@@ -5,14 +5,15 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "./CopyRow";
 import { FilePicker } from "./FilePicker";
-import { parseBundle, submitClaim, type ClaimBundle, type ClaimResult } from "../lib/claim";
-import { deriveLegacyClaimKey, parseClaimKeyFile } from "../lib/claimKey";
+import { submitClaim, type ClaimBundle, type ClaimResult } from "../lib/claim";
 import { decodePayslip, type Payslip } from "../lib/payslip";
 import { periodName } from "../generated/roster";
 import { explainError } from "../lib/explainError";
 import { formatPeur } from "../lib/format";
 import { walletCanProve } from "../lib/submitPayroll";
 import { useWallet } from "../wallet/WalletContext";
+import { useAttestations } from "../lib/useAttestations";
+import { assembleClaim } from "../lib/assembleClaim";
 
 /**
  * Where a claimant actually claims.
@@ -31,18 +32,12 @@ import { useWallet } from "../wallet/WalletContext";
  * left in it. A claimant reading "passphrase" here looks for hers, does not
  * find one, and concludes something is missing.
  *
- * The claim key is a file now rather than a remembered passphrase — see
- * `lib/claimKey.ts` for why. The passphrase route survives here and only here,
- * because anchors are write-once: anyone whose employer already published a
- * passphrase-derived hash must still be able to claim, and no amount of
- * tidying can migrate them. It is behind a disclosure, so the current scheme is
- * the visible one and the legacy path is reachable rather than advertised.
- *
- * The key is checked against the bundle the moment BOTH are loaded, rather than
- * at submit. `leaf.claimKeyHash` travels in the bundle in the clear, so the
- * comparison costs nothing and turns the most likely failure in the flow —
- * wrong key, unrecoverable anchor — into something she learns while she still
- * has both files open.
+ * ⚠️ There is no claim key any more. It was a third file, and the one thing a
+ * claimant could not reproduce — sealed to nothing her wallet could open, and
+ * anchored by an employer who had to collect its hash before a write-once
+ * statement. `claim` binds to `ownPublicKey()` on its own, so only she can
+ * claim either way; what the key bought was an unlinkable nullifier, and that
+ * is the property traded away.
  *
  * Every check the circuit makes is made here first, against the same pure
  * circuits, so a wrong file says which file is wrong instead of costing two
@@ -50,17 +45,18 @@ import { useWallet } from "../wallet/WalletContext";
  */
 export function ClaimForm() {
   const { api, account, networkId } = useWallet();
+  // The terminated periods this wallet has, from the same scan the eligibility
+  // panel uses. One claim per termination, so the first is the one to assemble.
+  const { rows } = useAttestations();
+  const ended = rows.filter((row) => row.ended);
+  const endedKey = ended.map((row) => `${row.contractAddress}:${row.period}`).join(",");
 
   const [bundle, setBundle] = useState<ClaimBundle | null>(null);
-  const [bundleName, setBundleName] = useState<string | null>(null);
+  const [assembling, setAssembling] = useState(false);
+  const [assembleError, setAssembleError] = useState<string | null>(null);
   const [payslip, setPayslip] = useState<Payslip | null>(null);
   const [payslipName, setPayslipName] = useState<string | null>(null);
-  const [claimKey, setClaimKey] = useState<Uint8Array | null>(null);
-  const [claimKeyName, setClaimKeyName] = useState<string | null>(null);
   /** The loaded key's anchor, kept so the bundle can be checked against it. */
-  const [claimKeyHashHex, setClaimKeyHashHex] = useState<string | null>(null);
-  const [passphrase, setPassphrase] = useState("");
-  const [legacy, setLegacy] = useState(false);
   const [delegateProving, setDelegateProving] = useState(false);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,16 +81,49 @@ export function ClaimForm() {
     if (canDelegate) setDelegateProving(true);
   }, [canDelegate]);
 
-  function readBundle(text: string, name: string) {
-    setError(null);
-    setBundleName(name);
-    try {
-      setBundle(parseBundle(text));
-    } catch (cause) {
-      setBundle(null);
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
+  /**
+   * The bundle, assembled here rather than uploaded.
+   *
+   * ⚠️ This used to be a file the employer built at termination and sent. That
+   * put them in the claim path, and the file went stale on its own — a bundle
+   * names a fund coin, and any earlier claimant spending it invalidates the
+   * bundle, so one handed over in September was likely worthless by November.
+   *
+   * Nothing is asked of anybody now: the leaf is reconstructed from chain and
+   * this wallet, the path is built from the period's public digests, and only
+   * the fund coin comes from the service — the one field a browser cannot
+   * derive, and one that says nothing about who is asking for it.
+   */
+  useEffect(() => {
+    const row = ended[0];
+    if (!account || !row) return;
+    let cancelled = false;
+    setAssembling(true);
+    setAssembleError(null);
+    void assembleClaim({
+      networkId,
+      contractAddress: row.contractAddress,
+      coinPublicKey: account.coinPublicKey,
+      finalPeriod: row.period,
+    })
+      .then((assembled) => {
+        if (cancelled) return;
+        setBundle(assembled.bundle);
+        setAssembleError(assembled.warning);
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setBundle(null);
+          setAssembleError(cause instanceof Error ? cause.message : String(cause));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAssembling(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account, networkId, endedKey]);
 
   function readPayslip(text: string, name: string) {
     setError(null);
@@ -107,70 +136,26 @@ export function ClaimForm() {
     }
   }
 
-  async function readClaimKey(text: string, name: string) {
-    setError(null);
-    setClaimKeyName(name);
-    try {
-      const identity = await parseClaimKeyFile(text);
-      setClaimKey(identity.claimKey);
-      setClaimKeyHashHex(identity.claimKeyHash.toLowerCase());
-    } catch (cause) {
-      setClaimKey(null);
-      setClaimKeyHashHex(null);
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-
-  /**
-   * Whether the loaded key opens the anchor in the loaded bundle.
-   *
-   * null while either is missing, or while the legacy passphrase is in use —
-   * that one costs 600,000 PBKDF2 iterations to check, so it is left to the
-   * submit path rather than run on every keystroke.
-   *
-   * `leaf.claimKeyHash` travels in the bundle in the clear, so for a file this
-   * is a string comparison rather than a proof — and it is exactly the check
-   * the circuit will make later.
-   */
-  const keyMatches =
-    claimKeyHashHex === null || bundle === null
-      ? null
-      : claimKeyHashHex === bundle.leaf.claimKeyHash.toLowerCase();
-
-  /** Whichever route she came by, resolved to the 32 bytes a claim needs. */
-  async function resolveClaimKey(): Promise<Uint8Array> {
-    if (claimKey) return claimKey;
-    if (!account) throw new Error("No wallet connected.");
-    setStep("Deriving your claim key…");
-    // The legacy route. Salted with her coin public key, exactly as it was when
-    // the anchor was written — deriving it under a different wallet gives a
-    // different key, which is why this cannot be done without one connected.
-    return deriveLegacyClaimKey(passphrase, account.coinPublicKey);
-  }
-
   async function claim() {
     if (!api || !account || !bundle || !payslip) return;
     setError(null);
     setStep("Starting…");
     try {
-      const key = await resolveClaimKey();
       const result = await submitClaim({
         api,
         networkId,
         bundle,
         payslip,
-        claimKey: key,
         coinPublicKey: account.coinPublicKey,
         provingMode: delegateProving && canDelegate ? "wallet" : "local",
-        // The window a benefit is claimed for. Defaulting to the final period
-        // keeps the pilot's one claim unambiguous; a real scheme pays monthly
-        // and would step this forward, one nullifier per month.
-        window: bundle.leaf.finalPeriod,
+        // ⚠️ A zero-based INDEX, not a period. `claim` asserts
+        // `window < durationMonths`, which a YYYYMM value could never satisfy.
+        // The pilot claims the first window; a monthly scheme steps this
+        // forward, one nullifier per index.
+        window: 0,
         onProgress: setStep,
       });
       setDone(result);
-      // Not kept a moment longer than the derivation needed it.
-      setPassphrase("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -250,9 +235,11 @@ export function ClaimForm() {
           unchanged and is the one that matters; where the proof is built is now
           a choice, made below. */}
       <p className="note" style={{ marginTop: 0 }}>
-        Three files, all of them yours already. None is uploaded to any server,
-        and what reaches the chain discloses only the period and that a claim was
-        made — not who you are, not your salary, not the amount.
+        One file, and it is already yours. The proof of membership is assembled
+        here from public data and your wallet, so there is nothing to fetch and
+        nothing to keep. Nothing is uploaded to any server, and what reaches the
+        chain discloses only the period and that a claim was made — not who you
+        are, not your salary, not the amount.
       </p>
       {/* Said once, above, because the three lines below each say it for a
           DIFFERENT reason and a reader who meets them cold will assume the
@@ -261,44 +248,27 @@ export function ClaimForm() {
           own. What these files cost if they go astray is privacy, plus one
           nuisance the bundle can cause. */}
       <p className="note">
-        Keep all three to yourself. Not because any of them lets somebody take
-        your benefit — claiming needs your wallet too, and the contract checks
-        that separately — but because of what each would give away.
+        Keep your payslip to yourself. Not because it lets somebody take your
+        benefit — claiming needs your wallet too, and the contract checks that
+        separately — but because it is the one document with your actual salary
+        in it.
       </p>
 
-      {/* Numbered, because the three inputs come from three different places and
-          that is the part people get stuck on — not the form. Each row says who
-          gives it to you. */}
+      {/* What used to be the first of three inputs, now a status line: the
+          bundle assembles itself, so there is nothing to fetch and nothing to
+          keep. Shown rather than hidden because a claimant who sees only a
+          payslip picker should know the other half happened. */}
+      {assembling ? (
+        <p className="status">Building your claim from the chain…</p>
+      ) : bundle ? (
+        <p className="ok-line">
+          ✓ Claim assembled for {periodName(bundle.leaf.finalPeriod)} — no file
+          needed
+        </p>
+      ) : null}
+      {assembleError ? <p className="problems">{assembleError}</p> : null}
+
       <ol className="claim-inputs">
-        <li>
-          <div className="claim-input-head">
-            <strong>Claim bundle</strong>
-            <span className="muted">from the fund's relay</span>
-          </div>
-          <FilePicker
-            label="Choose the bundle…"
-            loaded={bundle ? `Claim bundle for ${periodName(bundle.leaf.finalPeriod)}` : null}
-            filename={bundleName}
-            disabled={busy}
-            onFile={async (file) => readBundle(await file.text(), file.name)}
-          />
-          <p className="note">
-            Holds the path proving your termination is in that month's tree,
-            alongside everyone else's — which is what keeps you anonymous inside
-            it, and why you cannot build it yourself.
-          </p>
-          {/* The one of the three whose sensitivity is not obvious. It reads as
-              routing data, so nothing on this page previously suggested keeping
-              it — and it is the file that names your employer and your final
-              month, and carries one of the fund's coins. */}
-          <p className="note keep-private">
-            <span aria-hidden="true">🔒</span> Keep it to yourself. It names the
-            employer you left, your final month and how long you worked there,
-            and it carries one of the fund's coins — someone else holding it
-            cannot take your benefit, but they can spend that coin first and
-            make this claim fail.
-          </p>
-        </li>
 
         <li>
           <div className="claim-input-head">
@@ -323,86 +293,6 @@ export function ClaimForm() {
           </p>
         </li>
 
-        <li>
-          <div className="claim-input-head">
-            <strong>Your claim key</strong>
-            <span className="muted">only you have it</span>
-          </div>
-          <FilePicker
-            label="Choose your claim key…"
-            loaded={claimKey ? "Claim key" : null}
-            filename={claimKeyName}
-            disabled={busy || legacy}
-            onFile={async (file) => readClaimKey(await file.text(), file.name)}
-          />
-          <p className="note">
-            The file you downloaded when you first connected, named something
-            like <code>claim-key-1a2b3c4d.json</code>. It is not
-            uploaded anywhere — the proof is built here.
-          </p>
-          {/* Precise about which risk. "Someone could claim with it" would be
-              the intuitive warning and is wrong for this contract: `claim` binds
-              to `ownPublicKey()` independently, so the key alone buys nobody a
-              payment. What it buys is the ability to recompute her nullifiers
-              and read the public spent set — her claim history. */}
-          <p className="note keep-private">
-            <span aria-hidden="true">🔒</span> Keep it to yourself. Nobody can
-            claim with it — that needs your wallet too — but anyone who has it
-            can work out which months you claimed.
-          </p>
-
-          {/* Answered as soon as both files are open, because this is the
-              failure that cannot be repaired afterwards. A claimant who learns
-              at submit that her key is the wrong one has already been told the
-              anchor is write-once; telling her while she is still looking at
-              her downloads folder is the only useful moment. */}
-          {keyMatches === true ? (
-            <p className="ok-line">
-              ✓ This is the key your employer anchored
-            </p>
-          ) : null}
-          {keyMatches === false ? (
-            <p className="problems">
-              This is not the claim key your employer anchored for that
-              termination. It must be the file you had <strong>before</strong>{" "}
-              your employment ended — the anchor was written once and cannot be
-              repointed, so a key created afterwards can never match. If you
-              have another copy, try that one.
-            </p>
-          ) : null}
-
-          {/* Reachable, not advertised. Anchors are write-once, so anyone whose
-              employer published a passphrase-derived hash can only ever claim
-              this way — removing it would strand them, and showing it first
-              would teach the scheme we have just replaced. */}
-          <details
-            className="details"
-            style={{ marginTop: 8 }}
-            onToggle={(event) => setLegacy((event.target as HTMLDetailsElement).open)}
-          >
-            <summary>I set mine up with a passphrase, before there were files</summary>
-            <p className="note">
-              Claim keys used to be derived from a passphrase rather than kept in
-              a file. If your employer anchored yours that way, that passphrase
-              is still the only thing that opens it — the statement ending your
-              employment cannot be changed to point at a new key.
-            </p>
-            <input
-              type="password"
-              value={passphrase}
-              disabled={busy}
-              placeholder="Your old claim passphrase"
-              autoComplete="off"
-              style={{ minWidth: 280 }}
-              onChange={(event) => setPassphrase(event.target.value)}
-            />
-            <p className="note">
-              Derived with this same wallet connected, as it was originally.
-              Nothing here holds it, and it cannot be checked until the claim is
-              built — unlike a file, which is checked the moment you load it.
-            </p>
-          </details>
-        </li>
       </ol>
 
       {bundle && payslip ? (
@@ -455,8 +345,8 @@ export function ClaimForm() {
             <>
               — no proof server needed on this machine.{" "}
               <strong>
-                Proving consumes your claim key and your final month's figures,
-                so this hands both to your wallet.
+                Proving consumes your final month's figures, so this hands them
+                to your wallet.
               </strong>{" "}
               <span title="Unticked, proving runs against a proof server on this machine at 127.0.0.1:6300 and reaches nowhere else.">
                 Unticked, they stay on this page.
@@ -482,7 +372,7 @@ export function ClaimForm() {
       <button
         type="button"
         className="primary"
-        disabled={busy || !bundle || !payslip || (!claimKey && !passphrase) || keyMatches === false}
+        disabled={busy || !bundle || !payslip}
         onClick={() => void claim()}
       >
         {busy ? step ?? "Working…" : "Claim my benefit"}

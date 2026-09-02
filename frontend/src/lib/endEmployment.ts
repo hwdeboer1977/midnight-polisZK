@@ -42,7 +42,6 @@ export interface TerminationOpening {
   slot: number;
   finalPeriod: number;
   monthsWorked: number;
-  claimKeyHash: string;
   nonce: string;
 }
 
@@ -73,6 +72,20 @@ export async function surveyEmployment(options: {
   /** The employee's coin public key, hex or Bech32m. */
   payee: string;
   period: number;
+  /**
+   * Whether an existing termination is an error.
+   *
+   * ⚠️ It always was, and that broke the rebuild. This refuses a period whose
+   * slot is already in `terminationFor`, which is right for ENDING employment —
+   * the attestation is write-once and a second attempt is a mistake worth
+   * naming — and exactly backwards for REBUILDING the opening of one, which by
+   * definition only happens once a termination exists.
+   *
+   * So the check is the caller's to ask for. `endEmployment` wants it;
+   * `rebuildTerminationOpening` passes false and reads the same slot and month
+   * count from the same place.
+   */
+  allowEnded?: boolean;
 }): Promise<{ slot: number; monthsWorked: number; matched: number[] }> {
   const { networkId, contractAddress, period } = options;
 
@@ -121,7 +134,7 @@ export async function surveyEmployment(options: {
         "against the roster."
     );
   }
-  if (ledger.terminationFor?.member(BigInt(period))) {
+  if (!options.allowEnded && ledger.terminationFor?.member(BigInt(period))) {
     const ended = ledger.terminationFor.lookup(BigInt(period));
     if (ended.member(BigInt(slot))) {
       throw new Error(
@@ -143,8 +156,6 @@ export async function endEmployment(options: {
   period: number;
   slot: number;
   monthsWorked: number;
-  /** Hex, 32 bytes. From the employee's `npm run payee … --claim-key`. */
-  claimKeyHash: string;
   passphrase: string;
   provingMode?: ProvingMode;
   onProgress?: EndEmploymentProgress;
@@ -157,18 +168,10 @@ export async function endEmployment(options: {
     period,
     slot,
     monthsWorked,
-    claimKeyHash,
     passphrase,
     provingMode = "local",
   } = options;
   const onProgress = options.onProgress ?? (() => {});
-
-  if (!/^[0-9a-f]{64}$/i.test(claimKeyHash.replace(/^0x/, ""))) {
-    throw new Error(
-      "The claim key hash is 64 hex characters. The employee produces it with " +
-        "`npm run payee <seed> -- --claim-key`, or from their own wallet."
-    );
-  }
 
   onProgress("Deriving this attestation's nonce (PBKDF2, deliberately slow)…");
   const employerKey = await deriveEmployerKey(passphrase, contractAddress);
@@ -189,7 +192,6 @@ export async function endEmployment(options: {
   const attestation = (contractModule as any).pureCircuits.terminationCommitment(
     BigInt(period),
     BigInt(monthsWorked),
-    fromHex(claimKeyHash.replace(/^0x/, "")),
     nonce
   );
 
@@ -209,7 +211,6 @@ export async function endEmployment(options: {
       slot,
       finalPeriod: period,
       monthsWorked,
-      claimKeyHash: claimKeyHash.replace(/^0x/, "").toLowerCase(),
       nonce: bytesToHex(nonce),
     },
   };
