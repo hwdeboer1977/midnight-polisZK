@@ -338,6 +338,69 @@ settle a period where funding failed partway, and `setPayroll` refuses to
 re-file a month with a funded, unpaid slot. Removing it would strand those coins
 permanently — the exact hazard the comment above that guard exists to prevent.
 
+### The budget after `transferPlatform`, and what actually binds (2026-09-03)
+
+Adding a platform-seat rotation was measured against that ceiling rather than
+assumed past it, and the deploy that followed settled a question this section
+had been carrying as unresolved since 2026-09-01.
+
+| Build | Circuits | ZKIR | Verifier keys | Deployed |
+| --- | --- | --- | --- | --- |
+| A (2026-08-28) | 13 | 22,276 | 23,707 | yes |
+| B (`employerFor` + seat rule) | 13 | 22,820 | 23,707 | **refused `1010`** |
+| C (`remit` merge — was live) | 12 | 22,379 | 21,588 | yes |
+| D (`transferSeat`) | 12 | **22,959** | 21,588 | **yes** |
+
+**ZKIR alone is not the binding quantity.** D carries 139 MORE ZKIR bytes than
+B, which was refused, and it deployed without complaint — because its verifier
+keys are 2,119 bytes smaller. The A/B pair looked like ZKIR because it held
+verifier size constant; it was never evidence that ZKIR is what the node
+measures.
+
+What fits all four points is the **sum**:
+
+| Build | ZKIR + verifier | Result |
+| --- | --- | --- |
+| C | 43,967 | deployed |
+| D | 44,547 | deployed |
+| A | 45,983 | deployed |
+| B | 46,527 | refused |
+
+So the ceiling sits between 45,983 and 46,527, and D leaves **1,436 bytes of
+headroom** against the largest build known to deploy. Four points is still four
+points — but the hypothesis now survives a prediction made before the deploy
+rather than only fitting history.
+
+Two mechanics worth keeping, both measured rather than inferred:
+
+- **Verifier key size tracks circuit COUNT, not circuit content.** C and D come
+  to exactly 21,588 across 12 circuits from materially different sources.
+  Roughly 1,799 bytes per circuit, which is what "removing a whole circuit buys
+  enough room and trimming statements does not" was really describing.
+- **Merging tiny circuits COSTS ZKIR while SAVING verifier bytes.**
+  `transferSeat` is 604 ZKIR bytes against 275 + 178 for the two separate
+  rotations, because both branches compile — but it buys back a whole 1,799-byte
+  verifier key. Net −1,648 on the sum. Merging is worth it; the ZKIR line going
+  up is not the signal to watch.
+
+**Revised guidance.** Budget against ZKIR + verifier, not against either alone,
+and keep the total under ~46,000. The 12-circuit rule of thumb was a proxy for
+the verifier half and still works, but it is the sum that decides.
+
+Proved twice on 2026-09-03, both at 44,547:
+
+| Slot | Address | Purpose |
+| --- | --- | --- |
+| `preview/payroll:size-probe-1` | `07dc0aad…5751561b` | the size experiment, tx `d3500e02…c5c0bb9f` |
+| `preview/payroll` | `67a3f1d1…c9257c9f` | the production cutover, tx `1d18de59…1eab0f86` |
+| `preview/payroll:pilot-v1` | `fe2e98f8…fd623fa5` | the retired pilot, kept for its history |
+
+⚠️ `saveDeployment` writes `deployment.json` back from a snapshot it loads at
+start, so an entry added to that file WHILE a deploy is in flight is silently
+discarded. Archiving the outgoing `preview/payroll` before deploying looked like
+it worked and did not; it had to be re-added afterwards from a copy. Archive
+after the deploy, not before.
+
 ## Appendix: the tax and vault design
 
 The reasoning behind splitting rules, payroll and custody into separate

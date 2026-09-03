@@ -70,12 +70,18 @@
       }
     },
     {
-      "name": "transferEmployer",
+      "name": "transferSeat",
       "pure": false,
       "proof": true,
       "arguments": [
         {
-          "name": "newEmployer",
+          "name": "isPlatform",
+          "type": {
+            "type-name": "Boolean"
+          }
+        },
+        {
+          "name": "newHolder",
           "type": {
             "type-name": "Struct",
             "name": "ZswapCoinPublicKey",

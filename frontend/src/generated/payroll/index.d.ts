@@ -10,8 +10,9 @@ export type ImpureCircuits<PS> = {
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   revokeEmployer(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
-  transferEmployer(context: __compactRuntime.CircuitContext<PS>,
-                   newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
+  transferSeat(context: __compactRuntime.CircuitContext<PS>,
+               isPlatform_0: boolean,
+               newHolder_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
              period_0: bigint,
              gross_0: bigint[],
@@ -114,8 +115,9 @@ export type ProvableCircuits<PS> = {
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   revokeEmployer(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
-  transferEmployer(context: __compactRuntime.CircuitContext<PS>,
-                   newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
+  transferSeat(context: __compactRuntime.CircuitContext<PS>,
+               isPlatform_0: boolean,
+               newHolder_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
              period_0: bigint,
              gross_0: bigint[],
@@ -237,8 +239,9 @@ export type Circuits<PS> = {
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   revokeEmployer(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
-  transferEmployer(context: __compactRuntime.CircuitContext<PS>,
-                   newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
+  transferSeat(context: __compactRuntime.CircuitContext<PS>,
+               isPlatform_0: boolean,
+               newHolder_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   setPayroll(context: __compactRuntime.CircuitContext<PS>,
              period_0: bigint,
              gross_0: bigint[],

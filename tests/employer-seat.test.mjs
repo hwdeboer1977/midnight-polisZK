@@ -170,12 +170,12 @@ console.log("\nthe employer seat\n");
 // ── Rotation moves the memory with the seat ────────────────────────────────
 //
 // The case this exists for: an employer rotates their key, is later revoked,
-// and must still be restorable. If `transferEmployer` left `lastEmployer`
+// and must still be restorable. If `transferSeat` left `lastEmployer`
 // pointing at the retired key, the circuit that exists to stop a lost key
 // stranding the instance would be the thing that stranded it.
 {
   const held = call(PLATFORM, fresh(), "assignEmployer", EMPLOYER_A);
-  const moved = call(EMPLOYER_A, held.state, "transferEmployer", ROTATED_A);
+  const moved = call(EMPLOYER_A, held.state, "transferSeat", false, ROTATED_A);
   if (!moved.ok) {
     fail("the employer may rotate their key", moved.error);
   } else {
@@ -197,15 +197,77 @@ console.log("\nthe employer seat\n");
 }
 
 // ── Only the employer may rotate ───────────────────────────────────────────
+//
+// `transferSeat` carries both seats behind one `isPlatform` flag, so the thing
+// worth executing is that the flag selects the GUARD and not merely the field.
+// A merge that checked one seat's authorisation and wrote the other's would
+// compile, and would hand the platform the employer's key.
 {
   const held = call(PLATFORM, fresh(), "assignEmployer", EMPLOYER_A);
-  const r = call(PLATFORM, held.state, "transferEmployer", EMPLOYER_B);
-  if (!r.ok && /only the employer may transfer/.test(r.error))
+  const r = call(PLATFORM, held.state, "transferSeat", false, EMPLOYER_B);
+  if (!r.ok && /only the holder of that seat may transfer/.test(r.error))
     ok("the platform cannot rotate the employer's key out from under them");
   else
     fail(
       "the platform cannot rotate the employer's key out from under them",
       r.ok ? "the platform reassigned the seat" : r.error
+    );
+}
+
+// ── The platform seat rotates, and only its holder rotates it ──────────────
+//
+// The gap this closes: `setParamsFor` is the gate on every future filing, and
+// only the platform can call it. With no rotation, losing that key left the
+// instance able to fund and pay what was already filed and never able to file
+// again.
+{
+  const moved = call(PLATFORM, fresh(), "transferSeat", true, EMPLOYER_B);
+  if (!moved.ok) {
+    fail("the platform may rotate its own key", moved.error);
+  } else {
+    ok("the platform may rotate its own key");
+
+    const stale = call(PLATFORM, moved.state, "setParamsFor", 202603n, new Uint8Array(32).fill(0x77));
+    if (!stale.ok && /only the platform/.test(stale.error))
+      ok("the retired platform key no longer sets rule sets");
+    else
+      fail(
+        "the retired platform key no longer sets rule sets",
+        stale.ok ? "the retired key was accepted" : stale.error
+      );
+
+    const fresh_ = call(EMPLOYER_B, moved.state, "setParamsFor", 202603n, new Uint8Array(32).fill(0x77));
+    if (fresh_.ok) ok("the new platform key sets rule sets");
+    else fail("the new platform key sets rule sets", fresh_.error);
+  }
+}
+
+// ── An employer cannot reach the platform seat ─────────────────────────────
+{
+  const held = call(PLATFORM, fresh(), "assignEmployer", EMPLOYER_A);
+  const r = call(EMPLOYER_A, held.state, "transferSeat", true, EMPLOYER_A);
+  if (!r.ok && /only the holder of that seat may transfer/.test(r.error))
+    ok("the employer cannot take the platform seat");
+  else
+    fail(
+      "the employer cannot take the platform seat",
+      r.ok ? "the employer took the platform seat" : r.error
+    );
+}
+
+// ── The employer seat cannot be rotated while vacant ────────────────────────
+//
+// With no employer assigned, `employer` is the zero key. Without the vacancy
+// check the comparison below would be against that, which is a seat nobody
+// holds and therefore one an implementation slip could let anybody claim.
+{
+  const r = call(EMPLOYER_A, fresh(), "transferSeat", false, EMPLOYER_B);
+  if (!r.ok && /no employer assigned yet/.test(r.error))
+    ok("a vacant employer seat cannot be rotated");
+  else
+    fail(
+      "a vacant employer seat cannot be rotated",
+      r.ok ? "the vacant seat was rotated" : r.error
     );
 }
 

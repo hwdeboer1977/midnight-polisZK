@@ -44,9 +44,27 @@ Employer X runs `INSTANCE=acme npm run payroll` on their own machine with their
 own wallet, reads their **coin public key** off the header (64 hex chars), and
 sends it to the platform, who pastes it into "Assign employer".
 
-`transferEmployer` lets the *employer* rotate to a new key. Key loss would
+`transferSeat` rotates either seat, selected by its `isPlatform` flag, and in
+both directions only the current holder may move it.
+
+`transferSeat(false, …)` lets the *employer* rotate to a new key. Key loss would
 otherwise strand the instance, and routing recovery through the employer rather
 than the platform means the platform never regains write access.
+
+`transferSeat(true, …)` lets the *platform* do the same for its own key. That
+half closes a sharper gap: `setParamsFor` is the gate on every future filing —
+`setPayroll` refuses a period with no recorded rule set, and only the platform
+can record one — so losing the platform key used to end the instance's useful
+life, leaving already-filed periods fundable and payable and no month ever
+fileable again.
+
+The two are one circuit because a payroll deploy sits on the network's
+per-transaction ceiling, which measures ZKIR plus verifier keys and where
+verifier size tracks circuit count (see `findings.md`); they merge safely
+because they are the same statement, differing only in which fields they read
+and write. `assignEmployer` and
+`revokeEmployer` are deliberately NOT folded in — their guard sets differ, and
+conditional authorisation behind one opcode is how that kind of bug is written.
 
 Verified on the devnet with three separately funded wallets:
 
@@ -67,13 +85,16 @@ compiled circuits locally — no wallet, no node, no proofs:
 | revoke, then assign a DIFFERENT employer | `failed assert: this contract belongs to another employer` |
 | revoke, then assign the same employer    | accepted                                            |
 | employer rotates their key, then revoked | the rotated key is restorable; the retired one is not |
-| platform calls `transferEmployer`        | `failed assert: only the employer may transfer ownership` |
+| platform rotates the employer's seat     | `failed assert: only the holder of that seat may transfer it` |
+| employer rotates the platform's seat     | `failed assert: only the holder of that seat may transfer it` |
+| employer seat rotated while vacant       | `failed assert: no employer assigned yet`           |
+| platform rotates its own seat            | accepted; the retired key no longer sets rule sets  |
 
 ### Which employer a period was filed by
 
 `PayrollCommitment` binds the employer key, so reopening a commitment needs the
 key that FILED the period. `employer` is not that key — it is whoever holds the
-seat now, and it moves: `revokeEmployer` zeroes it, `transferEmployer` replaces
+seat now, and it moves: `revokeEmployer` zeroes it, `transferSeat` replaces
 it. Every circuit that recomputed a commitment read the moving value, which made
 two ordinary acts destructive:
 

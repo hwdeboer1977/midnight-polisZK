@@ -6,7 +6,7 @@
  *
  * `PayrollCommitment` binds the employer key, and every circuit that reopens
  * one used to read `employer` — the key holding the seat RIGHT NOW. That key is
- * not stable: `revokeEmployer` zeroes it and `transferEmployer` replaces it. So
+ * not stable: `revokeEmployer` zeroes it and `transferSeat` replaces it. So
  * two ordinary administrative acts silently invalidated every payslip already
  * issued, and `checkPayslip` reported it with the message that means the
  * figures had been altered.
@@ -171,7 +171,7 @@ else fail("a payslip opens the commitment while the seat is held", "it did not o
 // unpaid period filed under the old key could never be paid, since
 // `payEmployee` could not reproduce the commitment it has to open.
 {
-  const rotated = call(EMPLOYER_A, state, "transferEmployer", ROTATED_A);
+  const rotated = call(EMPLOYER_A, state, "transferSeat", false, ROTATED_A);
   const l = payroll.ledger(rotated);
 
   if (hex(l.employer.bytes) === hex(ROTATED_A.bytes))
@@ -234,7 +234,7 @@ else fail("a payslip opens the commitment while the seat is held", "it did not o
 
   // The employer's own rotated key still can, which is the case a filer-gate
   // would have broken.
-  const rotated = call(EMPLOYER_A, state, "transferEmployer", ROTATED_A);
+  const rotated = call(EMPLOYER_A, state, "transferSeat", false, ROTATED_A);
   try {
     call(ROTATED_A, rotated, "endEmployment", PERIOD, 0n, attestation);
     ok("the employer's rotated key can still end employment for an older period");
