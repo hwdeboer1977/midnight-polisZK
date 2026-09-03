@@ -68,6 +68,29 @@ constructor() {
   versionCount = 0;
 }
 
+// Hands the publishing seat to a new key. The current holder only.
+//
+// The consequence of losing this key is the worst of the three seats in this
+// codebase, which is why the circuit exists. `payroll.setPayroll` refuses a
+// period with no recorded rule set, and `payroll.setParamsFor` can only record
+// a hash of something published HERE. So once the calendar moves past the last
+// published version's usefulness, an unrotatable lost key means no new period
+// can be filed on ANY payroll instance — not one contract stranded, the whole
+// platform.
+//
+// Compare `taxvault.transferAuthority`, which protects a balance, and
+// `payroll.transferSeat(true, ...)`, which protects one instance. This protects
+// the ability to keep operating at all.
+//
+// It grants nothing new: the holder can already publish any rule set they like,
+// and publication is append-only, so rotation cannot alter or withdraw anything
+// already published.
+export circuit transferAuthority(newAuthority: ZswapCoinPublicKey): [] {
+  assert(ownPublicKey() == authority, "only the authority may transfer the seat");
+
+  authority = disclose(newAuthority);
+}
+
 // Publishes a rule set. Once.
 //
 // Everything here is public — the rates have to be, or nobody can recheck the
@@ -88,6 +111,53 @@ export circuit publish(params: TaxParams): [] {
     disclose(params.threshold1) < disclose(params.threshold2),
     "thresholds must be in ascending order"
   );
+
+  // ── The rates must leave something of the gross ─────────────────────────
+  //
+  // Caught at publication because the alternative is not a bad error message,
+  // it is a permanently unfileable month. `payroll.setParamsFor` is write-once
+  // per period: once a period is pointed at a rule set, it can never be pointed
+  // at another. So a version whose rates cannot produce a filing bricks every
+  // period assigned to it, on every instance, with a new payroll deployment as
+  // the only way out.
+  //
+  // What payroll asserts per employee is `taxQ + socialQ <= gross`. The bound
+  // that guarantees it is NOT that each rate is at most 10000 — take rate1 and
+  // contribRate both exactly 10000 and the tax alone is the whole gross while
+  // the contribution is the whole gross again, so the sum is twice it and the
+  // filing still fails. The bands PARTITION the gross (b1 + b2 + b3 == gross by
+  // construction), so
+  //
+  //     tax + contribution <= gross x (max(rate1, rate2, rate3) + contribRate) / 10000
+  //
+  // and the condition that actually delivers payroll's assert is the SUM of the
+  // worst marginal rate and the contribution rate. It also subsumes the
+  // per-rate check, since no rate can exceed the sum.
+  //
+  // Not restrictive in practice: the published Dutch schedule's worst case is
+  // rate3 4950 plus contribRate 300, or 52.5%. A schedule needing more than 100%
+  // combined would produce negative net pay, which payroll refuses anyway.
+  const r12 = params.rate1 > params.rate2 ? params.rate1 : params.rate2;
+  const rateMax = r12 > params.rate3 ? r12 : params.rate3;
+  assert(
+    (disclose(rateMax) as Uint<32>) + (disclose(params.contribRate) as Uint<32>) <= 10000,
+    "the worst marginal rate plus the contribution rate must not exceed 10000 basis points"
+  );
+
+  // ⚠️ NOT checked, and considered rather than missed:
+  //
+  //   · `rate1 <= rate2 <= rate3` is not required. A regressive or flat
+  //     schedule is publishable, because real ones are not always progressive —
+  //     the Dutch system this models has had a bracket where the marginal rate
+  //     FALLS, once credits are folded in. Refusing it here would encode one
+  //     jurisdiction's shape into a registry meant to outlast it.
+  //   · `maxContribBase` is unbounded. A ceiling above any real salary makes the
+  //     contribution effectively uncapped, which is a policy choice rather than
+  //     an error, and one the published figures make visible.
+  //   · `versionCount` is Uint<16> and would overflow at 65,536 versions. At one
+  //     version a year that is longer than the tax code has existed; the cast
+  //     would fail rather than wrap (Compact range-checks — see findings.md), so
+  //     the failure mode is a refused publish and not a corrupted count.
 
   paramsFor.insert(v, disclose(params));
   versions.insert(v);

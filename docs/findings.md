@@ -502,6 +502,8 @@ Proved twice on 2026-09-03, both at 44,547:
 | `preview/payroll:stray-20260903` | `53cdd759…4d73cc88` | accident: `npm run deploy` takes `CONTRACT_NAME` from `.env`, which is `payroll`. Use `CONTRACT_NAME=taxvault npm run deploy` (there is no `deploy:taxvault` script) |
 | `preview/taxvault` | `4f0c898a…d1ea872f` | **current vault**, token frozen at deploy, `transferAuthority` added |
 | `preview/taxvault:pinned-v1` | `d49344be…5b81b4f4` | retired vault, **still holds 200 pEUR**; its prover keys are not on disk, rebuild from git |
+| `preview/taxparams` | `d47e1e61…6e48c081` | **current registry**, rate bound + `transferAuthority`; DUTCH_V1 republished |
+| `preview/taxparams:premerge-v1` | `7feb657f…47492910` | retired registry |
 
 The current build is 23,143 ZKIR + 21,588 verifier = 44,731, which leaves about
 1,250 bytes against the 45,983 that is the largest deploy known to succeed.
@@ -547,6 +549,36 @@ contract, but not the employee.
 Both preconditions are pre-checked off chain — `frontend/src/lib/endEmployment.ts`
 and `src/terminate-cli.ts` — so the failure arrives immediately rather than after
 a few minutes of proving.
+
+### Replacing the rule registry does NOT invalidate filed periods
+
+Worth recording because it looks like it should. `taxparams` is append-only, so
+a new registry starts empty and DUTCH_V1 has to be republished — which reads
+like every period recorded against the old registry loses its anchor.
+
+It does not, because payroll never stores a registry ADDRESS. `paramsHashFor`
+holds `persistentHash<TaxParams>(params)`, a hash over the struct's fields and
+nothing else, and no contract can read the registry anyway. Republishing the
+identical struct to a different contract therefore produces the identical hash.
+Verified across the two builds and against the chain:
+
+```
+old build   7d729df9ba56fc9b9392ce0a9ab32a55391889a6a2608a4c3cdd9f49fe614686
+new build   7d729df9ba56fc9b9392ce0a9ab32a55391889a6a2608a4c3cdd9f49fe614686
+on chain    7d729df9ba56fc9b9392ce0a9ab32a55391889a6a2608a4c3cdd9f49fe614686
+```
+
+The registry is a publication venue, not an authority a filing points at. Check
+this before any future registry change: if the struct's field order or types
+ever move, the hash moves with them and every recorded period breaks silently.
+
+⚠️ Two operational notes from doing it. `deploy-tax.ts` REUSES an existing
+registry, and it finds the address from the `.env` baseline rather than from
+`deployment.json` — so archiving the record is not enough to force a fresh
+deploy; `taxparams_address` has to be blanked first. And it fails loudly when
+the local build and the on-chain contract disagree (`Following operations:
+transferAuthority, publish, are undefined or have mismatched verifier keys`),
+which is the right failure and names the added circuit.
 
 ### ⚠️ Archiving a retired address needs the `instance` FIELD, not the JSON key
 

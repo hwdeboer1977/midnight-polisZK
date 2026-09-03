@@ -4,6 +4,8 @@ export type Witnesses<PS> = {
 }
 
 export type ImpureCircuits<PS> = {
+  transferAuthority(context: __compactRuntime.CircuitContext<PS>,
+                    newAuthority_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   publish(context: __compactRuntime.CircuitContext<PS>,
           params_0: { version: bigint,
                       validFrom: bigint,
@@ -18,6 +20,8 @@ export type ImpureCircuits<PS> = {
 }
 
 export type ProvableCircuits<PS> = {
+  transferAuthority(context: __compactRuntime.CircuitContext<PS>,
+                    newAuthority_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   publish(context: __compactRuntime.CircuitContext<PS>,
           params_0: { version: bigint,
                       validFrom: bigint,
@@ -45,6 +49,8 @@ export type PureCircuits = {
 }
 
 export type Circuits<PS> = {
+  transferAuthority(context: __compactRuntime.CircuitContext<PS>,
+                    newAuthority_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   publish(context: __compactRuntime.CircuitContext<PS>,
           params_0: { version: bigint,
                       validFrom: bigint,

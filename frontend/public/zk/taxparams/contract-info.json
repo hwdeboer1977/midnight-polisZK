@@ -4,6 +4,34 @@
   "runtime-version": "0.16.0",
   "circuits": [
     {
+      "name": "transferAuthority",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "newAuthority",
+          "type": {
+            "type-name": "Struct",
+            "name": "ZswapCoinPublicKey",
+            "elements": [
+              {
+                "name": "bytes",
+                "type": {
+                  "type-name": "Bytes",
+                  "length": 32
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Tuple",
+        "types": [
+        ]
+      }
+    },
+    {
       "name": "publish",
       "pure": false,
       "proof": true,
