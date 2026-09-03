@@ -26,7 +26,9 @@ import {
   createConstructorContext,
   sampleContractAddress,
 } from "@midnight-ntwrk/compact-runtime";
-import { Contract, ledger } from "../contracts/managed/payroll/contract/index.js";
+import { Contract, ledger, pureCircuits } from "../contracts/managed/payroll/contract/index.js";
+import * as taxparams from "../contracts/managed/taxparams/contract/index.js";
+import { DUTCH_V1, computeLine } from "../dist/utils/tax-params.js";
 
 let failures = 0;
 const ok = (name) => console.log(`  ok  ${name}`);
@@ -48,6 +50,39 @@ const SOCIAL_TREASURY = key(0xbb);
 
 const ADDRESS = sampleContractAddress();
 const contract = new Contract({});
+
+// ── What the withheld-money guard below needs to file and fund a period ────
+const PERIOD = 202603n;
+const TOKEN = new Uint8Array(32).fill(0xcc);
+const PAYEE_A = key(0x71);
+const PAYEE_B = key(0x72);
+const bytes32 = (byte) => new Uint8Array(32).fill(byte);
+const INSTANCE = Uint8Array.from(Buffer.from(ADDRESS, "hex"));
+const binding = (payee) => pureCircuits.payeeHash(payee, PERIOD, INSTANCE);
+const coin = (n, value) => ({ nonce: bytes32(n), color: TOKEN, value });
+const qualified = (n, value, index) => ({
+  nonce: bytes32(n),
+  color: TOKEN,
+  value,
+  mt_index: index,
+});
+
+const PARAMS = {
+  version: BigInt(DUTCH_V1.version),
+  validFrom: BigInt(DUTCH_V1.validFrom),
+  threshold1: DUTCH_V1.threshold1,
+  threshold2: DUTCH_V1.threshold2,
+  rate1: BigInt(DUTCH_V1.rate1),
+  rate2: BigInt(DUTCH_V1.rate2),
+  rate3: BigInt(DUTCH_V1.rate3),
+  maxContribBase: DUTCH_V1.maxContribBase,
+  contribRate: BigInt(DUTCH_V1.contribRate),
+};
+// Hashed with the REGISTRY's circuit, not payroll's — the same cross-contract
+// agreement a real filing depends on, exercised rather than assumed.
+const PARAMS_HASH = taxparams.pureCircuits.paramsHash(PARAMS);
+const GROSS = [400000n, 650000n];
+const LINES = GROSS.map((g) => computeLine(g, DUTCH_V1));
 
 /** Deploys a fresh instance with PLATFORM as the deployer. */
 function deploy() {
@@ -269,6 +304,77 @@ console.log("\nthe employer seat\n");
       "a vacant employer seat cannot be rotated",
       r.ok ? "the vacant seat was rotated" : r.error
     );
+}
+
+// ── Withheld money must be settled before the seat is vacated ─────────────
+//
+// Revoking clears `employerAssigned`, and `payEmployee`/`payPeriod` both need
+// the seat filled — so a revoke mid-month freezes coins the contract is holding.
+// The pool check is a proxy for that: `fundPeriod` takes the nets and the
+// withholding together, so a non-zero pool marks a month in flight.
+//
+// The property that makes it the RIGHT proxy is who can clear it. `remit` is
+// callable by the platform with no employer seated, so this delays a revoke by
+// one transaction the platform can always make and never blocks it — unlike a
+// funded-unpaid counter, which only `payPeriod` clears and which would let an
+// employer veto their own revocation by funding a slot and never paying it.
+{
+  const held = call(PLATFORM, fresh(), "assignEmployer", EMPLOYER_A);
+  const withParams = call(PLATFORM, held.state, "setParamsFor", PERIOD, PARAMS_HASH);
+  const filed = call(EMPLOYER_A, withParams.state, "setPayroll",
+    PERIOD, GROSS, [4n, 4n],
+    LINES.map((l) => l.taxQuotient),
+    LINES.map((l) => l.contribQuotient),
+    [bytes32(0x01), bytes32(0x02)],
+    [new Uint8Array(100), new Uint8Array(100)],
+    [binding(PAYEE_A), binding(PAYEE_B)],
+    PARAMS
+  );
+
+  const taxTotal = LINES[0].taxQuotient + LINES[1].taxQuotient;
+  const socialTotal = LINES[0].contribQuotient + LINES[1].contribQuotient;
+  const funded = call(EMPLOYER_A, filed.state, "fundPeriod",
+    PERIOD, GROSS,
+    LINES.map((l) => l.taxQuotient),
+    LINES.map((l) => l.contribQuotient),
+    LINES.map((l) => l.netMinor),
+    [4n, 4n],
+    [bytes32(0x01), bytes32(0x02)],
+    [coin(0xf0, LINES[0].netMinor), coin(0xf1, LINES[1].netMinor)],
+    coin(0xf2, taxTotal),
+    coin(0xf3, socialTotal)
+  );
+
+  const l = ledger(funded.state);
+  if (l.taxPool > 0n && l.socialPool > 0n) ok("funding a period fills the pools");
+  else fail("funding a period fills the pools", `taxPool=${l.taxPool} socialPool=${l.socialPool}`);
+
+  const early = call(PLATFORM, funded.state, "revokeEmployer");
+  if (!early.ok && /before revoking/.test(early.error))
+    ok("the seat cannot be vacated while withheld money is still held");
+  else
+    fail(
+      "the seat cannot be vacated while withheld money is still held",
+      early.ok ? "the seat was vacated with money mid-flight" : early.error
+    );
+
+  // The platform clears it itself — no employer needed, so this is a delay and
+  // not a veto.
+  let s2 = call(PLATFORM, funded.state, "remit",
+    PERIOD, true, TAX_TREASURY, qualified(0xf2, taxTotal, 2n));
+  if (!s2.ok) fail("the platform can remit without the employer", s2.error);
+  s2 = call(PLATFORM, s2.state, "remit",
+    PERIOD, false, SOCIAL_TREASURY, qualified(0xf3, socialTotal, 3n));
+  if (!s2.ok) fail("the platform can remit without the employer", s2.error);
+  else ok("the platform can remit without the employer");
+
+  const drained = ledger(s2.state);
+  if (drained.taxPool === 0n && drained.socialPool === 0n) ok("remitting empties the pools");
+  else fail("remitting empties the pools", `taxPool=${drained.taxPool}`);
+
+  const now = call(PLATFORM, s2.state, "revokeEmployer");
+  if (now.ok) ok("once remitted, the seat can be vacated");
+  else fail("once remitted, the seat can be vacated", now.error);
 }
 
 console.log(

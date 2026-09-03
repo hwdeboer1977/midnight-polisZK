@@ -115,6 +115,23 @@ async function main(): Promise<void> {
   if (!ledger.commitmentsFor.member(p) || !ledger.commitmentsFor.lookup(p).member(i)) {
     throw new Error(`payroll:${instance} has no employee ${slot + 1} in ${periodName(period)}`);
   }
+  // Checked here rather than left to the circuit's assert, which fires only
+  // after a few minutes of proving. The contract requires a SETTLED month: a
+  // termination naming a period that was filed and never paid attests to
+  // employment ending where no money moved, and a benefit claim built on these
+  // statements would rest on figures the employer published and never honoured.
+  if (
+    !ledger.paidFor.member(p) ||
+    !ledger.paidFor.lookup(p).member(i) ||
+    !ledger.paidFor.lookup(p).lookup(i)
+  ) {
+    throw new Error(
+      `Employee ${slot + 1} has not been paid for ${periodName(period)}.\n` +
+        "   A termination must name a settled period, so pay the month first.\n" +
+        "   (Re-filing a corrected month clears its payments and its terminations\n" +
+        "   together — a corrected month has to be funded and paid again.)"
+    );
+  }
   if (ledger.terminationFor.member(p) && ledger.terminationFor.lookup(p).member(i)) {
     throw new Error(
       `Employment has already been ended for employee ${slot + 1} in ${periodName(period)}.\n` +

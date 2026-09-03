@@ -506,6 +506,47 @@ export circuit revokeEmployer(): [] {
   assert(ownPublicKey() == platform, "only the platform may revoke the employer");
   assert(employerAssigned, "no employer assigned yet");
 
+  // Settle before vacating.
+  //
+  // ── What this catches, and it is a proxy rather than the thing itself ────
+  //
+  // The money genuinely at risk in a revoke is the NET coins of a funded,
+  // unpaid slot: `payEmployee` and `payPeriod` both need the seat filled, so
+  // vacating it freezes them. The pools do not hold those coins — they are
+  // moved only by `fundWithholding` and `fundPeriod`'s withholding half, and
+  // net coins never touch them.
+  //
+  // This guard works because `fundPeriod` receives the net coins and the
+  // withholding in one circuit or receives nothing. On that path — the normal
+  // one — a period with unpaid net coins in it is also a period whose
+  // withholding is sitting in the pools, so a non-zero pool is a reliable
+  // signal that a month is mid-flight.
+  //
+  // It is NOT exact, and the gap is worth stating: a period funded with
+  // `fundEmployee` and never put through `fundWithholding` leaves net coins in
+  // the contract with both pools at zero, and this assert says nothing. That is
+  // the interrupted-run recovery path, and closing it needs a counter of
+  // funded-unpaid slots maintained across five circuits.
+  //
+  // ── Why a pool check and not that counter ────────────────────────────────
+  //
+  // Because of who can clear it. A non-zero pool is cleared by `remit`, which
+  // the platform may call itself with no employer seated — so this guard delays
+  // a revoke by one transaction the platform can always make, and never blocks
+  // it. A funded-unpaid counter would be cleared only by `payPeriod`, which is
+  // employer-only. That hands the employer a veto over their own revocation:
+  // fund one slot, never pay it, and the seat can never be vacated — by the
+  // employer who has stopped paying for the service, which is exactly who
+  // revocation exists for.
+  //
+  // So the exact guard is the one that can be held hostage and the proxy is the
+  // one that cannot. This takes the proxy, and leaves the residue to the
+  // recovery below.
+  assert(
+    taxPool == 0 && socialPool == 0,
+    "remit this contract's withheld tax and contribution before revoking"
+  );
+
   employer = default<ZswapCoinPublicKey>;
   employerAssigned = false;
 }
@@ -754,13 +795,24 @@ export circuit setPayroll(
   // silently transfer to whoever now occupies it — an attestation that
   // employment ended, made about someone the employer never said it about.
   //
-  // This is a smaller hole in write-once than it reads as. The guard above
-  // refuses to re-file any period whose withholding is funded, and
-  // `fundPeriod` funds the withholding with the nets, so a month that has seen
-  // money cannot reach this line at all: a termination on a funded period is
-  // still final. What re-filing can clear is a termination on a month where
-  // nothing has been paid, which is the only case where the slot's occupant
-  // can still change.
+  // The window this opens in write-once is narrow, and worth pinning down
+  // exactly, because two other guards bound it from either side.
+  //
+  // `endEmployment` requires the slot to have been PAID, so a termination only
+  // ever exists on a month where money reached the employee. The guard above
+  // refuses to re-file any month whose WITHHOLDING is funded, and `fundPeriod`
+  // funds the withholding with the nets — so on that path, the normal one, a
+  // month carrying a termination can never be re-filed and the attestation is
+  // final.
+  //
+  // What is left is one path: a period funded slot by slot with `fundEmployee`
+  // and never put through `fundWithholding`, so `withheldFor` stays false. Paid,
+  // attested, and then re-filed. That is the interrupted-run recovery route, it
+  // is the only way a slot's occupant can still change after a termination
+  // exists, and it is the case this line is here for. Note that the re-file also
+  // clears `paidFor`, so the corrected month must be funded and paid again
+  // before it can be attested afresh — the new statement rests on new money,
+  // not on the money the superseded one rested on.
   terminationFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
 
   // Every filing starts a new round, so a re-filed month funds fresh coins.
@@ -1107,6 +1159,32 @@ export circuit endEmployment(
 
   assert(commitmentsFor.member(p), "no payroll filed for that period");
   assert(commitmentsFor.lookup(p).member(i), "no such employee in that period");
+
+  // The final month must have been PAID, not merely filed.
+  //
+  // Filing a period writes commitments and nothing else; a month can sit filed
+  // and never funded. A termination naming such a month is an attestation that
+  // employment ended as of a period in which no money moved, and anything
+  // resting on it downstream — a benefit claim built from these attestations —
+  // would then rest on figures the employer published and never honoured.
+  //
+  // `paidFor.lookup(p)` is safe to read unguarded: `setPayroll` writes a flag
+  // for every index in the same circuit that writes the commitment checked
+  // above, so the two cannot exist apart.
+  //
+  // ⚠️ The cost, and it falls on the employee rather than the employer. An
+  // employer who never pays the final month can no longer attest its
+  // termination — which is the same as saying a worker whose employer stopped
+  // paying cannot get the on-chain statement a claim is built from, in exactly
+  // the circumstance they most need one. The contract cannot tell a delinquent
+  // employer from a slow one, so it refuses both. If that trade turns out to be
+  // the wrong way round, the softer form is `fundedFor` in place of `paidFor`:
+  // it requires the money to have reached the contract without requiring it to
+  // have reached the employee.
+  assert(
+    paidFor.lookup(p).lookup(i),
+    "that slot has not been paid — a termination must name a settled period"
+  );
 
   if (!terminationFor.member(p)) {
     terminationFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);

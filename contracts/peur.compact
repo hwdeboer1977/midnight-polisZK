@@ -27,7 +27,11 @@ import CompactStandardLibrary;
 // was built with, and the caller's own wallet already has it. Paying anyone else
 // needs their coin public key AND encryption public key, which is `mintTo`.
 
-// The deployer. Recorded for display and provenance — it no longer gates minting.
+// The deployer. Provenance ONLY — it gates nothing.
+//
+// No circuit reads this. Minting is open to anyone (see the demo warning
+// above), so anything describing `issuer` as "who may mint" is wrong; it names
+// who deployed, and that is all.
 export ledger issuer: ZswapCoinPublicKey;
 
 // This deployment's token type, recorded on the first mint. Zero until then.
@@ -39,6 +43,12 @@ export ledger totalSupply: Uint<64>;
 
 // Makes each mint's coin nonce unique. Two mints of equal value would otherwise
 // produce identical coins.
+//
+// Public and monotonic, so it publishes exactly how many mints have ever
+// happened — and with `totalSupply`, the average mint size. On a faucet that is
+// a usage signal rather than nothing. It is accepted rather than overlooked:
+// the nonce has to be distinct per mint and derived from something the caller
+// cannot replay, and a public counter is what `evolveNonce` takes.
 export ledger mintCounter: Counter;
 
 // Amounts are minor units of 1e-6 pEUR, capped at Uint<48> — about 281 million
@@ -69,6 +79,17 @@ export circuit mintTo(amount: Uint<48>, recipient: ZswapCoinPublicKey): [] {
   tokenId = tokenType(pad(32, "pEUR"), kernel.self());
 
   const next = totalSupply + disclose(amount);
+  // This assert FIRES — it is not the tautology it looks like. Compact widens
+  // the sum rather than wrapping it, so `next` is a 65-bit value holding the
+  // true total, and comparing it against Uint<64>'s maximum rejects exactly the
+  // sums that would not fit. Probed at Uint<8>/Uint<4>, where the overflow is
+  // reachable: 250 + 10 is refused here, 250 + 5 is accepted.
+  //
+  // It is belt and braces rather than the only guard. `as Uint<64>` below is a
+  // CHECKED cast, not a truncation — the same probe with this assert deleted
+  // fails at the cast with "cast from Field or Uint value to smaller Uint value
+  // failed: 260 is greater than 255". What the assert buys is the message: a
+  // named overflow instead of a compiler-generated cast error.
   assert(next <= 18446744073709551615, "pEUR supply would overflow");
   totalSupply = next as Uint<64>;
 
@@ -85,9 +106,26 @@ export circuit mintTo(amount: Uint<48>, recipient: ZswapCoinPublicKey): [] {
 export circuit mint(amount: Uint<48>): [] {
   // Recorded here rather than in the constructor, where `kernel.self()` would
   // not yet resolve to this deployment. Rewriting it every mint is idempotent.
+  //
+  // Guarding the write with `if (tokenId == default<Bytes<32>>)` looks like it
+  // would save a ledger write per mint. Measured, it does the opposite: 1,770
+  // bytes of ZKIR against 1,544, because the 32-byte comparison and the branch
+  // cost more than the unconditional write. Verifier keys are identical either
+  // way. The straight-line version is both smaller and simpler.
   tokenId = tokenType(pad(32, "pEUR"), kernel.self());
 
   const next = totalSupply + disclose(amount);
+  // This assert FIRES — it is not the tautology it looks like. Compact widens
+  // the sum rather than wrapping it, so `next` is a 65-bit value holding the
+  // true total, and comparing it against Uint<64>'s maximum rejects exactly the
+  // sums that would not fit. Probed at Uint<8>/Uint<4>, where the overflow is
+  // reachable: 250 + 10 is refused here, 250 + 5 is accepted.
+  //
+  // It is belt and braces rather than the only guard. `as Uint<64>` below is a
+  // CHECKED cast, not a truncation — the same probe with this assert deleted
+  // fails at the cast with "cast from Field or Uint value to smaller Uint value
+  // failed: 260 is greater than 255". What the assert buys is the message: a
+  // named overflow instead of a compiler-generated cast error.
   assert(next <= 18446744073709551615, "pEUR supply would overflow");
   totalSupply = next as Uint<64>;
 

@@ -241,17 +241,56 @@ base = file(base, PERIOD, GROSS, [PAYEE_A, PAYEE_B]);
     );
 }
 
+// ── A termination requires a settled slot ─────────────────────────────────
+{
+  const unpaid = tryCall(EMPLOYER, base, "endEmployment", PERIOD, 0n, bytes32(0x99));
+  if (!unpaid.ok && /has not been paid/.test(unpaid.error))
+    ok("a slot that was filed but never paid cannot be terminated");
+  else
+    fail(
+      "a slot that was filed but never paid cannot be terminated",
+      unpaid.ok ? "the termination was recorded against a month where no money moved" : unpaid.error
+    );
+}
+
 // ── A termination does not survive a re-file ──────────────────────────────
 //
-// The hazard is the slot changing hands. Slot 0 is filed for payee 0x71, ended,
-// and then re-filed for payee 0x81 — a different person in the same index.
+// The hazard is the slot changing hands. Slot 0 is filed for payee 0x71, paid,
+// ended, and then re-filed for payee 0x81 — a different person, same index.
+//
+// The route has to be the per-slot one. `endEmployment` now needs the slot paid,
+// and `setPayroll` refuses to re-file a month whose withholding is funded — so
+// on the `fundPeriod` path the two guards close around each other and a month
+// carrying a termination can never be re-filed at all. Funding with
+// `fundEmployee` leaves `withheldFor` false, which is the single remaining
+// window and the one this line exists for.
 {
-  const ended = call(EMPLOYER, base, "endEmployment", PERIOD, 0n, bytes32(0x99));
+  /** Funds and pays every slot WITHOUT touching the withholding. */
+  const settle = (state, gross, payeeKeys) => {
+    const lines = gross.map((g) => computeLine(g, DUTCH_V1));
+    let s = state;
+    for (const i of [0, 1]) {
+      s = call(EMPLOYER, s, "fundEmployee",
+        PERIOD, BigInt(i), gross[i], lines[i].taxQuotient, lines[i].contribQuotient,
+        lines[i].netMinor, 4n, bytes32(i === 0 ? 0x01 : 0x02),
+        coin(0xa0 + i, lines[i].netMinor));
+    }
+    for (const i of [0, 1]) {
+      s = call(EMPLOYER, s, "payEmployee",
+        PERIOD, BigInt(i), gross[i], lines[i].taxQuotient, lines[i].contribQuotient,
+        lines[i].netMinor, 4n, bytes32(i === 0 ? 0x01 : 0x02),
+        qualified(0xa0 + i, lines[i].netMinor, BigInt(i)), payeeKeys[i]);
+    }
+    return s;
+  };
+
+  const paid = settle(base, GROSS, [PAYEE_A, PAYEE_B]);
+  const ended = call(EMPLOYER, paid, "endEmployment", PERIOD, 0n, bytes32(0x99));
   const before = payroll.ledger(ended);
   if (before.terminationFor.member(PERIOD) &&
       before.terminationFor.lookup(PERIOD).member(0n))
-    ok("a termination is recorded for the slot");
-  else fail("a termination is recorded for the slot", "not recorded");
+    ok("a settled slot can be terminated");
+  else fail("a settled slot can be terminated", "not recorded");
 
   // Write-once holds within a filing.
   const twice = tryCall(EMPLOYER, ended, "endEmployment", PERIOD, 0n, bytes32(0x98));
@@ -276,9 +315,21 @@ base = file(base, PERIOD, GROSS, [PAYEE_A, PAYEE_B]);
       "the attestation survived and now names a payee it was never made about"
     );
 
-  const reEnded = tryCall(EMPLOYER, refiled, "endEmployment", PERIOD, 0n, bytes32(0x97));
-  if (reEnded.ok) ok("the corrected month can be attested afresh");
-  else fail("the corrected month can be attested afresh", reEnded.error);
+  // The re-file cleared `paidFor` too, so the corrected month is unsettled and
+  // the new statement cannot rest on the money the superseded one rested on.
+  const tooSoon = tryCall(EMPLOYER, refiled, "endEmployment", PERIOD, 0n, bytes32(0x97));
+  if (!tooSoon.ok && /has not been paid/.test(tooSoon.error))
+    ok("the corrected month must be settled again before it can be attested");
+  else
+    fail(
+      "the corrected month must be settled again before it can be attested",
+      tooSoon.ok ? "attested against a month the re-file had unpaid" : tooSoon.error
+    );
+
+  const resettled = settle(refiled, [500000n, 650000n], [PAYEE_C, PAYEE_B]);
+  const reEnded = tryCall(EMPLOYER, resettled, "endEmployment", PERIOD, 0n, bytes32(0x97));
+  if (reEnded.ok) ok("once settled afresh, the corrected month can be attested");
+  else fail("once settled afresh, the corrected month can be attested", reEnded.error);
 }
 
 console.log(

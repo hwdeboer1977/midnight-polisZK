@@ -67,6 +67,34 @@
       }
     },
     {
+      "name": "transferAuthority",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "newAuthority",
+          "type": {
+            "type-name": "Struct",
+            "name": "ZswapCoinPublicKey",
+            "elements": [
+              {
+                "name": "bytes",
+                "type": {
+                  "type-name": "Bytes",
+                  "length": 32
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Tuple",
+        "types": [
+        ]
+      }
+    },
+    {
       "name": "withdraw",
       "pure": false,
       "proof": true,
@@ -158,17 +186,8 @@
       }
     },
     {
-      "name": "tokenSet",
-      "index": 2,
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Boolean"
-      }
-    },
-    {
       "name": "receivedFor",
-      "index": 3,
+      "index": 2,
       "exported": true,
       "storage": "Map",
       "key": {
@@ -182,7 +201,7 @@
     },
     {
       "name": "sourceFor",
-      "index": 4,
+      "index": 3,
       "exported": true,
       "storage": "Map",
       "key": {
@@ -196,7 +215,7 @@
     },
     {
       "name": "heldTotal",
-      "index": 5,
+      "index": 4,
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -206,7 +225,7 @@
     },
     {
       "name": "receivedTotal",
-      "index": 6,
+      "index": 5,
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -216,7 +235,7 @@
     },
     {
       "name": "withdrawnTotal",
-      "index": 7,
+      "index": 6,
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -226,7 +245,7 @@
     },
     {
       "name": "depositCount",
-      "index": 8,
+      "index": 7,
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -236,7 +255,7 @@
     },
     {
       "name": "withdrawalCount",
-      "index": 9,
+      "index": 8,
       "exported": true,
       "storage": "Cell",
       "type": {
@@ -246,7 +265,7 @@
     },
     {
       "name": "coinsReceived",
-      "index": 10,
+      "index": 9,
       "exported": true,
       "storage": "Cell",
       "type": {

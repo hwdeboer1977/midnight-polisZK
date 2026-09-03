@@ -289,6 +289,102 @@ server is down" when it was irrelevant.
 **The lesson worth keeping: these notes have a shelf life. Retest before
 designing around a recorded limit.**
 
+## `kernel.self()` does not resolve during a deploy
+
+A contract's address is not fixed until the deploy transaction is built, so
+`kernel.self()` inside a `constructor` does not yet name the deployment. A token
+type derived there — `tokenType(pad(32, "pEUR"), kernel.self())` — comes out
+wrong, and a mint attempted in the constructor fails to balance.
+
+The consequence is structural, not cosmetic: **an initial supply cannot be
+minted at construction.** `npm run deploy:peur` deploys and then mints, two
+transactions under one command, and `tokenId` is recorded on the first mint
+rather than in the constructor.
+
+## Compact arithmetic is range-checked by construction
+
+Three probes, all run against the real compiler and runtime at widths small
+enough to reach the boundary. Together they change how an assert next to
+arithmetic should be read on this platform.
+
+### `as Uint<n>` is a CHECKED cast, not a truncation
+
+This one is worth stating because a careful reader assumed the opposite, and the
+assumption turns a correct guard into an apparent bug.
+
+`peur.mint` does:
+
+```compact
+const next = totalSupply + disclose(amount);   // Uint<64> + Uint<48>
+assert(next <= 18446744073709551615, "pEUR supply would overflow");
+totalSupply = next as Uint<64>;
+```
+
+Read as C, that assert looks like a tautology — if the addition wrapped, `next`
+could never exceed the Uint<64> maximum. It is not. Probed at Uint<8>/Uint<4>,
+where the overflow is actually reachable:
+
+| Call | Result |
+| --- | --- |
+| supply 250, add 10 (=260 > 255) | `failed assert: supply would overflow` |
+| supply 250, add 5 (=255) | accepted, supply 255 |
+| same 260, with the assert DELETED | `cast from Field or Uint value to smaller Uint value failed: 260 is greater than 255` |
+
+So two things hold. **Compact widens the sum rather than wrapping it** — `next`
+carries the true 65-bit total, and comparing it against the narrower maximum
+rejects exactly the sums that would not fit. And **the cast range-checks on its
+own**, so overflow is unrepresentable whether or not the assert is there. The
+assert earns its place by naming the failure instead of surfacing a compiler
+cast error.
+
+The practical rule: on Midnight you do not need the `x <= MAX - y` phrasing that
+wrapping languages require. Add, then compare. Rewriting it to guard the
+pre-add value changes nothing but readability.
+
+### Unsigned subtraction is checked too
+
+The same probe applied to `a - b - c` at Uint<8>:
+
+| Call | Result |
+| --- | --- |
+| 10 − 3 − 2 | accepted, 5 |
+| 10 − 6 − 4 | accepted, **0** |
+| 10 − 6 − 5 | `failed assert: result of subtraction would be negative` |
+
+So underflow is unrepresentable without writing a guard for it, exactly as
+overflow is. This matters for reading `fund.claim`, where
+
+```compact
+assert(benefitTaxQ + benefitSocialQ < benefitQ, "withholding leaves nothing of the benefit");
+const benefitNet = (benefitQ - benefitTaxQ - benefitSocialQ) as Uint<60>;
+```
+
+looks like an underflow guard and is not one — Compact catches that case either
+way. What the STRICT comparison uniquely rejects is withholding exactly EQUAL to
+the benefit, which the subtraction accepts as a net of zero. That rejection is
+the point: a zero-net claim would burn the window's nullifier and pay nothing,
+spending the claimant's one shot at that window for no money.
+
+It is also unreachable. Both quotients are floor divisions, so withholding is at
+most `benefitQ x (rate + contribRate) / 10000`, and equality needs those rates
+to sum to 100%. The published schedule's worst case is 52.5% (rate3 4950 plus
+contribRate 300).
+
+The general rule across all three probes: **Compact range-checks arithmetic by
+construction** — widened sums, checked narrowing casts, checked subtraction. An
+assert next to arithmetic here is almost never preventing a wrap; it is either
+naming the failure better or excluding a boundary the language would accept.
+Worth deciding which before changing one.
+
+### A related non-optimisation, measured
+
+`peur` rewrites `tokenId` on every mint. Guarding that with
+`if (tokenId == default<Bytes<32>>)` looks like it saves a ledger write. It does
+not — **1,770 bytes of ZKIR against 1,544**, verifier keys identical, because
+the 32-byte comparison and the branch cost more than the write. Straight-line is
+smaller here, which is the opposite of the intuition carried over from gas-metered
+chains.
+
 ## The deploy ceiling
 
 `payroll` sits on the network's per-transaction limit, and has done since before
@@ -373,10 +469,18 @@ rather than only fitting history.
 
 Two mechanics worth keeping, both measured rather than inferred:
 
-- **Verifier key size tracks circuit COUNT, not circuit content.** C and D come
-  to exactly 21,588 across 12 circuits from materially different sources.
-  Roughly 1,799 bytes per circuit, which is what "removing a whole circuit buys
-  enough room and trimming statements does not" was really describing.
+- **Verifier key size is per-circuit and largely independent of what the circuit
+  says.** C and D come to exactly 21,588 across 12 circuits from materially
+  different sources — about 1,799 bytes each. That is what "removing a whole
+  circuit buys enough room and trimming statements does not" was really
+  describing.
+
+  ⚠️ It is NOT a flat constant, and reading it as one was too strong a
+  conclusion from that single pair. `taxvault` went from 2 circuits at 4,238
+  bytes (2,119 each) to 3 at 5,589 (1,863 each) — same contract, different
+  per-circuit size. The bucket a circuit lands in depends on its own size, so
+  circuit count sets the ROUGH scale and nothing finer. Measure; do not
+  extrapolate from a per-circuit average.
 - **Merging tiny circuits COSTS ZKIR while SAVING verifier bytes.**
   `transferSeat` is 604 ZKIR bytes against 275 + 178 for the two separate
   rotations, because both branches compile — but it buys back a whole 1,799-byte
@@ -392,14 +496,88 @@ Proved twice on 2026-09-03, both at 44,547:
 | Slot | Address | Purpose |
 | --- | --- | --- |
 | `preview/payroll:size-probe-1` | `07dc0aad…5751561b` | the size experiment, tx `d3500e02…c5c0bb9f` |
-| `preview/payroll` | `67a3f1d1…c9257c9f` | the production cutover, tx `1d18de59…1eab0f86` |
+| `preview/payroll:guardless-v1` | `67a3f1d1…c9257c9f` | the first cutover, tx `1d18de59…1eab0f86` |
+| `preview/payroll` | `f0c1b595…139e5551` | **current**, adds the two guards below, tx `54e7cda8…dc88cf03` |
 | `preview/payroll:pilot-v1` | `fe2e98f8…fd623fa5` | the retired pilot, kept for its history |
+| `preview/payroll:stray-20260903` | `53cdd759…4d73cc88` | accident: `npm run deploy` takes `CONTRACT_NAME` from `.env`, which is `payroll`. Use `CONTRACT_NAME=taxvault npm run deploy` (there is no `deploy:taxvault` script) |
+| `preview/taxvault` | `4f0c898a…d1ea872f` | **current vault**, token frozen at deploy, `transferAuthority` added |
+| `preview/taxvault:pinned-v1` | `d49344be…5b81b4f4` | retired vault, **still holds 200 pEUR**; its prover keys are not on disk, rebuild from git |
 
-⚠️ `saveDeployment` writes `deployment.json` back from a snapshot it loads at
-start, so an entry added to that file WHILE a deploy is in flight is silently
-discarded. Archiving the outgoing `preview/payroll` before deploying looked like
-it worked and did not; it had to be re-added afterwards from a copy. Archive
-after the deploy, not before.
+The current build is 23,143 ZKIR + 21,588 verifier = 44,731, which leaves about
+1,250 bytes against the 45,983 that is the largest deploy known to succeed.
+
+### Two settle-before-you-act guards (2026-09-03)
+
+Both close a window where the contract holds money or makes a statement that
+nothing downstream can rely on. Both are one assertion.
+
+**`revokeEmployer` refuses while `taxPool` or `socialPool` is non-zero.** The
+money actually at risk in a revoke is the NET coins of a funded, unpaid slot —
+`payEmployee` and `payPeriod` need the seat filled, so vacating it freezes them.
+The pools do not hold those coins. The guard works as a PROXY because
+`fundPeriod` receives the nets and the withholding in one circuit or receives
+nothing, so on the normal path a month with unpaid net coins is also a month
+with money in the pools.
+
+It is not exact, and the gap is the interrupted-run path: funded with
+`fundEmployee` and never put through `fundWithholding` leaves net coins in the
+contract with both pools at zero. Closing that needs a funded-unpaid counter
+maintained across five circuits — and that counter is the wrong guard anyway,
+because of WHO CLEARS IT. A non-zero pool is cleared by `remit`, which the
+platform may call with no employer seated, so this delays a revoke by one
+transaction the platform can always make. A funded-unpaid counter is cleared
+only by `payPeriod`, which is employer-only — handing the employer a veto over
+their own revocation by funding a slot and never paying it, exercised by exactly
+the employer revocation exists for. The exact guard can be held hostage; the
+proxy cannot. `tests/employer-seat.test.mjs` executes that difference: the
+platform remits and then revokes, with no employer involved.
+
+**`endEmployment` requires the slot to have been paid.** A month can sit filed
+and never funded, and a termination naming one attests that employment ended in
+a period where no money moved.
+
+⚠️ The cost falls on the EMPLOYEE, not the employer. An employer who never pays
+the final month can no longer attest its termination — so a worker whose
+employer stopped paying cannot get the on-chain statement a claim is built from,
+in exactly the circumstance they most need one. The contract cannot tell a
+delinquent employer from a slow one and refuses both. If that trade proves wrong
+the softer form is `fundedFor` instead of `paidFor`: money must reach the
+contract, but not the employee.
+
+Both preconditions are pre-checked off chain — `frontend/src/lib/endEmployment.ts`
+and `src/terminate-cli.ts` — so the failure arrives immediately rather than after
+a few minutes of proving.
+
+### ⚠️ Archiving a retired address needs the `instance` FIELD, not the JSON key
+
+Three archive entries were silently lost before the cause was found, and the
+first diagnosis — that `saveDeployment` writes back from a stale snapshot — was
+wrong. It reads the file fresh and preserves everything.
+
+`readFile()` rebuilds the map by re-deriving each key from the record:
+
+```ts
+out[deploymentKey(record.networkId, record.contractName, record.instance)] = record;
+```
+
+So the JSON key is decorative. An archive record written under
+`"preview/payroll:pilot-v1"` but COPIED from `preview/payroll` — which has no
+`instance` field — re-derives to `preview/payroll`, collides with the live
+record, and one of the two is dropped on the next round trip. The entry looks
+correct in the file and disappears at the next deploy of any contract.
+
+**Set `instance` on the record to match the suffix in the key.** A one-line
+check that every key survives a round trip:
+
+```js
+const derived = v.instance ? `${v.networkId}/${v.contractName}:${v.instance}`
+                           : `${v.networkId}/${v.contractName}`;
+if (derived !== k) console.log("COLLAPSES:", k, "->", derived);
+```
+
+Records written by a deploy are fine — `deploy.ts` passes `instance` — so this
+only bites hand-written archive entries, which is exactly what retiring an
+address produces.
 
 ## Appendix: the tax and vault design
 

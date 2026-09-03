@@ -63,7 +63,8 @@ Everything below is world-readable and cannot be deleted. The privacy work is in
 | `taxvault` totals & counts | Public | `heldTotal` is the current balance; `receivedTotal` and `withdrawnTotal` only ever rise, so a balance back at zero still shows what passed through. |
 | `fund.paramsFor` | Public | The benefit rules, including `durationMonths` — how many monthly windows *anyone* gets. A rule, not a fact about a person. |
 | `taxparams.paramsFor` | Public | The tax rules themselves — brackets, rates, contribution base — in the clear, versioned. These *should* be public: they are law. |
-| `peur.issuer`, `tokenId`, `totalSupply`, `mintCounter` | Public | Who may mint the payment token, and how much exists. |
+| `peur.issuer`, `tokenId` | Public | Who DEPLOYED the payment token, and its token type. `issuer` gates nothing — minting is open to anyone. |
+| `peur.totalSupply`, `mintCounter` | Public | How much pEUR exists, and how many mints produced it — so also the average mint size, which is a usage signal on a faucet. |
 
 > **Not on chain anywhere:** any person's name, any home address, any individual
 > salary, any wallet identity beyond a coin public key, and — until a termination

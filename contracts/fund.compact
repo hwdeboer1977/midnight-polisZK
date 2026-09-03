@@ -392,6 +392,20 @@ export circuit fundBenefits(
 // What is disclosed by calling this: the period, the params version, the
 // nullifier, and that a claim happened. Not the employer, not the slot, not the
 // salary, not the benefit paid.
+// ⚠️ TREE DEPTH IS 16, and it is written out in full at every use — here, at
+// the root check below, and in the `pathRoot` helper.
+//
+// That is 65,536 leaves, so a period may hold at most 65,536 terminations. Like
+// the roster size in `payroll.compact`, it is a compile-time constant: Compact
+// has no top-level constants and the depth is a type parameter, so changing it
+// means editing every site, recompiling, and REDEPLOYING — verifier keys are
+// fixed at deploy, so existing instances cannot be reused. Unlike the roster
+// size, exceeding it is not a build-time error but a runtime one: the relay
+// would be unable to build a path, and every claim for that period would fail
+// with nothing on chain to say why.
+//
+// Ample for the pilot and worth a note rather than a change, since a deeper
+// tree costs proving time in every claim whether or not the leaves are there.
 export circuit claim(
   path: MerkleTreePath<16, Bytes<32>>,
   leaf: ClaimLeaf,
@@ -529,6 +543,28 @@ export circuit claim(
     "benefit contribution quotient too large"
   );
 
+  // Strict, and the strictness is the whole of what this adds.
+  //
+  // The subtraction below cannot silently underflow: Compact checks it and
+  // fails with "result of subtraction would be negative" — probed at Uint<8>,
+  // where 10 - 6 - 5 is refused and 10 - 6 - 4 yields zero. So the case where
+  // withholding EXCEEDS the benefit is caught with or without this line; what
+  // this line uniquely rejects is withholding exactly EQUAL to the benefit,
+  // which the subtraction would accept as a net of zero.
+  //
+  // Rejecting it is deliberate. A zero-net claim would burn the window's
+  // nullifier — `spent` is inserted below and never removed — and send a coin
+  // worth nothing, so the claimant would spend her one claim on that window to
+  // receive nothing and could not retry.
+  //
+  // ⚠️ Unreachable under any sane rule set, and worth knowing before anyone
+  // relaxes it: both quotients are FLOOR divisions, so the withholding is at
+  // most `benefitQ x (rate + contribRate) / 10000`, and equality needs those
+  // rates to sum to 10000 basis points — 100%. The published schedule's worst
+  // case is rate3 4950 plus contribRate 300, or 52.5%. Loosening this to `<=`
+  // would therefore change no claim that can currently be made; it would only
+  // admit a net of zero if a rule set with 100% combined withholding were ever
+  // published, which is the one case where failing is right.
   assert(
     benefitTaxQ + benefitSocialQ < benefitQ,
     "withholding leaves nothing of the benefit"

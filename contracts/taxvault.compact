@@ -60,10 +60,23 @@ import CompactStandardLibrary;
 // be changed is a custody contract with an extra key to steal.
 export ledger authority: ZswapCoinPublicKey;
 
-// The token this vault holds, fixed by the first coin it receives. A vault that
-// silently mixed tokens would make every total below meaningless.
+// The token this vault holds, frozen at deploy. A vault that silently mixed
+// tokens would make every total below meaningless.
+//
+// ⚠️ It used to be fixed by the FIRST COIN RECEIVED, and that was a griefing
+// surface rather than a convenience. Deposits are permissionless by design (see
+// the note above), so anyone could send one dust unit of a token they minted
+// themselves, pin `token` to it, and every real remittance afterwards would fail
+// `wrong token for this vault`. Nothing is stolen — the squatter is not the
+// authority and cannot withdraw — but the vault is bricked, permanently, because
+// nothing can reset the token. A redeploy is the only recovery, and the attack
+// costs one self-minted coin.
+//
+// Frozen at deploy closes it with no window at all, and matches what this
+// contract already does with `authority` and what `payroll.compact` does with
+// its treasuries. The cost is a deploy-order dependency: the token must exist
+// before the vault that holds it.
 export ledger token: Bytes<32>;
-export ledger tokenSet: Boolean;
 
 // What arrived, per period. THE field this contract exists for: it is what a
 // verifier compares against the payroll contract's `totalTaxFor` for the same
@@ -74,8 +87,13 @@ export ledger receivedFor: Map<Uint<32>, Uint<64>>;
 // the comparison above has an address to be made against — without it a verifier
 // knows an amount arrived for September but not whose September.
 //
-// Claimed, not proved. This contract cannot check that the named contract
-// actually assessed that figure; see the note at the top.
+// Claimed, not proved, and worth reading twice because two properties compound.
+// This contract cannot check that the named contract actually assessed that
+// figure — no contract can read another's ledger — AND deposits are
+// permissionless, so the first party to pay anything at all against a period is
+// the one whose claimed source sticks for it. The field records an assertion
+// made by whoever deposited first. It is a pointer for a verifier to go and
+// check against, never itself evidence.
 export ledger sourceFor: Map<Uint<32>, Bytes<32>>;
 
 // Running totals. `heldTotal` is what is here now; the other two are permanent
@@ -97,9 +115,9 @@ export ledger withdrawalCount: Uint<32>;
 // it by rebuilding its commitment, never by indexing sorted leaves against this.
 export ledger coinsReceived: Uint<32>;
 
-constructor(withdrawTo: ZswapCoinPublicKey) {
+constructor(withdrawTo: ZswapCoinPublicKey, holds: Bytes<32>) {
   authority = disclose(withdrawTo);
-  tokenSet = false;
+  token = disclose(holds);
   heldTotal = 0;
   receivedTotal = 0;
   withdrawnTotal = 0;
@@ -128,10 +146,6 @@ export circuit deposit(
   assert(p <= 299912, "period must be YYYYMM, e.g. 202609");
   assert(disclose(amount) > 0, "a deposit of nothing records nothing");
 
-  if (!tokenSet) {
-    token = disclose(coin.color);
-    tokenSet = true;
-  }
   assert(token == disclose(coin.color), "wrong token for this vault");
   assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
 
@@ -158,6 +172,26 @@ export circuit deposit(
   depositCount = (depositCount + 1) as Uint<32>;
 }
 
+// Hands the withdrawal seat to a new key. The current holder only.
+//
+// The frozen-destination argument above says a custody contract whose
+// destination can be changed has an extra key to steal. That argument does not
+// reach this circuit, and the difference is worth stating: whoever holds the
+// authority key can ALREADY withdraw the entire balance, so being able to
+// rotate it grants them nothing they did not have. What it removes is the
+// failure this contract had no answer to — a lost authority key making the
+// balance permanently unwithdrawable, with no reassignment path of any kind,
+// which is worse than the equivalent gap in `payroll.compact` where the
+// platform could at least re-seat an employer.
+//
+// `withdraw` still takes no destination argument. Rotating the seat and naming
+// a payee are different acts, and only the first exists here.
+export circuit transferAuthority(newAuthority: ZswapCoinPublicKey): [] {
+  assert(ownPublicKey() == authority, "only the authority may transfer the seat");
+
+  authority = disclose(newAuthority);
+}
+
 // Moves money out, to the authority and nowhere else.
 //
 // The destination is not an argument, for the same reason `payPeriod` pays a
@@ -171,7 +205,6 @@ export circuit deposit(
 // with no on-chain statement that anything was withdrawn, and this cannot.
 export circuit withdraw(amount: Uint<64>, coin: QualifiedShieldedCoinInfo): [] {
   assert(ownPublicKey() == authority, "only the authority may withdraw");
-  assert(tokenSet, "this vault holds nothing yet");
   assert(token == disclose(coin.color), "wrong token for this vault");
   assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
   assert(disclose(amount) <= heldTotal, "cannot withdraw more than the vault holds");

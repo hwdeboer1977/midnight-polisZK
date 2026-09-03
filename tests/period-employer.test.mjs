@@ -47,6 +47,12 @@ const PERIOD = 202603n;
 const ADDRESS = sampleContractAddress();
 const contract = new payroll.Contract({});
 
+// Real payee bindings rather than arbitrary bytes: `endEmployment` now requires
+// the slot to have been PAID, and paying checks the recipient against these.
+const INSTANCE = Uint8Array.from(Buffer.from(ADDRESS, "hex"));
+const PAYEES = [key(0x71), key(0x72)];
+const TOKEN = bytes32(0xcc);
+
 /**
  * The rule set, hashed with the REGISTRY's circuit rather than payroll's.
  *
@@ -106,7 +112,7 @@ state = call(EMPLOYER_A, state, "setPayroll",
   LINES.map((l) => l.contribQuotient),
   NONCES,
   [new Uint8Array(100), new Uint8Array(100)],
-  [bytes32(0x71), bytes32(0x72)],
+  PAYEES.map((k) => payroll.pureCircuits.payeeHash(k, PERIOD, INSTANCE)),
   PARAMS
 );
 
@@ -203,6 +209,22 @@ else fail("a payslip opens the commitment while the seat is held", "it did not o
 {
   const STRANGER = key(0x99);
   const attestation = bytes32(0xee);
+
+  // `endEmployment` requires a settled slot, so slot 0 is funded and paid
+  // before any of this. Funded per-slot rather than with `fundPeriod` on
+  // purpose: nothing here is about the withholding.
+  const settle = (from) => {
+    let s = call(EMPLOYER_A, from, "fundEmployee",
+      PERIOD, 0n, GROSS[0], LINES[0].taxQuotient, LINES[0].contribQuotient,
+      LINES[0].netMinor, 4n, NONCES[0],
+      { nonce: bytes32(0xa0), color: TOKEN, value: LINES[0].netMinor });
+    return call(EMPLOYER_A, s, "payEmployee",
+      PERIOD, 0n, GROSS[0], LINES[0].taxQuotient, LINES[0].contribQuotient,
+      LINES[0].netMinor, 4n, NONCES[0],
+      { nonce: bytes32(0xa0), color: TOKEN, value: LINES[0].netMinor, mt_index: 0n },
+      PAYEES[0]);
+  };
+  state = settle(state);
   const refused = (caller, state, expect, name) => {
     try {
       call(caller, state, "endEmployment", PERIOD, 0n, attestation);

@@ -134,6 +134,30 @@ export async function surveyEmployment(options: {
         "against the roster."
     );
   }
+  // The final month must have been PAID, checked here rather than left to the
+  // circuit. `endEmployment` asserts it, and an assert that fires does so after
+  // the proof is built — a minute of waiting for a message about a state the
+  // caller could have been told about immediately.
+  //
+  // Why the contract requires it: a termination naming a month that was filed
+  // and never settled is an attestation about a period in which no money moved,
+  // and a benefit claim built from these statements would rest on figures the
+  // employer published and never honoured.
+  if (options.allowEnded !== true) {
+    const paid =
+      ledger.paidFor?.member(BigInt(period)) &&
+      ledger.paidFor.lookup(BigInt(period)).member(BigInt(slot)) &&
+      ledger.paidFor.lookup(BigInt(period)).lookup(BigInt(slot));
+    if (!paid) {
+      throw new Error(
+        `That employee's slot in ${period} has not been paid. A termination must ` +
+          "name a settled period, so pay the month before ending employment. " +
+          "(Re-filing a corrected month clears its payments, and its terminations " +
+          "with them — a corrected month has to be funded and paid again.)"
+      );
+    }
+  }
+
   if (!options.allowEnded && ledger.terminationFor?.member(BigInt(period))) {
     const ended = ledger.terminationFor.lookup(BigInt(period));
     if (ended.member(BigInt(slot))) {

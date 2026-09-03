@@ -9,6 +9,8 @@ export type ImpureCircuits<PS> = {
           source_0: Uint8Array,
           amount_0: bigint,
           coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
+  transferAuthority(context: __compactRuntime.CircuitContext<PS>,
+                    newAuthority_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   withdraw(context: __compactRuntime.CircuitContext<PS>,
            amount_0: bigint,
            coin_0: { nonce: Uint8Array,
@@ -24,6 +26,8 @@ export type ProvableCircuits<PS> = {
           source_0: Uint8Array,
           amount_0: bigint,
           coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
+  transferAuthority(context: __compactRuntime.CircuitContext<PS>,
+                    newAuthority_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   withdraw(context: __compactRuntime.CircuitContext<PS>,
            amount_0: bigint,
            coin_0: { nonce: Uint8Array,
@@ -42,6 +46,8 @@ export type Circuits<PS> = {
           source_0: Uint8Array,
           amount_0: bigint,
           coin_0: { nonce: Uint8Array, color: Uint8Array, value: bigint }): __compactRuntime.CircuitResults<PS, []>;
+  transferAuthority(context: __compactRuntime.CircuitContext<PS>,
+                    newAuthority_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
   withdraw(context: __compactRuntime.CircuitContext<PS>,
            amount_0: bigint,
            coin_0: { nonce: Uint8Array,
@@ -54,7 +60,6 @@ export type Circuits<PS> = {
 export type Ledger = {
   readonly authority: { bytes: Uint8Array };
   readonly token: Uint8Array;
-  readonly tokenSet: boolean;
   receivedFor: {
     isEmpty(): boolean;
     size(): bigint;
@@ -88,7 +93,8 @@ export declare class Contract<PS = any, W extends Witnesses<PS> = Witnesses<PS>>
   provableCircuits: ProvableCircuits<PS>;
   constructor(witnesses: W);
   initialState(context: __compactRuntime.ConstructorContext<PS>,
-               withdrawTo_0: { bytes: Uint8Array }): __compactRuntime.ConstructorResult<PS>;
+               withdrawTo_0: { bytes: Uint8Array },
+               holds_0: Uint8Array): __compactRuntime.ConstructorResult<PS>;
 }
 
 export declare function ledger(state: __compactRuntime.StateValue | __compactRuntime.ChargedState): Ledger;

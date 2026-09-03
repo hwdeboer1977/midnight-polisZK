@@ -174,18 +174,41 @@ async function main() {
           })()
         : contractName === "taxvault"
           ? (() => {
-              // One argument: who may withdraw. The tax treasury key, because
-              // that is already the party a payroll contract remits to — the
-              // vault sits between arrival and spending, it does not change who
-              // the money is for.
+              // Two arguments: who may withdraw, and which token this vault
+              // holds.
               //
-              // Frozen at deploy like payroll's treasuries, and for the same
-              // reason: a custody contract whose destination can be changed is a
-              // custody contract with an extra key to steal.
+              // The authority is the tax treasury key, because that is already
+              // the party a payroll contract remits to — the vault sits between
+              // arrival and spending, it does not change who the money is for.
+              //
+              // The token is frozen here rather than fixed by the first coin
+              // received, and that is a security fix rather than tidying.
+              // Deposits are permissionless by design, so a first-writer token
+              // let anyone send one dust unit of a self-minted token, pin the
+              // vault to it, and make every real remittance fail `wrong token
+              // for this vault` forever — nothing stolen, but the vault bricked
+              // with a redeploy as the only recovery.
+              //
+              // ⚠️ This makes the vault deploy DEPEND on pEUR already existing.
+              // `peur_token_id` is written by `npm run deploy:peur`; deploying a
+              // vault before the token it holds is now refused here rather than
+              // producing a vault that accepts the wrong thing.
               const t = treasuryKeys();
+              const tokenId = (process.env.peur_token_id ?? "").replace(/^0x/, "").trim();
+              if (!/^[0-9a-f]{64}$/i.test(tokenId)) {
+                throw new Error(
+                  "taxvault needs `peur_token_id` in .env — 64 hex characters.\n" +
+                    "   It is written by `npm run deploy:peur`, and the vault's token is\n" +
+                    "   frozen at deploy, so there is no fixing it afterwards."
+                );
+              }
               console.log(chalk.gray(`   authority  ${process.env.TAX_TREASURY_KEY}`));
-              console.log(chalk.gray("   Frozen at deploy — withdrawals can go nowhere else."));
-              return [t.tax];
+              console.log(chalk.gray(`   holds      ${tokenId}`));
+              console.log(
+                chalk.gray("   Both frozen at deploy — withdrawals can go nowhere else,")
+              );
+              console.log(chalk.gray("   and no other token can ever be deposited."));
+              return [t.tax, Uint8Array.from(Buffer.from(tokenId, "hex"))];
             })()
           : [];
 

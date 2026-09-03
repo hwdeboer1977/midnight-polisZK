@@ -514,10 +514,14 @@ command.
 The token type is `tokenType(pad(32, "pEUR"), kernel.self())`, unique to the
 deployment, so no other contract can mint it.
 
-Minting is issuer-only and always pays the issuer. That sidesteps key exchange
-entirely: a shielded coin can only be found and spent by someone whose
-encryption key the transaction was built with, and the issuer's own wallet
-already has it.
+⚠️ Minting is open to ANYONE, in any amount — see the demo warning at the top of
+`peur.compact`. `issuer` records who deployed and gates nothing; no circuit
+reads it.
+
+`mint` pays the caller, which sidesteps key exchange entirely: a shielded coin
+can only be found and spent by someone whose encryption key the transaction was
+built with, and the caller's own wallet already has it. `mintTo` pays someone
+else, and needs more from them.
 
 **Paying anyone else needs two keys from them** — their coin public key *and*
 their encryption public key, passed to the SDK as
