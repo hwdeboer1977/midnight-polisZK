@@ -82,7 +82,7 @@ export function Public() {
           pilot in the same breath as its terminology: "workers" appears nowhere
           else in a product built on Employer and Employee, and a bare count
           leaves a reader guessing whether a period means filed or settled. */}
-      <Band title="Network activity">
+      <Band title="Network activity" variant="plain">
         <div className="figures three">
           <Figure
             value={loading ? "…" : group(BigInt(stats.employers))}
@@ -369,7 +369,7 @@ export function Public() {
       {/* ── 4. Can I verify this? ───────────────────────────────────────────
           Addresses, then everything that is documentation rather than a fact
           about the system. */}
-      <Band title={`Verify on Midnight ${networkId}`}>
+      <Band title={`Verify on Midnight ${networkId}`} variant="plain">
         {/* The end of the progression: here are the numbers, here is what they
             do not expose, and here is where you check them without asking us. */}
         <p className="verified-line">
@@ -593,10 +593,11 @@ function share(part: bigint, whole: bigint, loading: boolean): string {
 /**
  * One section of the dashboard.
  *
- * `feature` is the money — the block the page is really about, so it is the one
- * panel that lifts off the page. `quiet` is a tinted panel for the claim that
- * qualifies it. Everything else sits on the page under a rule, because a page
- * where every section is a card has no hierarchy at all, only boxes.
+ * Every section is a panel, so this page reads as the same system as the
+ * operator console rather than as a different kind of page. What separates them
+ * is treatment, not whether they have a border: `feature` lifts (the two money
+ * flows), `quiet` tints (the privacy claim that qualifies them), and `plain` is
+ * the neutral card the counts and the contract list sit in.
  */
 function Band({
   title,
@@ -606,7 +607,7 @@ function Band({
 }: {
   title: string;
   children: React.ReactNode;
-  variant?: "feature" | "quiet";
+  variant?: "feature" | "quiet" | "plain";
   /**
    * Which of the two money flows this is.
    *
@@ -623,7 +624,7 @@ function Band({
         ["band", variant, accent && `accent-${accent}`].filter(Boolean).join(" ")
       }
     >
-      <h2 className="eyebrow">{title}</h2>
+      <h2 className="section-title">{title}</h2>
       {children}
     </section>
   );

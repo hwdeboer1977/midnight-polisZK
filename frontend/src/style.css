@@ -2564,6 +2564,15 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
   background: var(--card-tint); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 20px 24px 18px; margin-bottom: 26px;
 }
+/* The neutral card: same construction, no emphasis. The counts and the contract
+   list are not claims about money, so they carry no tint — but they are still
+   sections of a console, and sitting loose on the page made them read as
+   preamble to the cards below them. */
+.band.plain {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 20px 24px 18px; margin-bottom: 26px;
+}
+.band > .section-title { margin-bottom: 14px; }
 
 /* What every figure on the page is, said once, above the first of them. */
 .totals-scope {
