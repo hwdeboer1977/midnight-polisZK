@@ -40,10 +40,23 @@ interface TreasuryBalance {
   error?: string;
 }
 
+/**
+ * The wallets money is sent FROM, named as sources.
+ *
+ * Plain names, because they appear beside a destination now: "Social treasury
+ * (contributions)" paired with "Wage tax → tax vault" made the reader work out
+ * which half of each phrase was the source and which the destination.
+ */
 const WALLET_LABEL: Record<TreasuryName, string> = {
-  "social-treasury": "Social treasury (contributions)",
+  "social-treasury": "Social treasury",
   "tax-treasury": "Tax treasury",
-  platform: "Platform wallet (top-up)",
+  platform: "Platform wallet",
+};
+
+/** The contracts money is sent TO. */
+const TARGET_LABEL: Record<"fund" | "taxvault", string> = {
+  fund: "Benefit fund",
+  taxvault: "Tax vault",
 };
 
 /**
@@ -738,24 +751,90 @@ export function FundDeposit({
         </p>
       ) : null}
 
-      {/* The hop as one line, left to right, in the order it is decided: what is
-          moving, for which month, out of which wallet. It used to be three
-          controls in a row with a paragraph before them and two after, and the
-          sequence had to be inferred from the prose. */}
+      {/* Which wallet pays, and what it holds — before the form that spends
+          it. This sat under the form as a bare checkbox, with the balance check
+          under that again, so the sequence read backwards: pick an amount, then
+          discover where it comes from, then find out whether there is any.
+          Source, balance, amount, remit. */}
+      <div className={topUp ? "funding-source alt" : "funding-source"}>
+        <div className="funding-head">
+          <span className="funding-label">Funding source</span>
+          <strong>{WALLET_LABEL[from]}</strong>
+          <span className="funding-arrow" aria-hidden="true">→</span>
+          <span className="funding-label">Destination</span>
+          <strong>{TARGET_LABEL[target]}</strong>
+        </div>
+
+        <div className="funding-balance">
+          {/* Left ENABLED even when the token is missing. Disabling it was tried
+              and was worse: a control that does nothing cannot say why, and the
+              reason sits in a field far enough above to be off screen. The
+              handler answers instead, immediately and without a request. */}
+          <button
+            type="button"
+            className="button secondary compact"
+            disabled={working}
+            onClick={() => void checkBalances()}
+          >
+            <span className="refresh-mark" aria-hidden="true">↻</span>{" "}
+            {reading
+              ? "Reading the wallets…"
+              : balances
+                ? "Re-check treasury balances"
+                : "Check treasury balances"}
+          </button>
+
+          {maxMinor === null ? (
+            <span className="funding-unknown">
+              A shielded balance needs the spending key — nothing can read it
+              until you ask.
+            </span>
+          ) : maxMinor === "0" ? (
+            <span className="funding-unknown">
+              Nothing in the {WALLET_LABEL[from].toLowerCase()}.
+            </span>
+          ) : (
+            <span className="funding-available">
+              Available <strong>€{formatPeur(BigInt(maxMinor))}</strong>{" "}
+              <span aria-hidden="true">✓</span>
+            </span>
+          )}
+        </div>
+
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={topUp}
+            disabled={working}
+            onChange={(e) => setTopUp(e.target.checked)}
+          />
+          Top up from the platform wallet instead
+        </label>
+        <p className="note">
+          {topUp
+            ? "A top-up is the platform covering the contract, not a period's withholding arriving — the deposit is still recorded against the period above."
+            : "Each destination is paid by the treasury that was remitted for it."}
+        </p>
+      </div>
+
+      {/* The hop as one line, left to right, in the order it is decided: what
+          is moving, for which month, and how much. It used to be three controls
+          in a row with a paragraph before them and two after, so the sequence
+          had to be inferred from the prose. */}
       <div className="settlement-panel">
         {/* Labelled rather than placeheld. A placeholder disappears the moment
             a value is entered, so a form of three bare controls stops saying
             what any of them are exactly when someone looks back to check. */}
         <div className="settlement-row">
           <label className="settle-field">
-            <span>Transfer type</span>
+            <span>Destination</span>
             <select
               value={target}
               disabled={working}
               onChange={(e) => setTarget(e.target.value as "fund" | "taxvault")}
             >
-              <option value="fund">Contributions → benefit fund</option>
-              <option value="taxvault">Wage tax → tax vault</option>
+              <option value="fund">Benefit fund — contributions</option>
+              <option value="taxvault">Tax vault — wage tax</option>
             </select>
           </label>
           <label className="settle-field period">
@@ -842,32 +921,6 @@ export function FundDeposit({
               </button>
             </span>
           </label>
-
-          {/* What Max would fill, said in words beside it. A Max button next to a
-              figure nobody has read is a guess; this is the figure. Absent until
-              a balance has actually been read, because a shielded balance cannot
-              be known any other way.
-
-              Inside the field row rather than under it: the row and the button
-              below are one bordered group, and a paragraph between them broke the
-              join into two boxes with a stray line between. */}
-          <p className="available-line">
-          {maxMinor === null ? (
-            <span className="faint">
-              Available to remit: not read yet — a shielded balance needs the
-              spending key. Check the wallets below.
-            </span>
-          ) : maxMinor === "0" ? (
-            <span className="faint">
-              Available to remit: nothing in the {WALLET_LABEL[from].toLowerCase()}.
-            </span>
-          ) : (
-            <>
-              Available to remit: <strong>€{formatPeur(BigInt(maxMinor))}</strong>{" "}
-              <span className="faint">from the {WALLET_LABEL[from].toLowerCase()}</span>
-            </>
-          )}
-          </p>
         </div>
         {/* The amount on the button, not only in the field beside it. This is
             the last chance to notice a figure before minutes of proving, and a
@@ -882,9 +935,9 @@ export function FundDeposit({
           ? "Remitting…"
           : amountMinor === null
             ? "Remit to treasury"
-            : `Remit €${formatPeur(amountMinor)} to the ${
-                target === "fund" ? "benefit fund" : "tax vault"
-              }`}
+            : `Remit €${formatPeur(amountMinor)} to the ${TARGET_LABEL[
+                target
+              ].toLowerCase()}`}
       </button>
 
         <AmountEcho
@@ -893,31 +946,6 @@ export function FundDeposit({
           maxMinor={maxMinor}
           wallet={WALLET_LABEL[from]}
         />
-      </div>
-
-      {/* Which wallet pays is a different decision from how much, and it was a
-          bare checkbox under the form — the same weight as a preference. It
-          changes where the money comes from, so it gets its own panel and says
-          what it currently is. */}
-      <div className={topUp ? "funding-source alt" : "funding-source"}>
-        <div className="funding-head">
-          <span className="funding-label">Funding source</span>
-          <strong>{WALLET_LABEL[from]}</strong>
-        </div>
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={topUp}
-            disabled={working}
-            onChange={(e) => setTopUp(e.target.checked)}
-          />
-          Top up from the platform wallet instead
-        </label>
-        <p className="note">
-          {topUp
-            ? "A top-up is the platform covering the contract, not a period's withholding arriving — the deposit is still recorded against the period above."
-            : "Each destination is paid by the treasury that was remitted for it."}
-        </p>
       </div>
 
       {shownPeriod === null ? null : (
@@ -936,10 +964,8 @@ export function FundDeposit({
 
       <TreasuryBalances
         balances={balances}
-        reading={reading}
         funding={funding}
         stranded={stranded}
-        onCheck={() => void checkBalances()}
         onFund={() => void fundWithNight()}
         disabled={working}
         needsToken={needsToken}
@@ -1002,19 +1028,15 @@ export function FundDeposit({
  */
 function TreasuryBalances({
   balances,
-  reading,
   funding,
   stranded,
-  onCheck,
   onFund,
   disabled,
   needsToken,
 }: {
   balances: TreasuryBalance[] | null;
-  reading: boolean;
   funding: boolean;
   stranded: boolean;
-  onCheck: () => void;
   onFund: () => void;
   disabled: boolean;
   /** The service wants a platform token and none has been typed. */
@@ -1022,18 +1044,9 @@ function TreasuryBalances({
 }) {
   return (
     <div className="treasury-balances">
-      {/* Left ENABLED even when the token is missing. Disabling it was tried and
-          was worse: a control that does nothing cannot say why, and the reason
-          sits in a field far enough above to be off screen. The handler answers
-          instead, immediately and without a request. */}
-      <button
-        type="button"
-        className="ghost"
-        disabled={disabled}
-        onClick={onCheck}
-      >
-        {reading ? "Reading the wallets…" : balances ? "Re-check balances" : "Check balances"}
-      </button>
+      {/* The check itself lives in the funding-source panel above, beside the
+          wallet it reads. What stays here is what the reading produced, and the
+          one repair only this component can offer. */}
       {stranded ? (
         <button
           type="button"

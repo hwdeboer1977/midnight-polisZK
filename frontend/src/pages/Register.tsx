@@ -142,12 +142,13 @@ export function Register() {
             Registration happens once and then stays true forever, so it earns a
             line, and the caveat that matters — registering again splits your
             salaries across two contracts — is the small print under it. */}
+        {/* The address is not repeated here. "Contract configuration" lists it
+            directly below, and one string in two places on the same screen
+            reads as two different facts. What this line is for is the state:
+            registration is done. */}
         <div className="status-strip ok">
           <span className="pill ok">✓ Company registered</span>
-          <CopyRow
-            label="Payroll contract"
-            value={registered.deployment.contractAddress}
-          />
+          <span className="status-strip-line">on Midnight {networkId}</span>
         </div>
         <p className="note status-strip-note">
           Registration happens once per company — registering again would deploy

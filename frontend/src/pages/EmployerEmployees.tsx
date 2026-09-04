@@ -378,7 +378,10 @@ export function EmployerEmployees() {
             <thead>
               <tr>
                 <th>Employee</th>
-                <th>Payment key</th>
+                {/* A hash of it. The panel below says "Payment key" because
+                    there the claim is about the key this browser holds; the
+                    column shows what the contract stores. */}
+                <th>Payment key hash</th>
                 <th>Since</th>
                 <th>Status</th>
                 <th />
@@ -675,9 +678,13 @@ function EmployeeRow({
                   ) : null}
 
                   <div className="employee-action">
+                    {/* Outlined rather than filled. Ending employment is an
+                        ordinary act in this lifecycle, not a deletion — but it
+                        writes an attestation that cannot be withdrawn, so it
+                        should not read as a link either. */}
                     <button
                       type="button"
-                      className="ghost danger-text"
+                      className="button danger-outline"
                       disabled={!employee.coinPublicKey}
                       title={
                         employee.coinPublicKey
@@ -689,9 +696,9 @@ function EmployeeRow({
                       End employment
                     </button>
                     <p className="note" style={{ margin: 0 }}>
-                      Creates the private record this person needs to prove
-                      eligibility for unemployment benefit, and publishes the
-                      month's claim tree in the same step.
+                      Ends employment and creates the private record needed to
+                      prove benefit eligibility. Also publishes this month's
+                      claim tree.
                     </p>
                   </div>
                 </>

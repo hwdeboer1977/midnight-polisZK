@@ -118,45 +118,64 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
     <>
       {showFunding ? (
         <>
+      {/* Three balances, and an employer does not care about them equally.
+          pEUR is the business: it is what salaries are paid in and what a month
+          can fail for want of. tNIGHT and tDUST are infrastructure — real, and
+          not the reason anyone opened this page. Three equal tiles made this
+          read as a crypto wallet rather than payroll software. */}
       <div className="tiles-head">
-        <h2>Balances</h2>
+        <h3 className="subsection">Payroll balance</h3>
         <button className="ghost refresh" onClick={reread} disabled={refreshing}>
           {refreshing ? "Reading…" : "Refresh"}
         </button>
+      </div>
+      <div className="payroll-balance">
+        <div className="payroll-balance-figure">
+          <span className="payroll-balance-value">
+            €{peur ? formatPeur(peur[1]) : "0.00"}
+          </span>
+          <span className="payroll-balance-unit">pEUR</span>
+        </div>
+        <p className="payroll-balance-note">
+          {tokenId
+            ? "Available for salaries, taxes and social contributions."
+            : "No pEUR deployment on this network, so nothing can be paid here."}
+        </p>
+      </div>
+
+      <div className="tiles-head">
+        <h3 className="subsection">Network balances</h3>
       </div>
       <div className="tiles">
         <Tile
           label="tNIGHT"
           value={formatUnits(account.night, NIGHT_DECIMALS)}
-          unit="fees and staking"
+          unit="network fees and staking"
         />
         <Tile
           label="tDUST"
           value={formatUnits(account.dust.balance, DUST_DECIMALS)}
-          unit="regenerates from tNIGHT"
-        />
-        <Tile
-          label="pEUR"
-          value={peur ? formatPeur(peur[1]) : "0.00"}
-          unit={tokenId ? "shielded balance" : "no pEUR deployment here"}
-          accent
+          unit="transaction fees"
         />
       </div>
         </>
       ) : null}
 
-      {showFunding ? (
-      <section className="callout">
+      {showTechnical ? (
+      <section className="card">
+        {/* Moved here from the funding view. "How do I put money into payroll?"
+            is a business question, and answering it with two cryptographic keys
+            made an employer learn the mechanism to ask it. The keys are still
+            what a sender needs — they are just not what the page opens with. */}
         <h2>Keys to receive pEUR</h2>
         <CopyRow label="Coin public key" value={account.coinPublicKey} />
         <CopyRow label="Encryption public key" value={account.encryptionPublicKey} />
         <p className="note">
-          Send both to whoever pays you. The coin public key identifies you inside the
-          circuit; the encryption public key is what the coin ciphertext is encrypted to.
-          Without the second one your wallet cannot even detect the coin.
+          Share both with the sender. The coin key identifies your wallet; the
+          encryption key is what lets it detect and decrypt the payment — without
+          it a coin sent to you is invisible to you.
         </p>
       </section>
-
       ) : null}
 
       {showTechnical ? (
@@ -217,7 +236,15 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
         // a fifth tab for it would be overkill on a testnet. The border says so
         // rather than a heading claiming it is a setting.
         <section className="card funding-card">
-          <h2>Get funded</h2>
+          <h2>Preview funding</h2>
+          {/* Named for what it is. "Get funded" sat among real configuration
+              and read as part of the product; these are test assets on a test
+              network, and a page that does not say so invites someone to
+              wonder whether a button here mints €100,000. */}
+          <p className="note" style={{ marginTop: 0 }}>
+            Test assets for running IncomeLayerZK on Midnight {networkId}. None of
+            it has real-world value.
+          </p>
           <ol className="next">
             <li>
               <strong>Get tNIGHT from the faucet.</strong> Paste your{" "}
@@ -232,15 +259,16 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
               .
             </li>
             <li>
-              <strong>tDUST then appears on its own.</strong> It is not handed out:
-              it is generated from tNIGHT once that tNIGHT is registered for
-              generation, and a wallet already showing a tDUST balance is
-              registered. Every transaction costs tDUST, so payroll cannot be
-              submitted until it shows up in the tile above.
+              {/* The mechanics moved to Advanced. What a step needs is the fact
+                  and its consequence; how DUST generation works is a thing to
+                  look up once, not to re-read on every visit. */}
+              <strong>tDUST appears automatically.</strong> Once tNIGHT is
+              registered for generation, tDUST becomes available for transaction
+              fees.
             </li>
             <li>
-              <strong>Claim your pEUR.</strong> This is the money salaries are paid
-              in. It is issued by the platform, once per registered company.
+              <strong>Claim test pEUR.</strong> This is what salaries are paid in
+              here. Issued by the platform, once per registered company.
             </li>
           </ol>
 
@@ -271,7 +299,7 @@ export function Overview({ variant = "all" }: { variant?: "all" | "funding" | "t
                   ? "Claiming…"
                   : claiming
                     ? "Starting…"
-                    : `Claim ${formatPeur(EMPLOYER_ALLOWANCE)} pEUR`}
+                    : `Claim ${group(EMPLOYER_ALLOWANCE / 1_000_000n)} test pEUR`}
               </button>
 
               {keyError ? (

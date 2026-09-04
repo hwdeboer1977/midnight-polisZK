@@ -119,10 +119,10 @@ export function FilingYears({ networkId }: { networkId: string }) {
     <div className="filing-years">
       <div className="band-head">
         <div>
-          <h2 className="eyebrow">Filing years</h2>
+          <h2 className="section-title">Filing years</h2>
           <p className="band-sub">
-            Open a year once its schedule is decided — a month's rules are written
-            once and cannot be changed afterwards.
+            An open year is one employers can file against, under the immutable
+            schedule it was opened with.
           </p>
         </div>
         <div className="band-head-actions">

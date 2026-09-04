@@ -56,12 +56,15 @@ function requirementsFor(rows: Attestation[] | null): Check[] {
         rows === null
           ? null
           : employers.length > 0
-            ? `${employers.join(", ")} — assigned on chain`
+            ? "Assigned on-chain"
             : "",
       body: "The payroll contract naming you was deployed by the platform and assigned to a registered employer — provable today from the contract's own ledger.",
     },
     {
-      title: `${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} employment`,
+      // The title is the rule; the pilot figure is a property of this
+      // deployment. Naming the row "1 month employment" made a deliberately
+      // reduced demo parameter look like the concept.
+      title: "Minimum employment period",
       // Ticks once there is employment to attest to. The count itself lives
       // inside the termination commitment and cannot be read here — but a
       // half-mark read as "unmet", which is worse than the imprecision it was
@@ -71,7 +74,7 @@ function requirementsFor(rows: Attestation[] | null): Check[] {
         rows === null
           ? null
           : rows.length > 0
-            ? "attested in your termination — the circuit checks it"
+            ? "Checked from termination attestation"
             : "",
       pilot: true,
       body: `The published rule set requires ${BENEFIT_V1.minMonths} month${BENEFIT_V1.minMonths === 1 ? "" : "s"} — a PILOT figure, not the twelve the real scheme asks for. The claim circuit checks it against a count your employer signed into the termination attestation, not against the filings themselves. A fund contract cannot read a payroll contract's ledger, so it cannot do the counting; what it can do is refuse a claim whose attestation says fewer months. The count stays auditable afterwards, because the filings are public. This page cannot show you the number: it is committed, not published.`,
@@ -82,7 +85,7 @@ function requirementsFor(rows: Attestation[] | null): Check[] {
         rows === null
           ? null
           : rows.length > 0
-            ? `${rows.length} period${rows.length === 1 ? "" : "s"} filed for you`
+            ? `${rows.length} period${rows.length === 1 ? "" : "s"} filed`
             : "",
       body: "Each period's commitment binds the contribution withheld from your salary alongside the gross, so an opening proves the contribution was assessed. That it was remitted onward is a separate fact, and not one this system can show you.",
     },
@@ -92,7 +95,7 @@ function requirementsFor(rows: Attestation[] | null): Check[] {
         rows === null
           ? null
           : ended.length > 0
-            ? `found for ${ended.map((row) => periodName(row.period)).join(", ")}`
+            ? `Found for ${ended.map((row) => periodName(row.period)).join(", ")}`
             : "",
       body: "Your employer signs one statement that employment ended, naming the final period — which is what stops anyone choosing their best month later. It is published as a commitment, so the statement is fixed before anyone acts on it while months worked and your claim key stay off chain. The employer cannot spend it: claiming needs your own wallet key.",
     },
@@ -301,30 +304,48 @@ export function EmployeeBenefit() {
 function Eligibility({ rows }: { rows: Attestation[] | null }) {
   return (
     <section className="card">
-      <h2>{rows ? "Your eligibility" : "Eligibility requirements"}</h2>
-      {!rows ? (
-        <p className="note" style={{ marginTop: 0 }}>
-          Connect your wallet and these become a check against what the chain
-          actually holds for you, rather than a description of the rules.
-        </p>
-      ) : null}
+      <h2 className="section-title accent">
+        {rows ? "Your eligibility" : "Eligibility requirements"}
+      </h2>
+      <p className="note" style={{ marginTop: 0 }}>
+        {rows
+          ? "Each condition is checked without revealing the employment data behind it."
+          : "Connect your wallet and these become a check against what the chain actually holds for you, rather than a description of the rules."}
+      </p>
       <ul className="reqs">
+        {/* Three states, not two: met, genuinely unmet, and not yet checked
+            because no wallet is connected. The third must not be styled as a
+            problem — nothing is missing, nothing has been asked. */}
         {requirementsFor(rows).map((req) => (
-          <li key={req.title} className={req.found ? "req ready" : "req"}>
+          <li
+            key={req.title}
+            className={
+              req.found ? "req ready" : req.found === "" ? "req unmet" : "req"
+            }
+          >
             <span className="req-mark">
-              {req.found ? "\u2713" : req.found === "" ? "\u25cb" : "\u00b7"}
+              {req.found ? "\u2713" : req.found === "" ? "!" : "\u00b7"}
             </span>
             <div>
               <strong>{req.title}</strong>
               {/* The pilot figure is the single easiest thing on this page to
                   misread as the real scheme, and it was the quietest of the
                   four. It is now the loudest. */}
-              {req.pilot ? <span className="req-pilot">pilot figure — not 12</span> : null}
+              {req.pilot ? (
+                <span className="req-pilot">
+                  Pilot requirement: {BENEFIT_V1.minMonths} month
+                  {BENEFIT_V1.minMonths === 1 ? "" : "s"}
+                </span>
+              ) : null}
+              {/* An unmet requirement is the reason the claim button is
+                  disabled, so it says what is needed rather than reporting an
+                  absence. A row that reads "nothing found" leaves someone
+                  looking for a control that does not exist. */}
               <span className="req-status">
                 {req.found === null
-                  ? "connect a wallet to check"
+                  ? "Connect a wallet to check"
                   : req.found === ""
-                    ? "nothing found for this wallet"
+                    ? "Required before you can claim"
                     : req.found}
               </span>
               {/* The mechanics, folded. Four requirements each followed by a
@@ -339,11 +360,42 @@ function Eligibility({ rows }: { rows: Attestation[] | null }) {
           </li>
         ))}
       </ul>
-      <p className="note">
-        None of the four discloses the figures behind it. That is the point of
-        proving rather than showing: the fund checks the statements, not the
-        history the statements were derived from.
+      {rows ? <Tally rows={rows} /> : null}
+
+      {/* The value proposition, in the two lines it actually takes. The old
+          version explained the epistemology of proving; what a reader needs is
+          what stays hidden while all of the above is checked. */}
+      <p className="privacy-note">
+        <span aria-hidden="true">🔒</span>
+        <span>
+          <strong>Your employment history stays private.</strong> The conditions
+          above are checked without publishing your salary, your employer, your
+          months worked or your identity.
+        </span>
       </p>
     </section>
+  );
+}
+
+/** How far along, and what is missing — beside the button it disables. */
+function Tally({ rows }: { rows: Attestation[] }) {
+  const checks = requirementsFor(rows);
+  const met = checks.filter((check) => check.found).length;
+  const missing = checks.filter((check) => check.found === "");
+  const complete = missing.length === 0;
+
+  return (
+    <p className={complete ? "req-tally ok" : "req-tally"}>
+      <strong>
+        {met} of {checks.length} requirements met
+      </strong>
+      {complete ? null : (
+        <span>
+          {missing.some((check) => check.title === "Termination attestation")
+            ? " Your employer must publish your termination attestation before you can claim."
+            : ` Still needed: ${missing.map((check) => check.title.toLowerCase()).join(", ")}.`}
+        </span>
+      )}
+    </p>
   );
 }

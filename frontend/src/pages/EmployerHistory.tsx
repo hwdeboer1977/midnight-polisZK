@@ -60,9 +60,16 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
 
   return (
     <section className="card record-card">
-      <h2>
-        <span className="badge">Payroll</span>
-        <span className="tag">{deployment.instance ?? name}</span>
+      {/* Named, not badged. "Payroll" in a pill beside the instance tag read as
+          "PAYROLL payroll" and said nothing about what the card holds: the
+          public, on-chain half of this page — every month this contract has
+          filed. The private half is the payslip panel below it. */}
+      <h2 className="record-head">
+        <span className="section-title">Filed payroll periods</span>
+        {/* Only a real instance name. Without one this fell back to the
+            contract's generic name and rendered "payroll" in a pill beside a
+            heading that already said so. */}
+        {deployment.instance ? <span className="tag">{deployment.instance}</span> : null}
         {role === "platform" ? <span className="tag">you deployed this</span> : null}
       </h2>
 
@@ -197,9 +204,9 @@ export function EmployerHistory() {
     <section className="area-head">
       <h1>Payroll history</h1>
       <p className="lede">
-        One row per month filed, and the payslips for them. The private figures
-        behind each row never left your machine — what is on chain is the
-        aggregate and one opaque commitment per worker. To run a month, go to{" "}
+        View each filed payroll period and retrieve its private payslips. The
+        figures behind each row never left your machine — what is on chain is the
+        aggregate and one opaque commitment per employee. To run a month, go to{" "}
         <Link to="/employer">Payroll</Link>.
       </p>
     </section>

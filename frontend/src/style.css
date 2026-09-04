@@ -273,7 +273,7 @@ button.ghost:hover:not(:disabled) { color: var(--text); opacity: 1; }
 .copy:hover:not(:disabled) { color: var(--text); opacity: 1; }
 .copy.done { color: var(--ok); border-color: var(--ok); }
 
-/* ---------- receive-keys callout ---------- */
+/* ---------- accent callout: something you hand to somebody ---------- */
 
 .callout {
   border: 1px solid var(--accent); background: var(--accent-soft);
@@ -484,6 +484,24 @@ table.roster .mono {
 .checklist li.done .n { background: var(--ok-soft); color: var(--ok); }
 
 .area-sub h2 { font-size: 17px; margin: 0 0 8px; }
+/* A section that owns the rest of the page, rather than one item among the
+   things below it. The payroll balance had grown into the de facto heading,
+   which put the section title below its own content in weight. */
+.area-sub.major h2 { font-size: 21px; letter-spacing: -0.02em; margin-bottom: 6px; }
+/* Its parts, at one weight so the distinction reads: money for payroll, and
+   tokens for operating the network. */
+/* Inside a card the heading is a step smaller than a page section's, but it is
+   still a heading — `.card > h2` would otherwise make it an 11.5px eyebrow. */
+.card > h2.section-title { font-size: 17px; margin-bottom: 12px; }
+/* Accent, to match the payslip card above it: on the employee page lavender
+   means "your own private financial information", and salary history is the
+   same kind of thing as the payslip it came from. */
+.section-title.accent { color: var(--accent); }
+
+.subsection {
+  margin: 0; font-size: 15px; font-weight: 650; color: var(--text);
+  text-transform: none; letter-spacing: 0;
+}
 
 /* Section labels. The public page is four categories of claim — how much
    activity, what the money did, what stayed private, what the fund holds — and
@@ -493,25 +511,6 @@ table.roster .mono {
   color: var(--faint); font-weight: 650; margin: 30px 0 12px;
 }
 .eyebrow:first-of-type { margin-top: 4px; }
-
-/* The accounting identity, with the terms the contract cannot yet prove left
-   visibly empty rather than computed here. */
-.identity {
-  display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap;
-  margin-bottom: 4px;
-}
-.identity .term {
-  flex: 1 1 150px; display: flex; flex-direction: column; gap: 4px;
-  border: 1px dashed var(--line); border-radius: 10px; padding: 13px 15px;
-}
-.identity .term.real { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
-.identity .term-value { font-size: 20px; font-weight: 680; letter-spacing: -0.02em; color: var(--faint); }
-.identity .term.real .term-value { color: var(--accent); }
-.identity .term-label { font-size: 12px; color: var(--muted); line-height: 1.4; }
-.identity .op {
-  display: flex; align-items: center; color: var(--faint);
-  font-size: 16px; font-weight: 600;
-}
 
 /* Figures inside a card. Borderless, because a bordered stat tile inside a
    bordered card is two boxes saying the same thing. */
@@ -795,16 +794,6 @@ table.roster .mono {
 .collect-who { font-size: 13.5px; font-weight: 600; min-width: 150px; }
 .collect-row input { flex: 1; min-width: 240px; font-size: 12.5px; }
 
-.flow {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  font-size: 13.5px; color: var(--muted); margin-bottom: 14px;
-}
-.flow .arrow { color: var(--faint); }
-.flow .node {
-  background: var(--line-soft); border: 1px solid var(--line);
-  border-radius: 8px; padding: 6px 12px; color: var(--text); font-weight: 600;
-}
-
 .deployed-row { display: flex; align-items: center; gap: 10px; }
 .deployed-row > :first-child { flex: 1; min-width: 0; }
 .supply {
@@ -847,9 +836,12 @@ table.roster .mono {
 .req-mark { color: var(--faint); font-weight: 700; line-height: 1.4; flex: none; }
 .req.ready .req-mark { color: var(--ok); }
 /* Says whether a requirement can be proved today, beside the thing it names. */
+/* Sentence case, normal weight. Uppercase and letter-spaced, these read as
+   system output — four rows of shouted technical fragments beside four plain
+   requirement names. */
 .req-status {
-  margin-left: 8px; font-size: 11px; text-transform: uppercase;
-  letter-spacing: 0.06em; font-weight: 650; color: var(--faint);
+  margin-left: 8px; font-size: 12px; text-transform: none;
+  letter-spacing: 0; font-weight: 500; color: var(--faint);
 }
 .req.ready .req-status { color: var(--ok); }
 
@@ -858,7 +850,6 @@ table.roster .mono {
 }
 @media (max-width: 820px) {
   .stats.two { grid-template-columns: 1fr; }
-  .identity .op { display: none; }
 }
 @media (max-width: 560px) {
   .stats, .next-areas { grid-template-columns: 1fr; }
@@ -1236,17 +1227,7 @@ button.primary.secondary-action {
    the payroll identity — and the rest are bands: a heading, content, a rule.
    Sequence and whitespace do what borders were doing. */
 
-.scale-strip {
-  font-size: 15px;
-  color: var(--muted);
-  margin: 0 0 22px;
-  line-height: 1.6;
-}
-.scale-strip strong { color: var(--text); font-weight: 660; }
-.scale-strip .dot { color: var(--faint); margin: 0 10px; }
-
 /* The one figure on the page that should be readable across a room. */
-.headline-figure { text-align: center; padding: 28px 22px 22px; }
 .headline-value {
   font-size: 46px;
   font-weight: 700;
@@ -1262,13 +1243,6 @@ button.primary.secondary-action {
 }
 /* The identity reads as the breakdown OF the figure above it, so it loses the
    leading "gross =" term that used to restate it and gains a rule instead. */
-.headline-figure .identity {
-  margin-top: 20px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line-soft);
-  justify-content: center;
-}
-.headline-figure .why { text-align: left; }
 
 .band { margin: 0 0 26px; padding-bottom: 22px; border-bottom: 1px solid var(--line-soft); }
 .band:last-of-type { border-bottom: 0; }
@@ -1282,7 +1256,6 @@ button.primary.secondary-action {
   margin: 14px 0 0;
   max-width: 62ch;
 }
-.band .flow { margin-top: 16px; }
 
 .figures.three { grid-template-columns: repeat(3, 1fr); }
 
@@ -1300,8 +1273,6 @@ button.primary.secondary-action {
 
 @media (max-width: 720px) {
   .headline-value { font-size: 36px; }
-  .figures.three { grid-template-columns: 1fr; gap: 14px; }
-  .scale-strip .dot { margin: 0 6px; }
 }
 
 /* ── Operator: a console, not a brochure ─────────────────────────────────────
@@ -1590,16 +1561,10 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
 }
 /* What Max would fill, under the fields it fills — a full-width item of the
    same row, so the group stays one bordered box. */
-.available-line {
-  flex: 1 1 100%; margin: 2px 0 0; font-size: 12.5px; color: var(--muted);
-}
-.available-line strong {
-  font-size: 15px; font-weight: 680; color: var(--accent);
-}
-
-/* Which wallet pays — a decision, not a preference, so it is panelled. */
+/* Which wallet pays, and what it holds — the first decision, so the panel sits
+   above the form rather than under it. */
 .funding-source {
-  margin-top: 14px; padding: 12px 14px;
+  margin-bottom: 14px; padding: 14px 16px;
   border: 1px solid var(--line); border-radius: 12px;
   background: var(--card);
 }
@@ -1608,8 +1573,10 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
   background: var(--accent-soft);
 }
 .funding-head {
-  display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px;
+  margin-bottom: 10px;
 }
+.funding-arrow { color: var(--faint); }
 .funding-label {
   font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
   color: var(--faint); font-weight: 650;
@@ -1617,6 +1584,17 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
 .funding-head strong { font-size: 13.5px; }
 .funding-source .inline-check { font-size: 13px; }
 .funding-source .note { margin-top: 6px; }
+/* Check, then read — one row, so the answer appears where the question was. */
+.funding-balance {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px;
+  margin-bottom: 10px;
+}
+.refresh-mark { font-size: 13px; }
+.funding-available { font-size: 13px; color: var(--ok); font-weight: 600; }
+.funding-available strong {
+  font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.funding-unknown { font-size: 12px; color: var(--faint); max-width: 46ch; }
 
 /* The wallets, as two cards rather than a heading and a list. Where the money
    sits is half the concept this zone teaches; a bulleted list said it as an
@@ -1877,10 +1855,6 @@ table.roster td.num.strong { font-weight: 620; color: var(--text); }
 /* The badge row is the label, not a heading with its own airspace. */
 .record-card > h2 { margin-bottom: 4px; }
 /* Same for the payslip tool: it is one control row and two disclosures. */
-.payslip-card { padding: 16px 20px; }
-.payslip-card > h2 { margin-bottom: 4px; }
-.payslip-card .actions { margin-top: 12px; }
-.payslip-card .details { margin-top: 10px; padding-top: 8px; }
 
 /* ── Settings: three kinds of thing on one page ──────────────────────────────
    Configuration (what this organization is), holdings (what it has), and
@@ -1907,6 +1881,14 @@ table.roster td.num.strong { font-weight: 620; color: var(--text); }
    different kind of block without competing with the pEUR key panel above it,
    which is the one thing on this page a person actually hands over. */
 .funding-card { border-left: 3px solid var(--accent); }
+/* Readable, not shouted. This is demo infrastructure so it does not outrank the
+   payroll balance above it — but it is also how anyone evaluating the system
+   actually gets hold of test assets, so an 11.5px uppercase label was hiding
+   the one section a judge needs to find first. */
+.funding-card > h2 {
+  font-size: 15px; font-weight: 650; text-transform: none;
+  letter-spacing: 0; color: var(--text); margin-bottom: 6px;
+}
 
 /* ── Employee: three levels, and lavender means one thing ────────────────────
    The salary card, the termination notice and the privacy explainer all wore
@@ -2151,8 +2133,17 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
   color: var(--faint); margin: 0 0 6px; font-weight: 650;
 }
 /* The second column is a different levy, not a continuation of the bands. */
+.schedule-col > .why { margin-top: 12px; }
 .schedule-col + .schedule-col {
   border-left: 1px solid var(--line-soft); padding-left: 30px;
+}
+/* Column names, so the two halves of each row are named once rather than
+   inferred from their shapes. */
+.rate-head {
+  display: flex; justify-content: space-between; gap: 16px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--line);
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--faint); font-weight: 650;
 }
 .rate-list { list-style: none; margin: 0; padding: 0; }
 .rate-row {
@@ -2160,9 +2151,19 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
   padding: 13px 0; border-top: 1px solid var(--line-soft);
 }
 .rate-row:first-child { border-top: 0; }
-.rate-band { color: var(--muted); font-size: 13.5px; }
+/* The band is the rule and reads as one; the rate is an attribute of it and
+   sits a step below. It was the other way round — three big percentages with
+   the income they applied to set at footnote size. */
+.rate-band { color: var(--text); font-size: 16.5px; font-weight: 600; }
+.rate-unit { color: var(--faint); font-size: 13px; font-weight: 500; }
+/* Ties a row to its footnote. Amber rather than muted, so the eye goes to the
+   box that explains it rather than reading it as punctuation. */
+.rate-marker {
+  color: var(--warn); font-size: 13px; font-weight: 700;
+  vertical-align: super; margin-left: 2px;
+}
 .rate-value {
-  font-size: 27px; font-weight: 680; letter-spacing: -0.025em;
+  font-size: 20px; font-weight: 700; letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 
@@ -2178,6 +2179,7 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
   display: block; color: var(--warn); font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px;
 }
+.demo-marker { color: var(--warn); font-weight: 700; margin-right: 2px; }
 
 /* One diagram, doing what four sentences were doing. */
 .rule-flow {
@@ -2322,7 +2324,8 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
 
 @media (max-width: 860px) {
   .schedule-grid { grid-template-columns: 1fr; gap: 22px; }
-  .schedule-col + .schedule-col { border-left: 0; padding-left: 0; padding-top: 22px; border-top: 1px solid var(--line-soft); }
+  .schedule-col > .why { margin-top: 12px; }
+.schedule-col + .schedule-col { border-left: 0; padding-left: 0; padding-top: 22px; border-top: 1px solid var(--line-soft); }
   .example-row { grid-template-columns: 1fr; }
   /* The flow turns vertical, so the arrows have to turn with it. */
   .flow-track { flex-direction: column; gap: 26px; }
@@ -2354,13 +2357,15 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
   font: inherit; font-size: 13px;
 }
 
+/* Four years across. At minmax(210px) the fourth card wrapped onto a row of
+   its own, which cost half a screen of dead space to show one year. */
 .year-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
   gap: 12px;
 }
 .year-card {
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 16px 18px; border-radius: 12px;
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 14px 15px; border-radius: 12px;
   background: var(--card); border: 1px solid var(--line);
 }
 /* An open year is settled business; an unopened one is the only thing here
@@ -2375,7 +2380,7 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
 }
 .year-card-head { display: flex; align-items: center; gap: 8px; }
 .year-number {
-  font-size: 24px; font-weight: 680; letter-spacing: -0.02em;
+  font-size: 22px; font-weight: 680; letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 .year-range { margin: 0; font-size: 11.5px; color: var(--faint); }
@@ -2503,3 +2508,254 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
   color: inherit; text-decoration: none; font-weight: 700;
 }
 .chip-pre .chip-action:hover { text-decoration: underline; }
+
+/* ── Public: the network's own dashboard ─────────────────────────────────────
+   Three blocks answering the three questions a visitor arrives with — how big
+   is this, what has it paid, and what does it expose — before any of the
+   machinery that proves them. The page used to open on one enormous gross
+   figure whose period it never stated, with the counts above it in a single
+   line and the privacy claim below the fold. */
+.figures.four { grid-template-columns: repeat(4, 1fr); gap: 18px; }
+@media (max-width: 860px) { .figures.four { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .figures.four, .figures.three { grid-template-columns: 1fr; } }
+
+/* A zero that is the achievement rather than the absence of one. */
+.figure-value.good { color: var(--ok); }
+
+/* The identity, on one line. Four figures state the terms; this states that
+   they add up — the claim anyone can check without seeing an employee's pay. */
+.equation {
+  margin: 18px 0 0; padding: 12px 14px;
+  background: var(--accent-soft); border-radius: 10px;
+  font-size: 14px; color: var(--muted); line-height: 1.7;
+}
+.equation strong {
+  color: var(--accent); font-size: 15px; font-variant-numeric: tabular-nums;
+}
+.equation .op { margin: 0 4px; color: var(--faint); font-weight: 600; }
+.equation .settled-mark { color: var(--ok); font-weight: 600; }
+
+/* The second flow. Same strip, different colour — the two are equals, and the
+   only thing distinguishing them should be which money they describe. */
+.equation.ok { background: var(--ok-soft); }
+.equation.ok strong { color: var(--ok); }
+.equation-sub {
+  margin: 8px 0 0; font-size: 12px; color: var(--faint);
+}
+.equation-sub .dot { margin: 0 7px; color: var(--line); }
+/* Green figures for the protection flow, purple for the payroll one. The
+   sealed cell keeps its own muted treatment: it is not a success, it is an
+   absence the design intends. */
+.band.accent-ok .figure-value.good { color: var(--ok); }
+
+/* ── Public: telling the three blocks apart ──────────────────────────────────
+   Not by making each a card — a page of equal cards has boxes where it should
+   have hierarchy. One panel lifts (the money), one tints (the claim that
+   qualifies it), and the rest sit on the page under a rule. */
+/* Both override `.band`'s divider with a full border — a panel closes itself,
+   and a hairline under a bordered box is the box drawn twice. */
+.band.feature {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 22px 24px 20px; margin-bottom: 26px;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 4%, transparent);
+}
+.band.feature .figure-value { font-size: 30px; }
+.band.quiet {
+  background: var(--card-tint); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 20px 24px 18px; margin-bottom: 26px;
+}
+
+/* What every figure on the page is, said once, above the first of them. */
+.totals-scope {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 20px; font-size: 12.5px; color: var(--muted);
+}
+.live-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+.verified-line {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 14px; font-size: 13px; color: var(--muted);
+}
+
+/* A figure that is deliberately absent. Not a zero — a zero is a measurement —
+   and not an error: this is the fund working as designed. */
+.figure-value.sealed {
+  font-size: 17px; font-weight: 650; color: var(--muted);
+  padding-top: 8px;
+}
+
+/* ── Operator: four modules, not four labels ─────────────────────────────────
+   Treasury settlement, national contracts, filing years and employers are the
+   things this console manages. As small-caps eyebrows they read as metadata
+   above their own content — the same weight the page gives a field label. A
+   real heading and one line of purpose says what each module is for, and costs
+   no extra boxes to do it. */
+.section-title {
+  margin: 0 0 5px; font-size: 19px; font-weight: 680;
+  /* Explicitly not uppercase: inside a card it would otherwise inherit the
+     eyebrow treatment from `.card > h2` and shout its own name. */
+  text-transform: none; letter-spacing: -0.02em; color: var(--text);
+}
+.band-head .section-title { margin-top: 0; }
+.work-zone .section-title { color: var(--text); }
+
+/* A contract that is deployed and answering says so, beside its own name. */
+.contract-card h3 { display: flex; align-items: center; gap: 8px; }
+/* Received is an inflow; balance is what is there now. One contract can say
+   both, the other deliberately cannot — which is the architecture, so it is
+   stated on the face of each card rather than in a footnote. */
+.contract-balance {
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 13px; color: var(--muted);
+}
+.contract-balance strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.contract-balance.private { color: var(--accent); font-weight: 600; }
+
+.contract-state {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ok);
+}
+
+/* ── Starting a month: two ways in, at the same weight ───────────────────────
+   The picker and the template download are alternatives, not an action and its
+   footnote — for an employer's first month the template is the first thing they
+   need. Same width, stacked, hierarchy carried by fill rather than by size. */
+.step-lead { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+/* Scoped: every other FilePicker on the site is one control in a row of prose,
+   and should stay inline. */
+.start-actions { max-width: 300px; }
+.start-actions .file-slot { max-width: none; }
+.start-actions .file-picker { display: block; width: 100%; text-align: center; }
+.start-actions .template {
+  display: block; width: 100%; margin-top: 9px;
+  text-align: center; padding: 10px 16px; font-size: 13.5px;
+  /* A real secondary: white ground and a border you can see, rather than the
+     borderless ghost this was, which read as a link that lost its underline. */
+  background: var(--card); color: var(--text); border-color: var(--line);
+}
+.start-actions .template:hover {
+  border-color: var(--accent); color: var(--accent); opacity: 1;
+}
+
+/* An act that belongs to the lifecycle but cannot be undone. Outlined, not
+   filled: a red block reads as "delete this person", which is the opposite of
+   what ending employment does — the record is what makes them eligible. */
+.button.danger-outline {
+  background: transparent; color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  font-weight: 650;
+}
+.button.danger-outline:hover:not(:disabled) {
+  background: var(--danger-soft); border-color: var(--danger); opacity: 1;
+}
+.button.danger-outline:disabled { opacity: 0.45; cursor: default; }
+
+/* ── History: the public record and the private documents ────────────────────
+   The two halves of this page are the whole argument — what the chain holds
+   about every month, and the documents only the employer can produce from it.
+   The second was a grey pill on a white card, which made the more distinctive
+   of the two look like a utility parked under the real content. */
+.record-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.record-head .section-title { font-size: 17px; }
+
+.payslip-zone {
+  background: var(--work-tint); border: 1px solid var(--work-line);
+  border-radius: var(--radius); padding: 20px 22px; margin-bottom: 18px;
+}
+.payslip-zone .band-head { margin-bottom: 14px; }
+.privacy-cue {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 5px 11px; border-radius: 999px;
+  background: var(--card); border: 1px solid var(--work-line);
+  font-size: 11.5px; font-weight: 600; color: var(--accent);
+}
+/* Month, passphrase, act — one row, one thing to do. */
+.payslip-row {
+  display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px;
+}
+.payslip-row .settle-field.period { flex: 0 1 190px; }
+.payslip-row .settle-field.passphrase { flex: 1 1 220px; }
+.payslip-row .settle-field select,
+.payslip-row .settle-field input { width: 100%; }
+/* `button.primary` is a full-width block by default — right in a stacked form,
+   wrong as the third item of a row. Enabled it is solid accent; disabled falls
+   to the global hollow-outline treatment, so the two states differ by fill. */
+.payslip-row .payslip-go {
+  flex: none; width: auto; margin: 0; padding: 11px 20px; font-size: 14px;
+}
+.payslip-zone .details { margin-top: 14px; }
+
+/* ── Settings: the payroll balance, and everything else ──────────────────────
+   pEUR is what a month is paid from and what a month can fail for want of.
+   tNIGHT and tDUST are infrastructure. Three equal tiles made this page read as
+   a crypto wallet rather than as payroll software. */
+.payroll-balance {
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: var(--radius); padding: 20px 22px; margin-bottom: 20px;
+}
+.payroll-balance-figure { display: flex; align-items: baseline; gap: 8px; }
+.payroll-balance-value {
+  font-size: 34px; font-weight: 700; letter-spacing: -0.03em;
+  color: var(--accent); font-variant-numeric: tabular-nums;
+}
+.payroll-balance-unit { font-size: 14px; font-weight: 650; color: var(--accent); }
+.payroll-balance-note {
+  margin: 8px 0 0; font-size: 12.5px; color: var(--muted); max-width: 60ch;
+}
+.status-strip-line { font-size: 13px; color: var(--muted); }
+
+/* ── Employee: a role that landed on the wrong page ──────────────────────────
+   "This is an employer's wallet" was a full card, competing with the payslip
+   action it sat under. It is a state, not a finding — one line and a way out —
+   and the interesting half of it is why an employer's own wallet cannot see its
+   employees' pay, which is the privacy model working rather than a refusal. */
+.role-notice {
+  background: var(--line-soft); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 18px;
+}
+.role-notice-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 4px;
+}
+.role-notice-head strong { font-size: 14px; }
+.role-notice .why { margin-top: 8px; }
+
+/* Before a wallet is connected this card is the page, and earns its height.
+   Once salary history is on screen the two are equally important, so it
+   tightens to an action rather than a panel. */
+.callout.payslip-open { padding: 14px 18px; }
+.callout.payslip-open h2 { margin-bottom: 2px; }
+.callout.payslip-open .file-slot { margin-top: 12px; }
+
+/* ── Benefit: how far along, and what is in the way ──────────────────────────
+   The disabled claim button needed a reason standing next to it. An unmet
+   requirement is that reason, so the tally states it in the panel that produced
+   it rather than leaving someone to count ticks. */
+.req-tally {
+  margin: 14px 0 0; padding: 10px 12px; border-radius: 10px;
+  background: var(--warn-soft); border: 1px solid var(--warn-line);
+  font-size: 13px; color: var(--muted); line-height: 1.55;
+}
+.req-tally strong { color: var(--warn); }
+.req-tally.ok { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 28%, transparent); }
+.req-tally.ok strong { color: var(--ok); }
+/* An unmet requirement is not a bullet. It is the one row that needs acting on
+   — and `.req` with neither modifier means "not checked yet", which is not a
+   problem and must not be coloured like one. */
+.req.unmet .req-mark { color: var(--warn); font-weight: 700; }
+.req.unmet .req-status { color: var(--warn); }
+
+/* An ordinary state, not a failure: still employed, so a claim has nothing to
+   act on. Neutral rather than amber — nothing is wrong and nothing is owed. */
+.claim-state {
+  display: flex; gap: 8px; margin: 12px 0 0; padding: 10px 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  font-size: 12.5px; color: var(--muted); line-height: 1.55;
+}
+.claim-state strong { color: var(--text); }

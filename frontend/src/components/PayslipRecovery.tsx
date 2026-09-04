@@ -115,8 +115,14 @@ export function PayslipRecovery({
   const body = (
     <>
 
-      <div className="actions" style={{ alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <select
+      {/* One row, read left to right: which month, the passphrase that opens
+          it, and the act. It was a select, a password box and a button in a
+          generic action row, which said "three controls" rather than "one
+          thing to do". */}
+      <div className="payslip-row">
+        <label className="settle-field period">
+          <span>Period</span>
+          <select
           value={period ?? ""}
           disabled={busy}
           onChange={(event) => {
@@ -125,33 +131,37 @@ export function PayslipRecovery({
             setError(null);
           }}
         >
-          {periods.map((value) => (
-            <option key={value} value={value}>
-              {periodName(value)}
-            </option>
-          ))}
-        </select>
+            {periods.map((value) => (
+              <option key={value} value={value}>
+                {periodName(value)}
+              </option>
+            ))}
+          </select>
+        </label>
 
         {/* Hidden, not disabled-and-filled. A password box showing dots the
             employer did not just type invites them to clear it and start over,
             which is the opposite of the point. */}
         {inherited ? null : (
-          <input
-            type="password"
-            value={passphrase}
-            disabled={busy}
-            placeholder="Payroll passphrase"
-            autoComplete="off"
-            onChange={(event) => setPassphrase(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void run();
-            }}
-          />
+          <label className="settle-field passphrase">
+            <span>Payroll passphrase</span>
+            <input
+              type="password"
+              value={passphrase}
+              disabled={busy}
+              placeholder="Enter payroll passphrase"
+              autoComplete="off"
+              onChange={(event) => setPassphrase(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void run();
+              }}
+            />
+          </label>
         )}
 
         <button
           type="button"
-          className="primary"
+          className="button primary payslip-go"
           disabled={busy || !passphrase || period === null}
           onClick={() => void run()}
         >
@@ -162,11 +172,12 @@ export function PayslipRecovery({
       {/* The instruction, and then the reason it is slow — which is a fact
           about PBKDF2 rather than about payslips, so it folds away. Explaining
           the derivation on every render is the page talking about itself. */}
-      <p className="note">
-        {inherited
-          ? "Rebuilt from the sealed openings on chain, using the passphrase this session already has."
-          : "The one you filed that month with."}
-      </p>
+      {inherited ? (
+        <p className="note">
+          Rebuilt from the sealed openings on chain, using the passphrase this
+          session already has.
+        </p>
+      ) : null}
       <details className="details">
         <summary>Why this takes a moment</summary>
         <p className="note">
@@ -210,17 +221,25 @@ export function PayslipRecovery({
   return bare ? (
     body
   ) : (
-    <section className="card payslip-card">
-      {/* A pill, matching the payroll record's badge above it. The two are
-          different functional areas — a record and a tool — and plain grey
-          uppercase beside a purple badge read as a heading that had lost its
-          styling rather than as a deliberate second kind of thing. */}
-      <h2>
-        <span className="badge neutral">Payslips</span>
-      </h2>
-      <p className="note" style={{ marginTop: 0 }}>
-        Retrieve payslips for a filed period.
-      </p>
+    /* The tinted panel this page's other half deliberately is not.
+       "Filed payroll periods" is the public record — what the chain holds about
+       every month. This is the private half: the documents only the employer
+       can produce, from openings nothing else can read. A grey pill made the
+       most distinctive thing on the page look like a utility parked underneath
+       the real content. */
+    <section className="payslip-zone">
+      <div className="band-head">
+        <div>
+          <h2 className="section-title">Payslips</h2>
+          <p className="band-sub">
+            Retrieve private payslips for a filed payroll period.
+          </p>
+        </div>
+        <span className="privacy-cue">
+          <span aria-hidden="true">🔒</span> Sealed on chain — only this
+          passphrase opens them
+        </span>
+      </div>
       {body}
     </section>
   );

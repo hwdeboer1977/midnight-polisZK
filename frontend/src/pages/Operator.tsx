@@ -169,11 +169,7 @@ export function Operator() {
         eyebrow="Operator"
         title={
           <>
-            Manage treasury settlement and employer access.
-            <span className="dash-hero-sub">
-              This key receives contributions, holds the tax vault, and opens the
-              years employers may file.
-            </span>
+            Controls treasury settlement, filing years and employer access.
           </>
         }
         aside={
@@ -184,9 +180,8 @@ export function Operator() {
             <div>
               <h3>Protocol role</h3>
               <p>
-                The operator holds the treasury keys, routes what payroll
-                withheld into the national contracts, and opens the years those
-                filings are checked against.
+                Holds the treasury keys, routes withheld payroll into the
+                national contracts, and opens the years employers file against.
               </p>
             </div>
           </div>
@@ -201,10 +196,9 @@ export function Operator() {
       <section className="work-zone">
         <div className="band-head">
           <div>
-            <h2 className="eyebrow">Treasury settlement</h2>
+            <h2 className="section-title">Treasury settlement</h2>
             <p className="band-sub">
-              Route withheld payroll from the treasury wallets into the national
-              contracts. Owed every month.
+              Move withheld payroll into the national contracts. Owed every month.
             </p>
           </div>
           <div className="band-head-actions">
@@ -262,10 +256,9 @@ export function Operator() {
       <section className="band">
         <div className="band-head">
           <div>
-            <h2 className="eyebrow">National contracts</h2>
+            <h2 className="section-title">National contracts</h2>
             <p className="band-sub">
-              What has arrived in the benefit fund and the tax vault. Read-only,
-              and public — this is what a treasury settles against.
+              Public settlement endpoints for tax and social protection.
             </p>
           </div>
         </div>
@@ -288,11 +281,10 @@ export function Operator() {
       <section className="band">
         <div className="band-head">
           <div>
-            <h2 className="eyebrow">Employers</h2>
+            <h2 className="section-title">Employers</h2>
             <p className="band-sub">
-              One live employer per payroll contract, each filing only the months
-              opened above —{" "}
-              <Link to="/app/rules">the schedule those months are pinned to</Link>.
+              Organizations authorized to file payroll, one per contract —{" "}
+              <Link to="/app/rules">the schedule their months are pinned to</Link>.
             </p>
           </div>
           <div className="band-head-actions">

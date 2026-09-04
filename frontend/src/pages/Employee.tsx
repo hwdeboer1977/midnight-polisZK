@@ -121,11 +121,10 @@ export function Employee() {
     return (
       <>
         <section className="area-head">
-          <h1>Your income</h1>
+          <h1>Your salary</h1>
           <p className="lede">
-            Open the payslip your employer sent you — it is checked against what
-            they published on chain, so the figures cannot have been changed
-            after payday.
+            Your salary details stay private. They are not published on chain and
+            can only be seen from your payslip.
           </p>
         </section>
 
@@ -162,7 +161,6 @@ export function Employee() {
     ? Object.entries(account.shieldedBalances).find(([type]) => type.endsWith(tokenId))?.[1] ?? 0n
     : 0n;
 
-  const paid = rows.filter((row) => row.paid);
   /** Whether naming the contract per row distinguishes anything. */
   const manyEmployers = new Set(rows.map((row) => row.employer)).size > 1;
   const walletName = wallet?.name || wallet?.rdns || null;
@@ -170,10 +168,10 @@ export function Employee() {
   return (
     <>
       <section className="area-head">
-        <h1>Your income</h1>
+        <h1>Your salary</h1>
         <p className="lede">
-          Only you can see these figures. They are not hidden behind a login —
-          they were never published.
+          Your salary details stay private. Only you can see these figures — they
+          are not hidden behind a login, they were never published.
         </p>
       </section>
 
@@ -199,44 +197,58 @@ export function Employee() {
         <>
           {/* Plain language first. Someone who cannot see their pay needs to
               know what to check, not how a commitment scheme works. */}
-          <section className="card">
-            <h2>
-              {employerOf
-                ? "This is an employer's wallet"
-                : "No payroll found"}
-            </h2>
-            {employerOf ? (
-              // Short, because the claim-key panel above now carries the
-              // explanation. Saying "this wallet is the employer of X" twice on
-              // one page made it read as two different findings.
-              <div className="actions" style={{ marginTop: 0 }}>
-                <Link className="button" to="/employer">
-                  Go to Employer
+          {employerOf ? (
+            /* A state, not a finding. This was a full card competing with the
+               payslip action above it — but "you are on the wrong side of the
+               product" is one line, and the interesting half of it is WHY an
+               employer's own wallet cannot see its employees' pay. That is the
+               privacy model working, so it folds open rather than being told. */
+            <div className="role-notice">
+              <div className="role-notice-head">
+                <strong>Employer wallet connected</strong>
+                <Link className="button secondary compact" to="/employer">
+                  Go to Employer →
                 </Link>
               </div>
-            ) : (
-              <>
-                <p className="lead-sm" style={{ marginTop: 0 }}>
-                  No payroll period on {networkId} names this wallet as a payee.
-                  If your employer has already added you, the likeliest cause is
-                  that a different wallet is connected than the one you sent
-                  them — the keys below are the ones they need.
+              <p className="note" style={{ margin: 0 }}>
+                This wallet holds no private salary records of its own.
+              </p>
+              <details className="why">
+                <summary>Why can't this wallet see employee salaries?</summary>
+                <p className="note">
+                  Because nothing on chain holds them. Filing a month publishes
+                  one opaque commitment per employee and four column totals — the
+                  figures behind them stay on the machine that filed them and
+                  reach each employee in a payslip. An employer can re-open their
+                  own copy from the workbook; the chain cannot, and neither can
+                  this page.
                 </p>
-                <div className="actions">
-                  <button onClick={() => setShowKeys((open) => !open)}>
-                    {showKeys ? "Hide my payroll keys" : "View my payroll keys"}
-                  </button>
-                </div>
-              </>
-            )}
+                <p className="note">
+                  So this is not a permission check that happens to fail. There
+                  is no record here to be refused access to.
+                </p>
+              </details>
+            </div>
+          ) : (
+          <section className="card">
+            <h2>No payroll found</h2>
+            <p className="lead-sm" style={{ marginTop: 0 }}>
+              No payroll period on {networkId} names this wallet as a payee. If
+              your employer has already added you, the likeliest cause is that a
+              different wallet is connected than the one you sent them — the keys
+              below are the ones they need.
+            </p>
+            <div className="actions">
+              <button onClick={() => setShowKeys((open) => !open)}>
+                {showKeys ? "Hide my payroll keys" : "View my payroll keys"}
+              </button>
+            </div>
 
             {/* Inside the panel that raises the question. It used to sit below
                 every other card on the page, which is the one place someone
                 asking "why can't I see my payroll" will not look. */}
             <details className="details">
-              <summary>
-                {employerOf ? "Why does an employer see nothing here?" : "Why can't I see my payroll?"}
-              </summary>
+              <summary>Why can't I see my payroll?</summary>
             <p className="note">
               Your employer files a hash of your <strong>coin public key</strong>{" "}
               for each period, and this page finds your periods by recomputing
@@ -258,8 +270,9 @@ export function Employee() {
               </p>
             </details>
           </section>
+          )}
 
-          {showKeys ? (
+          {showKeys && !employerOf ? (
             <PayrollKeys account={account} wallet={walletName} />
           ) : null}
         </>
@@ -269,15 +282,18 @@ export function Employee() {
             <div className="headline-value" title={`Exactly €${formatPeur(balance)}`}>
               €{formatPeurTile(balance)}
             </div>
-            {/* Named, not inferred. A payslip reading €134.75 above a figure
-                of €1,016.40 invites exactly one question, and "pEUR in your
-                wallet" answered it only if you already knew the difference
+            {/* This is the WALLET's pEUR balance, not a sum of salaries: the
+                same wallet can hold a faucet claim or any other transfer, so
+                "from 1 payroll period received" claimed an origin the figure
+                does not have. How many periods were paid is a separate fact,
+                and Salary history below lists them.
+
+                Naming it still matters — a payslip reading €134.75 above a
+                figure of €1,016.40 invites exactly one question, and "pEUR in
+                your wallet" answered it only if you already knew the difference
                 between a month's pay and a running balance. */}
-            <div className="headline-label">Current pEUR balance</div>
-            <div className="headline-sub">
-              across {paid.length === 1 ? "1 period" : `${paid.length} periods`}{" "}
-              received
-            </div>
+            <div className="headline-label">Payroll wallet balance</div>
+            <div className="headline-sub">pEUR this wallet can spend</div>
             <p className="ok-line" style={{ margin: "10px 0 0" }}>
               ✓ Received privately
             </p>
@@ -317,7 +333,7 @@ export function Employee() {
           ) : null}
 
           <section className="card">
-            <h2>Payroll periods</h2>
+            <h2 className="section-title accent">Salary history</h2>
             <table className="roster periods">
               <thead>
                 <tr>
@@ -327,7 +343,7 @@ export function Employee() {
                       down every row is a column that costs width and answers
                       nothing. It returns the moment there are two. */}
                   {manyEmployers ? <th>Employer</th> : null}
-                  <th>Net</th>
+                  <th>Net salary</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -373,10 +389,16 @@ export function Employee() {
               </tbody>
             </table>
             <p className="note">
-              Each row is an employer's on-chain statement that a period names
-              your key — evidence of employment you hold yourself, that no
-              employer can withdraw and no observer can read.
+              Each period is recorded on chain; the amount can only be opened
+              with your payslip.
             </p>
+            <details className="why">
+              <summary>How salary privacy works</summary>
+              <p className="note">
+                Each row is an employer's on-chain statement that a period names
+                your key — evidence of employment you hold yourself, that no
+                employer can withdraw and no observer can read.
+              </p>
             {/* ⚠️ This used to end "without the payslip for your final period
                 you cannot make a claim at all", which was simply not true —
                 `PayslipRecovery` regenerates any payslip from the openings on
@@ -391,26 +413,29 @@ export function Employee() {
                 cliff — and it is the argument for sealing a second copy to the
                 employee's own encryption key, which the roster already
                 collects. */}
-            <p className="note" style={{ marginTop: 12 }}>
-              Keep the payslips your employer sends you. They are the only copy
-              you can open yourself — the openings on chain are sealed under
-              your employer's key. If you lose one, your employer can produce it
-              again from the chain, so a lost payslip is a request to make, not
-              a claim you forfeit.
-            </p>
+              <p className="note">
+                Keep the payslips your employer sends you. They are the only copy
+                you can open yourself — the openings on chain are sealed under
+                your employer's key. If you lose one, your employer can produce
+                it again from the chain, so a lost payslip is a request to make,
+                not a claim you forfeit.
+              </p>
+            </details>
           </section>
 
           {/* Quiet. It was a lavender panel the size of the salary card,
               which spent the page's strongest colour on the one block carrying
               no figures — and left lavender meaning both "your money" and "a
               note about privacy". */}
+          {/* One privacy line, not four. The page already says it in the lede,
+              on the balance card and beside every opened payslip; a fourth
+              telling turns the claim into a refrain. What survives is the
+              sentence that states the architecture. */}
           <p className="privacy-note">
             <span aria-hidden="true">🛡</span>
             <span>
-              <strong>Private by design.</strong> Your individual salary and
-              payment history are visible to your wallet, but are not published
-              on chain. What anyone else can see is that a period had a payee —
-              never who, and never for how much.
+              <strong>Your salary is not public.</strong> The chain records that
+              payroll happened, not how much you earned.
             </span>
           </p>
 
@@ -503,7 +528,16 @@ function PayslipCheck({
           {slip.employee ? ` — ${slip.employee}` : ""}
         </h2>
         <p className="ok-line" style={{ marginTop: 0 }}>
-          ✓ Verified against the commitment your employer filed
+          ✓ Matches the payroll commitment your employer filed on chain
+        </p>
+        {/* The two facts a judge — and an employee — should not have to infer
+            from an absence. Nothing on this page could show them; that is the
+            point, and saying so is the only way the point lands. */}
+        <p className="ok-line" style={{ margin: "4px 0 0" }}>
+          ✓ The amounts above were never published
+        </p>
+        <p className="ok-line" style={{ margin: "4px 0 0" }}>
+          ✓ Your identity was never published
         </p>
         {/* Three separate facts, kept separate on purpose. A payslip can be
             genuine and unpaid; it can be genuine and issued to someone else.
@@ -565,20 +599,21 @@ function PayslipCheck({
   }
 
   return (
-    <section className="callout">
-      <h2>Check your payslip</h2>
+    <section className="callout payslip-open">
+      {/* "Check your payslip" named the machinery. Verification is what this
+          page does with the file, not what an employee came to do — they came
+          to see what they were paid, and the check happens on the way. */}
+      <h2>View your payslip</h2>
       <p className="note" style={{ marginTop: 0 }}>
-        Your employer sends you a payslip file. Open it here and this page will
-        check it against what they published on chain — the amounts are not
-        stored there, so this is the only way to see them, and the check is what
-        makes them trustworthy.
+        Open your private payslip and verify it against your employer's on-chain
+        filing.
       </p>
 
       {/* File only. The paste box is gone; the link route it also served is
           not — a payslip link carries the slip in its fragment, so opening one
           checks it on arrival without touching this control. */}
       <FilePicker
-        label={busy ? "Checking…" : "Choose your payslip…"}
+        label={busy ? "Opening…" : "Open payslip"}
         accept="application/json,.json,.txt"
         disabled={busy}
         onFile={async (file) => run(await file.text())}

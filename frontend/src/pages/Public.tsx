@@ -69,126 +69,163 @@ export function Public() {
 
       {error ? <p className="status error">Could not read the chain: {error}</p> : null}
 
-      {/* ── 1. How big is the network? ──────────────────────────────────────
-          One line, not three tiles. The scale of a pilot is context for the
-          figures below it, and giving it the same visual weight as the money
-          made three small integers compete with the thing they qualify. */}
-      <p className="scale-strip">
-        {loading ? (
-          "Reading the chain…"
-        ) : (
-          <>
-            <strong>{group(BigInt(stats.employers))}</strong>{" "}
-            {stats.employers === 1 ? "employer" : "employers"}
-            <span className="dot">·</span>
-            <strong>{group(BigInt(stats.workersCovered))}</strong>{" "}
-            {stats.workersCovered === 1 ? "worker" : "workers"}
-            <span className="dot">·</span>
-            <strong>{group(BigInt(stats.periodsFiled))}</strong> payroll{" "}
-            {stats.periodsFiled === 1 ? "period" : "periods"}
-            {stats.periodsSettled < stats.periodsFiled ? (
-              <span className="faint">
-                {" "}
-                ({group(BigInt(stats.periodsSettled))} fully settled)
-              </span>
-            ) : null}
-          </>
-        )}
+      {/* The ambiguity every figure below inherits, settled once: none of this
+          is a snapshot of today or of the latest run. */}
+      <p className="totals-scope">
+        <span className="live-dot" aria-hidden="true" /> All-time network totals ·
+        read from on-chain state
       </p>
 
-      {/* The one card on the page, and the reason the rest are not cards. This
-          identity is what the system exists to make publicly checkable, and each
-          term is its own published total read from the contract — the page does
-          no arithmetic, so a reader can check the four against each other and
-          catch us if they disagree. */}
-      <section className="card headline-figure">
-        <div
-          className="headline-value"
-          title={loading ? undefined : exact(stats.payrollFiled)}
-        >
-          {loading ? "…" : money(stats.payrollFiled)}
+      {/* ── 1. How big is the network? ──────────────────────────────────────
+          Three counts, named exactly. This was one line reading
+          "1 employer · 2 workers · 1 payroll period", which set the scale of the
+          pilot in the same breath as its terminology: "workers" appears nowhere
+          else in a product built on Employer and Employee, and a bare count
+          leaves a reader guessing whether a period means filed or settled. */}
+      <Band title="Network activity">
+        <div className="figures three">
+          <Figure
+            value={loading ? "…" : group(BigInt(stats.employers))}
+            label="Registered employers"
+            note={
+              stats.contracts > stats.employers
+                ? `${group(BigInt(stats.contracts))} payroll contracts deployed`
+                : "each holding one payroll contract"
+            }
+          />
+          <Figure
+            value={loading ? "…" : group(BigInt(stats.workersCovered))}
+            // Not "Employees": nothing on chain is an employee registry, and a
+            // count that implies one would be describing a record the contract
+            // does not keep. This is who appears on the newest filed period of
+            // each employer — which is what the ledger can actually answer.
+            label="Employees on latest payroll"
+            note="summed across every employer's most recent filed period"
+          />
+          <Figure
+            value={loading ? "…" : group(BigInt(stats.periodsFiled))}
+            label="Payroll periods filed"
+            note={
+              stats.periodsSettled === stats.periodsFiled
+                ? "all fully settled"
+                : `${group(BigInt(stats.periodsSettled))} fully settled`
+            }
+          />
         </div>
-        <div className="headline-label">
-          Gross payroll
-          {!loading && stats.payrollSettled === stats.payrollFiled
-            ? " · fully settled"
-            : ""}
+      </Band>
+
+      {/* ── 2. What has been paid, ever ─────────────────────────────────────
+          Four published totals and the identity between them. This was one
+          enormous gross figure with the other three beneath it as satellites,
+          which made the page open on a number whose meaning — all time? this
+          month? — it never stated. The four are equals: each is its own total
+          read from the contract, and the page does no arithmetic beyond the
+          percentages, so a reader can check them against each other and catch
+          us if they disagree. */}
+      <Band title="Cumulative payroll" variant="feature">
+        <div className="figures four">
+          <Figure
+            value={loading ? "…" : money(stats.payrollFiled)}
+            exact={loading ? undefined : exact(stats.payrollFiled)}
+            label="Gross payroll"
+            note={loading ? "all periods, all employers" : "100% · all periods"}
+          />
+          <Figure
+            value={loading ? "…" : money(stats.taxFiled)}
+            exact={loading ? undefined : exact(stats.taxFiled)}
+            label="Income tax"
+            note={share(stats.taxFiled, stats.payrollFiled, loading)}
+          />
+          <Figure
+            value={loading ? "…" : money(stats.socialFiled)}
+            exact={loading ? undefined : exact(stats.socialFiled)}
+            label="Social contributions"
+            note={share(stats.socialFiled, stats.payrollFiled, loading)}
+          />
+          <Figure
+            value={loading ? "…" : money(stats.netFiled)}
+            exact={loading ? undefined : exact(stats.netFiled)}
+            label="Net salaries"
+            note={share(stats.netFiled, stats.payrollFiled, loading)}
+          />
         </div>
 
-        <div className="identity">
-          <div className="term real">
-            <span className="term-value" title={loading ? undefined : exact(stats.taxFiled)}>
-              {loading ? "…" : money(stats.taxFiled)}
-            </span>
-            <span className="term-label">tax</span>
-          </div>
-          <span className="op">+</span>
-          <div className="term real">
-            <span
-              className="term-value"
-              title={loading ? undefined : exact(stats.socialFiled)}
-            >
-              {loading ? "…" : money(stats.socialFiled)}
-            </span>
-            <span className="term-label">contributions</span>
-          </div>
-          <span className="op">+</span>
-          <div className="term real">
-            <span className="term-value" title={loading ? undefined : exact(stats.netFiled)}>
-              {loading ? "…" : money(stats.netFiled)}
-            </span>
-            <span className="term-label">net pay</span>
-          </div>
-        </div>
+        {/* The identity itself, on one line. Four figures in a row state the
+            terms; this states that they add up, which is the claim anyone can
+            check without seeing a single employee's figures. */}
+        {loading ? null : (
+          <p className="equation">
+            <strong>{money(stats.payrollFiled)}</strong> gross{" "}
+            <span className="op">=</span> <strong>{money(stats.taxFiled)}</strong> tax{" "}
+            <span className="op">+</span> <strong>{money(stats.socialFiled)}</strong>{" "}
+            contributions <span className="op">+</span>{" "}
+            <strong>{money(stats.netFiled)}</strong> net
+            {stats.payrollSettled === stats.payrollFiled && stats.payrollFiled > 0n ? (
+              <span className="settled-mark"> · fully settled</span>
+            ) : null}
+          </p>
+        )}
 
         <Why>
           <p className="note">
             Anyone can check that gross equals tax plus contributions plus net,
-            across every employer, without seeing a single worker's figures. The
-            circuit enforces the identity <em>per employee</em>, not only on
-            these totals — balancing an overstatement for one worker against an
+            across every employer, without seeing a single employee's figures.
+            The circuit enforces the identity <em>per employee</em>, not only on
+            these totals — balancing an overstatement for one against an
             understatement for another would satisfy the sums and lie about both.
           </p>
           <p className="note">
             The amounts are not filed by employers. They are computed inside the
             circuit from the gross salary and a published rule set, so an
             employer can neither choose a rate nor pick a cheaper version of the
-            rules.
+            rules — <Link to="/app/rules">the rules, and which months are pinned
+            to them</Link>.
           </p>
           <p className="note">
             Amounts are in <strong>pEUR</strong>, the euro stablecoin salaries
-            settle in. Figures round to two decimals; hover any of them for the
+            settle in, and are cumulative across every period ever filed on this
+            network. Figures round to two decimals; hover any of them for the
             exact minor-unit value.
           </p>
         </Why>
-      </section>
+      </Band>
 
       {/* ── 2. What is private? ─────────────────────────────────────────────
           Two figures and one sentence. The argument ran to three paragraphs and
           it is the best writing on the page, which is exactly why it was burying
           the number that proves it. */}
-      <Band title="Privacy">
-        <div className="figures">
-          <div className="figure-cell">
-            <div className="figure-value">
-              {loading ? "…" : group(BigInt(stats.commitments))}
-            </div>
-            <div className="figure-label">Salary commitments</div>
-          </div>
-          <div className="figure-cell">
-            <div className="figure-value">0</div>
-            <div className="figure-label">Salaries exposed</div>
-          </div>
+      <Band title="Privacy" variant="quiet">
+        <div className="figures three">
+          <Figure
+            value={loading ? "…" : group(BigInt(stats.commitments))}
+            label="Salary records committed"
+            note="one sealed commitment per employee, per period"
+          />
+          {/* The two zeros are the claim the rest of the page supports, so they
+              are figures rather than a sentence — and green, because here a zero
+              is the achievement rather than an absence. */}
+          <Figure
+            value="0"
+            label="Individual salaries exposed"
+            note="no ledger field holds one"
+            tone="good"
+          />
+          <Figure
+            value="0"
+            label="Identities exposed"
+            note="no name, address or payee is published"
+            tone="good"
+          />
         </div>
         <p className="band-line">
-          Individual salaries, identities and payment amounts never appear on the
-          public ledger.
+          Individual payroll records stay private. Only the verified aggregate
+          totals above are published.
         </p>
         <Why label="How privacy works">
           <p className="note">
-            Each worker's salary for each period is sealed into one opaque
+            Each employee's salary for each period is sealed into one opaque
             commitment. The commitment is what the chain holds; the figure behind
-            it stays on the employer's machine and reaches the worker in a
+            it stays on the employer's machine and reaches the employee in a
             payslip. Nothing on chain opens it.
           </p>
           <p className="note">
@@ -211,7 +248,7 @@ export function Public() {
           WITHHELD-FROM-BENEFITS figure down here, neither of which is what
           reached the fund. `contributed` is the fund's own `contributedTotal`,
           so the money is followed rather than described. */}
-      <Band title="Social protection">
+      <Band title="Social protection" variant="feature" accent="ok">
         {stats.fund === null ? (
           <p className="band-line">
             {loading
@@ -220,51 +257,73 @@ export function Public() {
           </p>
         ) : (
           <>
-            <div className="figures three">
-              <div className="figure-cell">
-                <div
-                  className="figure-value"
-                  title={loading ? undefined : exact(stats.fund.contributed)}
-                >
-                  {loading ? "…" : money(stats.fund.contributed)}
-                </div>
-                <div className="figure-label">Contributed</div>
-              </div>
-              <div className="figure-cell">
-                <div className="figure-value">
-                  {loading ? "…" : group(BigInt(stats.fund.claimsPaid))}
-                </div>
-                <div className="figure-label">
-                  {stats.fund.claimsPaid === 1 ? "Claim settled" : "Claims settled"}
-                </div>
-              </div>
-              <div className="figure-cell">
-                <div className="figure-value">
-                  {loading ? "…" : group(BigInt(stats.fund.claimTrees))}
-                </div>
-                <div className="figure-label">
-                  {stats.fund.claimTrees === 1 ? "Claimable period" : "Claimable periods"}
-                </div>
-              </div>
+            <div className="figures four">
+              <Figure
+                value={loading ? "…" : money(stats.fund.contributed)}
+                exact={loading ? undefined : exact(stats.fund.contributed)}
+                label="Contributions received"
+                note="money in, from every employer"
+                tone="good"
+              />
+              {/* The question a visitor asks next, answered with the reason
+                  rather than a figure. There is no published total of benefits
+                  paid and there deliberately cannot be one: benefits leave as
+                  shielded coins, and a running total beside `claimsPaid` would
+                  give away the average benefit. Saying so here is stronger than
+                  omitting the row — this is the property the fund exists to
+                  demonstrate, met at the moment someone looks for it. */}
+              <Figure
+                value="Not published"
+                label="Benefits paid"
+                note="shielded — see below"
+                tone="sealed"
+              />
+              <Figure
+                value={loading ? "…" : group(BigInt(stats.fund.claimsPaid))}
+                label="Claims settled"
+                note="counted, never itemised"
+              />
+              <Figure
+                value={loading ? "…" : group(BigInt(stats.fund.claimTrees))}
+                label="Claimable periods"
+                note="months with a published claim tree"
+              />
             </div>
 
-            <div className="flow">
-              <span>Contributions</span>
-              <span className="arrow">→</span>
-              <span className="node">Fund</span>
-              <span className="arrow">→</span>
-              <span>Private benefits</span>
-            </div>
+            {/* The counterpart to the payroll identity, and deliberately the
+                same shape. Where that one ends in a figure, this one ends in a
+                thing a normal dashboard would put an amount in — which is the
+                claim, made visually rather than argued. */}
+            {loading ? null : (
+              <>
+                <p className="equation ok">
+                  <strong>{money(stats.fund.contributed)}</strong> contributions{" "}
+                  <span className="op">→</span> Social Protection Fund{" "}
+                  <span className="op">→</span> Private benefit payments
+                </p>
+                <p className="equation-sub">
+                  {stats.fund.claimsPaid === 0
+                    ? "No claim settled yet"
+                    : `${group(BigInt(stats.fund.claimsPaid))} claim${
+                        stats.fund.claimsPaid === 1 ? "" : "s"
+                      } settled`}
+                  <span className="dot">·</span> amount private
+                  <span className="dot">·</span>
+                  {group(BigInt(stats.fund.claimTrees))} claimable period
+                  {stats.fund.claimTrees === 1 ? "" : "s"}
+                </p>
+              </>
+            )}
 
             <p className="band-line">
-              A claim proves the claimant was employed long enough and what her
-              final salary was, and discloses neither. What settles on chain is a
-              count and one opaque nullifier.
+              A claim proves the claimant worked long enough and that their final
+              salary met the rules, without revealing either. What settles on
+              chain is a count and one opaque nullifier.
             </p>
 
             <Why label="What the fund does and does not publish">
               <p className="note">
-                <strong>Contributed is money in, not a balance.</strong> The
+                <strong>Contributions received is money in, not a balance.</strong> The
                 fund's balance is not published at all: it holds a shielded coin,
                 so this fund is deliberately not publicly solvent — and that
                 cannot be fixed without also revealing what each claimant
@@ -274,7 +333,14 @@ export function Public() {
               <p className="note">
                 Each claimant is indistinguishable from everyone terminated in
                 the same month across every employer here. Never who claimed,
-                which employer she left, or what she received.
+                which employer they left, or what they received.
+              </p>
+              <p className="note">
+                <strong>Benefits paid is not published, and cannot be.</strong>{" "}
+                A benefit leaves as a shielded coin, so no amount appears on
+                chain — and a running total beside the claim count would give
+                away the average benefit, which is the same disclosure by
+                arithmetic.
               </p>
               <p className="note">
                 Benefits are themselves taxed, and those totals <em>are</em>{" "}
@@ -304,6 +370,13 @@ export function Public() {
           Addresses, then everything that is documentation rather than a fact
           about the system. */}
       <Band title={`Verify on Midnight ${networkId}`}>
+        {/* The end of the progression: here are the numbers, here is what they
+            do not expose, and here is where you check them without asking us. */}
+        <p className="verified-line">
+          <span className="live-dot" aria-hidden="true" /> Live on Midnight{" "}
+          {networkId} — every figure above was read from the contracts below.
+        </p>
+
         {payrollContracts.length === 0 && !peurContract ? (
           <p className="band-line">
             {loading ? "Reading deployments…" : `Nothing deployed on ${networkId} yet.`}
@@ -464,9 +537,92 @@ export function Public() {
  * card-inside-card nesting that came of putting a bordered panel inside a
  * bordered section inside another card.
  */
-function Band({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * One published figure: the number, what it is, and one line qualifying it.
+ *
+ * The qualifier is not decoration. "1 employer" and "2 workers" said nothing
+ * about whether a period meant filed or settled, or whether €560 was this month
+ * or every month — and a reader who has to guess at that cannot check anything.
+ */
+function Figure({
+  value,
+  label,
+  note,
+  exact,
+  tone,
+}: {
+  value: string;
+  label: string;
+  note?: string;
+  /** The unrounded figure, on hover. Nothing here rounds without saying so. */
+  exact?: string;
+  /**
+   * `good` for a zero that is an achievement rather than an absence;
+   * `sealed` for a figure that is deliberately not published, which is a
+   * different statement from one that is missing or still loading.
+   */
+  tone?: "good" | "sealed";
+}) {
   return (
-    <section className="band">
+    <div className="figure-cell">
+      <div className={tone ? `figure-value ${tone}` : "figure-value"} title={exact}>
+        {value}
+      </div>
+      <div className="figure-label">{label}</div>
+      {note ? <div className="figure-note">{note}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * A term as a percentage of gross, for the payroll row.
+ *
+ * Computed here rather than published, and the only arithmetic on this page —
+ * so it is stated as a share of a figure standing beside it rather than
+ * presented as a fact from the chain.
+ */
+function share(part: bigint, whole: bigint, loading: boolean): string {
+  if (loading) return "share of gross";
+  if (whole === 0n) return "—";
+  // Two decimals, from integer arithmetic: these are minor units, and the
+  // published schedule's own rates are quoted to the same precision.
+  const basisPoints = Number((part * 10000n) / whole) / 100;
+  return `${basisPoints.toFixed(2)}% of gross`;
+}
+
+/**
+ * One section of the dashboard.
+ *
+ * `feature` is the money — the block the page is really about, so it is the one
+ * panel that lifts off the page. `quiet` is a tinted panel for the claim that
+ * qualifies it. Everything else sits on the page under a rule, because a page
+ * where every section is a card has no hierarchy at all, only boxes.
+ */
+function Band({
+  title,
+  children,
+  variant,
+  accent,
+}: {
+  title: string;
+  children: React.ReactNode;
+  variant?: "feature" | "quiet";
+  /**
+   * Which of the two money flows this is.
+   *
+   * Payroll and social protection are equals — one is what an employer pays,
+   * the other is what the country insures with it — so they share the panel and
+   * differ only in colour. Without that they read as a feature and its
+   * footnotes.
+   */
+  accent?: "ok";
+}) {
+  return (
+    <section
+      className={
+        ["band", variant, accent && `accent-${accent}`].filter(Boolean).join(" ")
+      }
+    >
       <h2 className="eyebrow">{title}</h2>
       {children}
     </section>

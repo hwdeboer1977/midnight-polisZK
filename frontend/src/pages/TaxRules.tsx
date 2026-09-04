@@ -161,14 +161,24 @@ function Schedule({ params }: { params: TaxParams }) {
       <div className="schedule-grid">
         <div className="schedule-col">
           <h2>Income tax</h2>
+          {/* The band is the rule; the rate is one attribute of it. Setting the
+              percentages at 27px and the ranges at note size inverted that —
+              the eye landed on three numbers and had to hunt for what they
+              applied to. */}
+          <div className="rate-head">
+            <span>Monthly taxable income</span>
+            <span>Tax rate</span>
+          </div>
           <ul className="rate-list">
             <RateRow
-              label={`Up to €${formatPeurWhole(params.threshold1)}`}
+              label={`€0 – €${formatPeurWhole(params.threshold1)}`}
+              unit="/ month"
               exact={`Exactly €${formatPeur(params.threshold1)} per month`}
               rate={params.rate1}
             />
             <RateRow
               label={`€${group(band2From)} – €${formatPeurWhole(params.threshold2)}`}
+              unit="/ month"
               exact={`Above €${formatPeur(params.threshold1)}, up to €${formatPeur(
                 params.threshold2
               )} per month`}
@@ -176,33 +186,50 @@ function Schedule({ params }: { params: TaxParams }) {
             />
             <RateRow
               label={`Above €${formatPeurWhole(params.threshold2)}`}
+              unit="/ month"
               exact={`Above €${formatPeur(params.threshold2)} per month`}
               rate={params.rate3}
             />
           </ul>
-          <p className="note">
-            Monthly taxable income. The published schedule is annual — €
-            {formatPeurWhole(params.threshold1 * 12n)} and €
-            {formatPeurWhole(params.threshold2 * 12n)} a year — and both divide
-            into whole monthly cents, so nothing is lost applying them per period.
-          </p>
+          <details className="why">
+            <summary>How monthly thresholds are derived</summary>
+            <p className="note">
+              The schedule is published annually — €
+              {formatPeurWhole(params.threshold1 * 12n)} and €
+              {formatPeurWhole(params.threshold2 * 12n)} a year — and a payroll
+              period is a month, so each is divided by twelve. Both divide into
+              whole monthly cents, so nothing is lost in the conversion; the
+              exact monthly figure is on each row above.
+            </p>
+          </details>
         </div>
 
         <div className="schedule-col">
           <h2>Social insurance</h2>
+          <div className="rate-head">
+            <span>Contributable income</span>
+            <span>Rate</span>
+          </div>
           <ul className="rate-list">
+            {/* The rule a viewer needs is "3% of contributable income". The
+                ceiling is real and has to be stated, but rendering it as a
+                €0 – €1,000,000 range put an obviously artificial number where
+                the rule belongs, and read as absurd before the note explaining
+                it was reached. */}
             <RateRow
-              label="Of contributable income"
+              label="All contributable income"
+              marker="*"
               exact={`Capped at €${formatPeur(params.maxContribBase)} per month`}
               rate={params.contribRate}
             />
           </ul>
           <p className="demo-param">
-            <strong>Demo parameter</strong> The €
-            {formatPeurWhole(params.maxContribBase)} monthly ceiling is
-            deliberately non-binding in this prototype. A production deployment
-            publishes the jurisdiction's statutory ceiling as a new immutable
-            version rather than editing this one.
+            <strong>Demo parameter</strong>
+            <span className="demo-marker">*</span> Ceiling €
+            {formatPeurWhole(params.maxContribBase)} / month — above any salary
+            this system will see, so the contribution is effectively uncapped. A
+            production deployment publishes the jurisdiction's statutory ceiling
+            as a new immutable version rather than editing this one.
           </p>
         </div>
       </div>
@@ -212,16 +239,26 @@ function Schedule({ params }: { params: TaxParams }) {
 
 function RateRow({
   label,
+  unit,
+  marker,
   exact,
   rate: basisPoints,
 }: {
   label: string;
+  /** "/ month", set quieter than the range it qualifies. */
+  unit?: string;
+  /** Ties the row to a footnote below it, for a caveat that is not the rule. */
+  marker?: string;
   exact: string;
   rate: number;
 }) {
   return (
     <li className="rate-row" title={exact}>
-      <span className="rate-band">{label}</span>
+      <span className="rate-band">
+        {label}
+        {unit ? <span className="rate-unit"> {unit}</span> : null}
+        {marker ? <span className="rate-marker">{marker}</span> : null}
+      </span>
       <span className="rate-value">{rate(basisPoints)}</span>
     </li>
   );

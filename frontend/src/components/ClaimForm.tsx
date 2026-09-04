@@ -229,31 +229,29 @@ export function ClaimForm() {
     // rest of the app reserves for a workflow. It was white, level with the
     // explanatory cards around it.
     <section className="card claim-workflow">
-      <h2>Make a claim</h2>
-      {/* "None is uploaded anywhere" was unconditional and is not, once the
-          proof can be delegated to the wallet. The claim about the CHAIN is
-          unchanged and is the one that matters; where the proof is built is now
-          a choice, made below. */}
+      <h2 className="section-title accent">Make a claim</h2>
+      {/* Two lines, then the steps. The paragraph this replaces was accurate
+          and was a briefing: where the membership proof comes from is a thing
+          to read once, and it is still one disclosure away below. */}
       <p className="note" style={{ marginTop: 0 }}>
-        One file, and it is already yours. The proof of membership is assembled
-        here from public data and your wallet, so there is nothing to fetch and
-        nothing to keep. Nothing is uploaded to any server, and what reaches the
-        chain discloses only the period and that a claim was made — not who you
-        are, not your salary, not the amount.
-      </p>
-      {/* Said once, above, because the three lines below each say it for a
-          DIFFERENT reason and a reader who meets them cold will assume the
-          usual one — that a file is a password to their money. None of them is:
-          a claim needs the wallet as well, and the contract checks that on its
-          own. What these files cost if they go astray is privacy, plus one
-          nuisance the bundle can cause. */}
-      <p className="note">
-        Keep your payslip to yourself. Not because it lets somebody take your
-        benefit — claiming needs your wallet too, and the contract checks that
-        separately — but because it is the one document with your actual salary
-        in it.
+        Use your final payslip to generate the private proof your claim needs.
+        The payslip never leaves your device.
       </p>
 
+      {/* Still employed is the ordinary case, not a failure — but the steps
+          below cannot run without a termination attestation, and a workflow
+          that silently refuses to complete reads as broken. The steps stay
+          visible: what a claim involves is worth seeing before you need it. */}
+      {ended.length === 0 ? (
+        <p className="claim-state">
+          <span aria-hidden="true">ⓘ</span>
+          <span>
+            <strong>You are currently employed.</strong> These steps become
+            available if your employment ends and your employer publishes the
+            attestation — until then there is nothing to claim against.
+          </span>
+        </p>
+      ) : null}
       {/* What used to be the first of three inputs, now a status line: the
           bundle assembles itself, so there is nothing to fetch and nothing to
           keep. Shown rather than hidden because a claimant who sees only a
@@ -272,7 +270,7 @@ export function ClaimForm() {
 
         <li>
           <div className="claim-input-head">
-            <strong>Your payslip</strong>
+            <strong>Select final payslip</strong>
             <span className="muted">from your employer</span>
           </div>
           <FilePicker
@@ -293,6 +291,90 @@ export function ClaimForm() {
           </p>
         </li>
 
+
+      {/* Where the proof is generated.
+          
+          It matters more here than anywhere else in the app. Unticked, proving
+          runs against a proof server on the claimant's own machine — so a
+          person who has just lost their job has to install Docker and download
+          proving parameters before they can collect a benefit. Ticked, a wallet
+          that can prove does it in-tab and they need nothing.
+          
+          The disclosure is stated rather than glossed: proving consumes the
+          claim key and the final month's figures, so delegating hands both to
+          the wallet. That is a real choice, and the wallet is a party she has
+          already trusted with her spending keys — but it is not the same as
+          nothing leaving the page, and the copy does not pretend it is. */}
+        <li>
+          <div className="claim-input-head">
+            <strong>Generate private proof</strong>
+            <span className="muted">on this device, or in your wallet</span>
+          </div>
+      <label className="prove-here">
+        <input
+          type="checkbox"
+          checked={delegateProving && canDelegate}
+          disabled={busy || !canDelegate}
+          onChange={(event) => setDelegateProving(event.target.checked)}
+        />{" "}
+        Generate the proof privately in my wallet
+        <span className="muted">
+          {" "}
+          {canDelegate ? (
+            <>
+              — no salary data is sent to a proving server.{" "}
+              <strong>
+                Your final month's figures are passed to your wallet for local
+                proof generation.
+              </strong>{" "}
+              <span title="Unticked, proving runs against a proof server on this machine at 127.0.0.1:6300 and reaches nowhere else.">
+                Unticked, they stay on this page.
+              </span>
+            </>
+          ) : (
+            <>
+              — this wallet cannot prove for itself, so proving runs against a
+              proof server on this machine. Nothing leaves the page, but one has
+              to be running before you can claim.
+            </>
+          )}
+        </span>
+          </label>
+          {/* The slowest action in the app, and the one where someone is most
+              anxious. Without a number here a wait that is working looks like a
+              wait that has hung. */}
+          <p className="note">Proving takes about a minute — keep this tab open.</p>
+        </li>
+
+        <li>
+          <div className="claim-input-head">
+            <strong>Claim benefit</strong>
+            <span className="muted">one transaction, from your wallet</span>
+          </div>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy || !bundle || !payslip}
+            onClick={() => void claim()}
+          >
+            {busy ? step ?? "Working…" : "Claim my benefit"}
+          </button>
+          {/* Why it is disabled, beside it.
+              
+              With no termination attestation there is no `ended` row, so the
+              effect that assembles a claim returns before it sets a status —
+              which left this button inert and silent, with the reason four
+              sections up in the eligibility panel. A disabled control that
+              cannot say why is the same bug the pre-flight checks exist to
+              stop elsewhere in the app. */}
+          {!busy && ended.length > 0 && (!bundle || !payslip) ? (
+            <p className="note" style={{ margin: "8px 0 0" }}>
+              {!bundle
+                ? "Waiting for your claim to be assembled from the chain."
+                : "Choose your final payslip in step 1."}
+            </p>
+          ) : null}
+        </li>
       </ol>
 
       {bundle && payslip ? (
@@ -317,66 +399,6 @@ export function ClaimForm() {
             );
           })()
         : null}
-
-      {/* Where the proof is generated.
-          
-          It matters more here than anywhere else in the app. Unticked, proving
-          runs against a proof server on the claimant's own machine — so a
-          person who has just lost their job has to install Docker and download
-          proving parameters before they can collect a benefit. Ticked, a wallet
-          that can prove does it in-tab and they need nothing.
-          
-          The disclosure is stated rather than glossed: proving consumes the
-          claim key and the final month's figures, so delegating hands both to
-          the wallet. That is a real choice, and the wallet is a party she has
-          already trusted with her spending keys — but it is not the same as
-          nothing leaving the page, and the copy does not pretend it is. */}
-      <label className="prove-here" style={{ marginTop: 16 }}>
-        <input
-          type="checkbox"
-          checked={delegateProving && canDelegate}
-          disabled={busy || !canDelegate}
-          onChange={(event) => setDelegateProving(event.target.checked)}
-        />{" "}
-        Let the wallet generate the proof
-        <span className="muted">
-          {" "}
-          {canDelegate ? (
-            <>
-              — no proof server needed on this machine.{" "}
-              <strong>
-                Proving consumes your final month's figures, so this hands them
-                to your wallet.
-              </strong>{" "}
-              <span title="Unticked, proving runs against a proof server on this machine at 127.0.0.1:6300 and reaches nowhere else.">
-                Unticked, they stay on this page.
-              </span>
-            </>
-          ) : (
-            <>
-              — this wallet cannot prove for itself, so proving runs against a
-              proof server on this machine. Nothing leaves the page, but one has
-              to be running before you can claim.
-            </>
-          )}
-        </span>
-      </label>
-
-      {/* The slowest action in the app, and the one where someone is most
-          anxious. Without a number here a wait that is working looks like a
-          wait that has hung. */}
-      <p className="note" style={{ marginTop: 16 }}>
-        Proving takes about a minute — keep this tab open.
-      </p>
-
-      <button
-        type="button"
-        className="primary"
-        disabled={busy || !bundle || !payslip}
-        onClick={() => void claim()}
-      >
-        {busy ? step ?? "Working…" : "Claim my benefit"}
-      </button>
 
       {busy && step ? <p className="status">{step}</p> : null}
     </section>

@@ -43,8 +43,8 @@ export function EmployerSettings() {
             places answering one question. Payroll owns "what do I have to do";
             this page owns "how is it configured". */}
         <p className="lede">
-          How your company, wallet and payroll contract are configured. What you
-          have to <em>do</em> is on <Link to="/employer">Payroll</Link>.
+          View your company, payroll contract and wallet configuration. To run
+          payroll, go to <Link to="/employer">Payroll</Link>.
         </p>
       </section>
 
@@ -61,11 +61,11 @@ export function EmployerSettings() {
 
       {account ? (
         <>
-          <section className="area-sub">
+          <section className="area-sub major">
             <h2>Wallet &amp; funding</h2>
             <p className="note" style={{ marginTop: 0 }}>
-              What you hold, where people pay you, and how to get the pEUR
-              salaries settle in.
+              Funds available for payroll and the network tokens used to process
+              transactions.
             </p>
           </section>
           <Overview variant="funding" />
@@ -80,6 +80,15 @@ export function EmployerSettings() {
       <details className="details advanced">
         <summary>Advanced / technical details</summary>
         <Overview variant="technical" />
+        <section className="area-sub">
+          <h2>Fees and tDUST</h2>
+          <p className="note" style={{ marginTop: 0 }}>
+            tDUST is not handed out: it is generated from tNIGHT once that tNIGHT
+            is registered for generation, and a wallet already showing a tDUST
+            balance is registered. Every transaction costs it, so nothing can be
+            submitted — payroll included — until a balance appears.
+          </p>
+        </section>
         <section className="area-sub">
           <h2>Settlement asset</h2>
           <p className="note" style={{ marginTop: 0 }}>
@@ -163,7 +172,7 @@ function SetupStatus() {
     // signal that it is configuration, well below the lavender the pEUR key
     // panel wears, because that one is a thing you hand to somebody.
     <section className="card config-card">
-      <h2>Keys and addresses</h2>
+      <h2>Contract configuration</h2>
 
       <div className="row">
         <div className="k">Network</div>

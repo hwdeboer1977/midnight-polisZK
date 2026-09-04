@@ -721,23 +721,37 @@ export function RosterUpload({
         </p>
       ) : null}
 
-      <FilePicker
-        label={busy ? "Reading…" : "Choose this period's .xlsx"}
-        loaded={
-          fileName
-            ? roster?.period
-              ? `Roster for ${periodName(roster.period)}`
-              : "Roster workbook"
-            : null
-        }
-        filename={fileName}
-        accept=".xlsx"
-        disabled={busy}
-        onFile={onFile}
-      />{" "}
-      <button type="button" className="ghost" onClick={() => void downloadTemplate()}>
-        Download a blank template
-      </button>
+      <p className="step-lead">
+        Upload your payroll workbook, or start from our template.
+      </p>
+      <div className="start-actions">
+        <FilePicker
+          label={busy ? "Reading…" : "Choose payroll file (.xlsx)"}
+          loaded={
+            fileName
+              ? roster?.period
+                ? `Roster for ${periodName(roster.period)}`
+                : "Roster workbook"
+              : null
+          }
+          filename={fileName}
+          accept=".xlsx"
+          disabled={busy}
+          onFile={onFile}
+        />
+        {/* The second real way to start, and it looked like a footnote.
+            Downloading the template is not a lesser act than choosing a file —
+            for a first-time employer it is the FIRST act — so the two are stacked
+            as deliberate choices at the same width, with the hierarchy carried by
+            fill rather than by size. */}
+        <button
+          type="button"
+          className="button secondary template"
+          onClick={() => void downloadTemplate()}
+        >
+          <span aria-hidden="true">↓</span> Download payroll template
+        </button>
+      </div>
 
       <details className="why">
         <summary>What goes in the workbook</summary>

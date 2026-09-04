@@ -50,7 +50,14 @@ export function NationalTotals({
     <>
       <div className="contract-pair">
         <div className="contract-card fund">
-          <h3>Social protection fund</h3>
+          <h3>
+            Social protection fund
+            {fund === null ? null : (
+              <span className="contract-state" title="Deployed and answering">
+                <span className="live-dot" aria-hidden="true" /> Active
+              </span>
+            )}
+          </h3>
           {fund === null ? (
             <p className="muted">
               {totals.unreadable.includes("benefit fund")
@@ -62,7 +69,11 @@ export function NationalTotals({
               <div className="contract-value" title={exact(fund.contributedMinor)}>
                 {money(fund.contributedMinor)}
               </div>
-              <div className="contract-value-label">received</div>
+              <div className="contract-value-label">Total received</div>
+              {/* The distinction the two cards exist to draw, stated on the
+                  face of each rather than in a caveat below. One has a balance
+                  and publishes it; the other holds a shielded coin and cannot. */}
+              <div className="contract-balance private">Balance: private</div>
               <ul className="contract-lines">
                 <li>{plural(fund.contributionCount, "deposit")}</li>
                 <li>{plural(fund.claimsPaid, "claim")} settled</li>
@@ -83,15 +94,23 @@ export function NationalTotals({
                   withheld from benefits
                 </li>
               </ul>
-              {/* Not a footnote. A card headed with a figure and no balance line
-                  is read as a balance that failed to load. */}
-              <p className="contract-caveat">Balance not published</p>
+              <p className="contract-caveat">
+                A shielded coin, so no balance is published — publishing one
+                would give away what each claimant received.
+              </p>
             </>
           )}
         </div>
 
         <div className="contract-card vault">
-          <h3>Tax vault</h3>
+          <h3>
+            Tax vault
+            {taxvault === null ? null : (
+              <span className="contract-state" title="Deployed and answering">
+                <span className="live-dot" aria-hidden="true" /> Active
+              </span>
+            )}
+          </h3>
           {taxvault === null ? (
             <p className="muted">
               {totals.unreadable.includes("tax vault")
@@ -103,18 +122,21 @@ export function NationalTotals({
               <div className="contract-value" title={exact(taxvault.receivedMinor)}>
                 {money(taxvault.receivedMinor)}
               </div>
-              <div className="contract-value-label">received</div>
+              <div className="contract-value-label">Total received</div>
+              <div className="contract-balance" title={exact(taxvault.heldMinor)}>
+                Balance: <strong>{money(taxvault.heldMinor)}</strong> held now
+              </div>
               <ul className="contract-lines">
                 <li>{plural(taxvault.depositCount, "deposit")}</li>
                 <li title={exact(taxvault.withdrawnMinor)}>
                   {money(taxvault.withdrawnMinor)} withdrawn over{" "}
                   {plural(taxvault.withdrawalCount, "withdrawal")}
                 </li>
-                <li title={exact(taxvault.heldMinor)}>
-                  <strong>{money(taxvault.heldMinor)} held now</strong>
-                </li>
               </ul>
-              <p className="contract-caveat">A real balance</p>
+              <p className="contract-caveat">
+                Public and unshielded: this contract never pays out privately,
+                so its balance is a real one.
+              </p>
             </>
           )}
         </div>
