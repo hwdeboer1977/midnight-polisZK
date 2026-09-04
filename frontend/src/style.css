@@ -939,10 +939,15 @@ main.wide { max-width: 980px; }
 /* Use-case figures. The diagrams are drawn on white with dark ink, so the
    panel keeps a light ground in both themes rather than inverting under them. */
 .usecase {
-  display: grid; grid-template-columns: 5fr 7fr; gap: 26px; align-items: center;
+  /* The diagrams carry small labels, so they get the wider share of the row —
+     the text column still holds a comfortable measure at this width. */
+  display: grid; grid-template-columns: 1fr 1.8fr; gap: 26px; align-items: center;
   margin-bottom: 34px;
   scroll-margin-top: 28px;
 }
+/* Reversing the order also swaps which track each side lands in, so the
+   ratio is mirrored — otherwise the figure inherits the narrow column. */
+.usecase.reverse { grid-template-columns: 1.8fr 1fr; }
 .usecase.reverse .usecase-text { order: 2; }
 .usecase-text h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: -0.02em; }
 .usecase-text p { margin: 0 0 12px; color: var(--muted); font-size: 14.5px; line-height: 1.6; }
@@ -954,6 +959,61 @@ main.wide { max-width: 980px; }
   border-radius: var(--radius);
 }
 .figure img { display: block; width: 100%; height: auto; }
+
+/* The whole diagram is the hit target: at column width the labels are legible
+   enough to follow the story, but not to read, so one click opens it full size. */
+.figure-zoom {
+  display: block; position: relative; width: 100%;
+  margin: 0; padding: 0; border: 0; background: none;
+  border-radius: 6px; overflow: hidden; cursor: zoom-in;
+}
+.figure-zoom img { transition: transform 150ms ease, opacity 150ms ease; }
+.figure-zoom:hover img, .figure-zoom:focus-visible img { transform: scale(1.015); opacity: 0.94; }
+.figure-zoom:focus { outline: none; }
+.figure-zoom:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.figure-hint {
+  position: absolute; right: 10px; bottom: 10px;
+  background: rgba(20, 22, 26, 0.82); color: #fff;
+  font-size: 12px; font-weight: 620; padding: 6px 11px; border-radius: 999px;
+  opacity: 0; transition: opacity 150ms ease; pointer-events: none;
+}
+.figure-zoom:hover .figure-hint, .figure-zoom:focus-visible .figure-hint { opacity: 1; }
+/* Nothing hovers on a touch screen, so the affordance has to be standing. */
+@media (hover: none) { .figure-hint { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .figure-zoom img { transition: none; }
+  .figure-zoom:hover img, .figure-zoom:focus-visible img { transform: none; }
+}
+
+/* Enlarged diagram. Click anywhere outside it, or press Escape, to close. */
+.lightbox {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(12, 14, 18, 0.74);
+  display: grid; place-items: center;
+  padding: 4vh 4vw; cursor: zoom-out;
+  animation: lightbox-in 120ms ease-out;
+}
+@keyframes lightbox-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .lightbox { animation: none; } }
+.lightbox-inner {
+  /* The diagrams are drawn on white ink-on-paper, so the panel stays white
+     in both themes rather than inverting under a dark scheme. */
+  background: #ffffff; border-radius: 12px; padding: 20px;
+  width: min(90vw, 1600px); max-height: 90vh; overflow: auto;
+  cursor: default; box-shadow: 0 26px 70px rgba(0, 0, 0, 0.4);
+}
+.lightbox-inner img {
+  display: block; margin: 0 auto;
+  width: 100%; height: auto; max-height: calc(90vh - 40px);
+  object-fit: contain;
+}
+.lightbox-close {
+  position: fixed; top: 18px; right: 20px;
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 0; background: rgba(255, 255, 255, 0.92); color: #14161a;
+  font-size: 22px; line-height: 1; cursor: pointer;
+}
+.lightbox-close:hover { background: #ffffff; }
 
 .explain {
   background: var(--card); border: 1px solid var(--line);
@@ -979,7 +1039,7 @@ main.wide { max-width: 980px; }
 .copy.wide { width: 100%; margin-top: 14px; padding: 9px; }
 
 @media (max-width: 860px) {
-  .usecase { grid-template-columns: 1fr; gap: 18px; }
+  .usecase, .usecase.reverse { grid-template-columns: 1fr; gap: 18px; }
   .usecase.reverse .usecase-text { order: 0; }
 }
 

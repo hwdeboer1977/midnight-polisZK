@@ -1,11 +1,29 @@
 // Copyright 2026 Henk Wim de Boer
 // SPDX-License-Identifier: Apache-2.0
 
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 // Drop the URL in here to surface the demo link under the hero; empty
 // renders nothing rather than a dead play button.
 const DEMO_VIDEO_URL = "";
+
+type Diagram = { src: string; title: string; alt: string };
+
+// The two diagrams are the argument, so they are also the two things a reader
+// most wants to enlarge. Held as data so the inline figure and the lightbox
+// can never drift apart.
+const PAYROLL_DIAGRAM: Diagram = {
+  src: "/payroll-privacy.svg",
+  title: "A payroll period",
+  alt: "A payroll period for ten employees. Each employee's gross, income tax, social insurance contribution and net pay is sealed; only the headcount and the four column totals are public on chain.",
+};
+
+const CLAIM_DIAGRAM: Diagram = {
+  src: "/insurance-claim.svg",
+  title: "A claim against it",
+  alt: "An unemployment claim. One month's sealed salary opening feeds a zero-knowledge proof; the fund learns only that the claim is valid, while the benefit amount and the claimant stay sealed. The fund publishes counts and withholding totals — never its balance.",
+};
 
 /**
  * The entry page. Deliberately explains the privacy model before asking anyone
@@ -13,6 +31,41 @@ const DEMO_VIDEO_URL = "";
  * question a payroll product has to answer.
  */
 export function Landing() {
+  // Which diagram, if any, is open full size. The inline layout stays as it is;
+  // the labels in these SVGs are simply too small to read at column width.
+  const [zoomed, setZoomed] = useState<Diagram | null>(null);
+
+  useEffect(() => {
+    if (!zoomed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setZoomed(null);
+    };
+    window.addEventListener("keydown", onKey);
+    // Freeze the page behind the overlay, so scrolling acts on the diagram.
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [zoomed]);
+
+  const figure = (diagram: Diagram) => (
+    <figure className="figure">
+      <button
+        type="button"
+        className="figure-zoom"
+        onClick={() => setZoomed(diagram)}
+        aria-label={`View full size: ${diagram.title}`}
+      >
+        <img src={diagram.src} alt={diagram.alt} />
+        <span className="figure-hint" aria-hidden="true">
+          🔍 View full size
+        </span>
+      </button>
+    </figure>
+  );
+
   return (
     <div className="landing">
       <section className="hero">
@@ -64,12 +117,7 @@ export function Landing() {
             on chain, the amount never appears.
           </p>
         </div>
-        <figure className="figure">
-          <img
-            src="/payroll-privacy.svg"
-            alt="A payroll period for ten employees. Each employee's gross, income tax, social insurance contribution and net pay is sealed; only the headcount and the four column totals are public on chain."
-          />
-        </figure>
+        {figure(PAYROLL_DIAGRAM)}
       </section>
 
       <section className="usecase reverse">
@@ -90,12 +138,7 @@ export function Landing() {
             successive balances would give away the differences between them.
           </p>
         </div>
-        <figure className="figure">
-          <img
-            src="/insurance-claim.svg"
-            alt="An unemployment claim. One month's sealed salary opening feeds a zero-knowledge proof; the fund learns only that the claim is valid, while the benefit amount and the claimant stay sealed. The fund publishes counts and withholding totals — never its balance."
-          />
-        </figure>
+        {figure(CLAIM_DIAGRAM)}
       </section>
 
       <section className="explain">
@@ -127,6 +170,28 @@ export function Landing() {
           and anyone watching blocks could read every amount off the differences.
         </p>
       </section>
+
+      {zoomed ? (
+        <div
+          className="lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={zoomed.title}
+          onClick={() => setZoomed(null)}
+        >
+          <div className="lightbox-inner" onClick={(e) => e.stopPropagation()}>
+            <img src={zoomed.src} alt={zoomed.alt} />
+          </div>
+          <button
+            type="button"
+            className="lightbox-close"
+            onClick={() => setZoomed(null)}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
