@@ -50,6 +50,19 @@ export const PEUR_SCALE = 10n ** BigInt(PEUR_DECIMALS);
  * Trailing zeros are trimmed to two so ordinary amounts read as money, while a
  * fraction finer than a cent is still shown rather than silently rounded away.
  */
+/**
+ * 1072500000n -> "1,072". Whole euros, floored.
+ *
+ * Floored rather than rounded to nearest, and the choice is not cosmetic: the
+ * circuit computes tax and contributions by floor division, so a withheld
+ * figure that displays as a euro more than the ledger holds would be this app
+ * contradicting the chain it is reporting. Anywhere this is shown, the exact
+ * amount belongs in the element's `title`.
+ */
+export function formatPeurWhole(value: bigint): string {
+  return group(value / PEUR_SCALE);
+}
+
 export function formatPeur(value: bigint): string {
   const fraction = (value % PEUR_SCALE)
     .toString()

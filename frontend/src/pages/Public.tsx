@@ -370,6 +370,14 @@ export function Public() {
             are the platform's own steps — <Link to="/operator">Operator</Link>.
           </p>
 
+          <h3 className="detail-head">Tax rules</h3>
+          <p className="note">
+            Every figure above was computed under a schedule published on chain and
+            pinned per month, so these totals can be reproduced rather than trusted.
+            The schedule, and which months are bound to it, are under{" "}
+            <Link to="/app/rules">Tax parameters</Link>.
+          </p>
+
           <h3 className="detail-head">Settlement asset — pEUR</h3>
           <p className="warn-line">
             ⚠ Demo asset — permissionless minting is enabled for testing.

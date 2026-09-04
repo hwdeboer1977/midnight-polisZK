@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { DUTCH_V1, computeLine } from "../generated/tax-params";
 import { platformActions } from "../lib/origin";
+import { describeMonths, periodName } from "../lib/period";
 import type { ParsedRoster } from "../generated/roster";
 import { submitPayroll, walletCanProve, type SubmitResult } from "../lib/submitPayroll";
 import {
@@ -49,15 +50,6 @@ const ROSTER_COLUMNS = [
 // the one to trust if they ever disagree.
 const ROSTER_SIZE = 2;
 
-const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-/** 202603 -> "March 2026". */
-function periodName(period: number): string {
-  const month = MONTHS[(period % 100) - 1];
-  return month ? `${month} ${Math.floor(period / 100)}` : String(period);
-}
 import { formatPeur } from "../lib/format";
 
 /**
@@ -179,6 +171,14 @@ export function RosterUpload({
   /** Name of a filed-but-unpaid period, so the card can say why a file is needed. */
   const [outstanding, setOutstanding] = useState<string | null>(null);
   const [filedPeriods, setFiledPeriods] = useState<number[]>([]);
+  /**
+   * Months this contract has a rule set recorded for, or null while unknown.
+   *
+   * Null rather than an empty array on a failed read: "we could not ask" and
+   * "nothing is recorded" produce opposite behaviour here, and guessing the
+   * second would lock an employer out of a month they can actually file.
+   */
+  const [ruledPeriods, setRuledPeriods] = useState<number[] | null>(null);
   /** Explicit opt-in to replacing a month that is already on chain. */
   const [allowRefile, setAllowRefile] = useState(false);
   /** Opt in to proving in the page instead of handing the run to the service. */
@@ -283,6 +283,7 @@ export function RosterUpload({
         setFirstFiling(!status.hasSealed);
         setOutstanding(status.unpaid === null ? null : periodName(status.unpaid));
         setFiledPeriods(status.filed);
+        setRuledPeriods(status.ruled);
       } catch (cause) {
         // A failed read must not make the card claim a period is settled — and
         // must not claim this is a first filing either. Both were once called
@@ -295,6 +296,7 @@ export function RosterUpload({
         setStatusError(cause instanceof Error ? cause.message : String(cause));
         setOutstanding(null);
         setFiledPeriods([]);
+        setRuledPeriods(null);
       }
     })();
 
@@ -343,6 +345,20 @@ export function RosterUpload({
     roster?.period !== undefined &&
     filedPeriods.includes(roster.period);
 
+  /**
+   * This month has no rule set on the contract, so `setPayroll` will refuse it.
+   *
+   * Known-bad only: an unread contract (null) does not block, because the
+   * assertion still stands on chain and being unable to ask is not evidence.
+   * The cost of being wrong the other way is a filing that proves for minutes
+   * and then fails on a sentence about a registry the employer never sees.
+   */
+  const ruleMissing =
+    ruledPeriods !== null &&
+    roster?.period !== null &&
+    roster?.period !== undefined &&
+    !ruledPeriods.includes(roster.period);
+
   const canSubmit =
     usable &&
     roster.period !== null &&
@@ -350,6 +366,7 @@ export function RosterUpload({
     api !== null &&
     passphraseReady &&
     (!alreadyFiled || allowRefile) &&
+    !ruleMissing &&
     !submitting;
 
   /**
@@ -739,6 +756,17 @@ export function RosterUpload({
       </details>
 
       {error ? <p className="status error">Could not read {fileName}: {error}</p> : null}
+
+      {/* Which months this contract will accept at all. Passive until it
+          matters — but it has to be visible before a workbook is chosen, since
+          the alternative is discovering it four minutes into a proof. */}
+      {ruledPeriods !== null ? (
+        <p className="note">
+          Months open to this contract: <strong>{describeMonths(ruledPeriods)}</strong>.
+          Each month is opened once by the platform, before it can be filed —{" "}
+          <Link to="/app/rules">the rules each month is pinned to</Link>.
+        </p>
+      ) : null}
     </>
   );
 
@@ -960,6 +988,27 @@ export function RosterUpload({
     </label>
   );
 
+  /**
+   * Said in both places a filing can start: the step-by-step File button and
+   * the one-click "Run payroll" shortcut. A disabled button with no sentence
+   * next to it is the thing this whole change exists to stop.
+   */
+  const ruleWarning = ruleMissing ? (
+    <p className="status error">
+      <strong>
+        {roster?.period ? periodName(roster.period) : "This month"} has no tax rules
+        recorded on this contract
+      </strong>
+      , so filing it would be rejected — the contract checks that a month was opened
+      under a published rule set before it accepts any figures. Open to filing right
+      now: <strong>{describeMonths(ruledPeriods ?? [])}</strong>. Opening another month
+      is a platform action, not one this key can perform
+      {platformActions
+        ? ` — as the operator, run PERIODS=${roster?.period ?? ""} npm run deploy:tax.`
+        : " — ask whoever runs this deployment to open it."}
+    </p>
+  ) : null;
+
   const fileAction = !target ? (
     <p className="note">
       Connect the employer key for a payroll contract to file. This key does not control
@@ -986,6 +1035,7 @@ export function RosterUpload({
           </p>
         </div>
       ) : null}
+      {ruleWarning}
       {provingChoice}
       <button className="primary" onClick={() => void onSubmit()} disabled={!canSubmit}>
         {submitting
@@ -1203,9 +1253,12 @@ export function RosterUpload({
       {!monthRun && ready && !(filed && paid && withheldDone && remitDone) ? (
         <div className="month-run-offer">
           {passphraseBlock}
+          {ruleWarning}
           <button
             className="primary"
-            disabled={!api || !passphraseReady || submitting || payStep !== null}
+            disabled={
+              !api || !passphraseReady || submitting || payStep !== null || ruleMissing
+            }
             onClick={() => void onRunMonth()}
           >
             {filed

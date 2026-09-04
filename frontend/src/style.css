@@ -2015,3 +2015,211 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
 /* The relay, embedded in a row rather than standing as its own card. */
 .relay-bare { margin-top: 8px; }
 .relay-bare .actions { margin-top: 8px; }
+
+/* ── Tax parameters ──────────────────────────────────────────────────────────
+   The public rules page. It was a stack of tables at one weight, which reads as
+   a specification rather than a product: the rates, the hashes, the caveats and
+   the examples all arrived with the same importance, so a first-time reader had
+   to work out what mattered. Four blocks now, and the two loud ones are the
+   rates and the money — which is what someone came for. */
+
+/* Status of the schedule, as facts rather than a paragraph. */
+.rule-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.rule-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card);
+  font-size: 12px; font-weight: 600; color: var(--muted);
+}
+.rule-chip.lead { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.rule-chip.live { border-color: color-mix(in srgb, var(--ok) 35%, transparent); color: var(--ok); }
+.rule-chip.live .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
+}
+
+/* The rates. Deliberately the largest type on the page. */
+.schedule-grid { display: grid; grid-template-columns: 1.45fr 1fr; gap: 30px; }
+.schedule-col > h2 {
+  font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--faint); margin: 0 0 6px; font-weight: 650;
+}
+/* The second column is a different levy, not a continuation of the bands. */
+.schedule-col + .schedule-col {
+  border-left: 1px solid var(--line-soft); padding-left: 30px;
+}
+.rate-list { list-style: none; margin: 0; padding: 0; }
+.rate-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding: 13px 0; border-top: 1px solid var(--line-soft);
+}
+.rate-row:first-child { border-top: 0; }
+.rate-band { color: var(--muted); font-size: 13.5px; }
+.rate-value {
+  font-size: 27px; font-weight: 680; letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* Engineering honesty that should not look like a fault. It was a full-width
+   orange warning in the middle of the page, which reads as "something is
+   broken" rather than "this number is a stand-in". */
+.demo-param {
+  margin: 14px 0 0; padding: 10px 12px;
+  background: var(--warn-soft); border: 1px solid var(--warn-line);
+  border-radius: 10px; font-size: 12px; line-height: 1.55; color: var(--muted);
+}
+.demo-param strong {
+  display: block; color: var(--warn); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px;
+}
+
+/* One diagram, doing what four sentences were doing. */
+.rule-flow {
+  margin: 0 0 18px; padding: 26px 24px;
+  background: var(--card-tint); border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.flow-track { display: flex; align-items: stretch; gap: 34px; flex-wrap: wrap; }
+.flow-track.inner { gap: 30px; }
+/* Arrows as separators rather than elements: the sequence is the meaning, and
+   an arrow that can be selected or read aloud is noise in both. */
+.flow-track > * + * { position: relative; }
+.flow-track > * + *::before {
+  content: "→"; position: absolute; left: -24px; top: 50%;
+  transform: translateY(-50%); color: var(--faint); font-size: 15px;
+}
+.flow-node {
+  flex: 1 1 150px; min-width: 140px;
+  /* Centred in a taller box: the nodes were the one compressed thing on a page
+     of generous cards, and a diagram that reads as cramped reads as an
+     afterthought. */
+  display: flex; flex-direction: column; justify-content: center; gap: 5px;
+  min-height: 86px;
+  padding: 16px 16px; border-radius: 11px; border: 1px solid transparent;
+}
+.flow-node.open {
+  background: var(--ok-soft);
+  border-color: color-mix(in srgb, var(--ok) 28%, transparent);
+}
+.flow-node.sealed {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.flow-title { font-size: 13.5px; font-weight: 650; }
+.flow-sub { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+.flow-sealed {
+  flex: 2 1 320px; position: relative;
+  padding: 24px 14px 16px; border-radius: 13px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.flow-seal-label {
+  position: absolute; top: -9px; left: 12px;
+  padding: 1px 8px; border-radius: 999px;
+  background: var(--card-tint); color: var(--accent);
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0.02em;
+}
+.rule-flow figcaption {
+  margin-top: 18px; font-size: 12px; color: var(--faint); line-height: 1.55;
+}
+
+/* Cryptographic verification, which should look like it. */
+.verify-card { border-color: color-mix(in srgb, var(--ok) 32%, transparent); }
+.verify-card.off { border-color: var(--warn); }
+.verify-card > h2 { color: var(--ok); }
+.verify-card.off > h2 { color: var(--warn); }
+.verify-mark {
+  width: 20px; height: 20px; border-radius: 50%; flex: none;
+  display: grid; place-items: center;
+  background: var(--ok-soft); color: var(--ok); font-size: 12px;
+}
+.verify-card.off .verify-mark { background: var(--warn-soft); color: var(--warn); }
+.verify-line { margin: 14px 0 0; font-size: 13px; }
+
+/* The examples. A payslip is three numbers and an arrow, not a table row. */
+.example-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.example {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: 14px 16px; border-radius: 12px; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line); color: inherit;
+  font: inherit;
+}
+.example:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.example.active { border-color: var(--accent); background: var(--accent-soft); }
+.example-gross {
+  font-size: 22px; font-weight: 680; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.example-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--faint); font-weight: 650;
+}
+.example-split {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  margin-top: 8px; font-size: 12px; color: var(--muted);
+}
+.example-split span + span::before { content: "+ "; color: var(--faint); }
+.example-net {
+  margin-top: 6px; font-size: 17px; font-weight: 660;
+  font-variant-numeric: tabular-nums;
+}
+.example-net small { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+
+/* Any salary, not only the three that were chosen. */
+.try {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 14px 26px;
+  margin-top: 16px; padding: 14px 16px;
+  background: var(--card-tint); border: 1px solid var(--line); border-radius: 12px;
+}
+.try-field { display: flex; flex-direction: column; gap: 5px; }
+.try-field > span:first-child {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--faint); font-weight: 650;
+}
+/* This is the one control on the page, and it was reading as a fourth output
+   tile: same white, same weight, nothing to say it could be typed into. */
+.try-input {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 7px 12px; border-radius: 9px; cursor: text;
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 6%, transparent);
+  font-size: 19px; font-weight: 660;
+}
+.try-input:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.try-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.try-currency { color: var(--muted); font-weight: 600; }
+.try-input input {
+  width: 7ch; border: 0; padding: 0; background: transparent; color: inherit;
+  font: inherit; font-variant-numeric: tabular-nums; outline: none;
+  caret-color: var(--accent);
+}
+.try-pencil { font-size: 12px; color: var(--faint); }
+.try-input:focus-within .try-pencil { color: var(--accent); }
+.try-out { display: flex; align-items: center; flex-wrap: wrap; gap: 22px; }
+.try-step { position: relative; display: flex; flex-direction: column; gap: 2px; }
+.try-step + .try-step::before {
+  content: "→"; position: absolute; left: -16px; top: 50%;
+  transform: translateY(-50%); color: var(--faint); font-size: 13px;
+}
+.try-k {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--faint); font-weight: 650;
+}
+.try-v { font-size: 17px; font-weight: 640; font-variant-numeric: tabular-nums; }
+.try-step.strong .try-v { color: var(--accent); }
+
+.ok-cell { color: var(--ok); }
+.warn-cell { color: var(--warn); }
+
+@media (max-width: 860px) {
+  .schedule-grid { grid-template-columns: 1fr; gap: 22px; }
+  .schedule-col + .schedule-col { border-left: 0; padding-left: 0; padding-top: 22px; border-top: 1px solid var(--line-soft); }
+  .example-row { grid-template-columns: 1fr; }
+  /* The flow turns vertical, so the arrows have to turn with it. */
+  .flow-track { flex-direction: column; gap: 26px; }
+  .flow-track > * + *::before {
+    content: "↓"; left: 50%; top: -20px; transform: translateX(-50%);
+  }
+}

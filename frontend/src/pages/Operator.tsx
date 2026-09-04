@@ -184,6 +184,11 @@ export function Operator() {
 
       <section className="band">
         <h2 className="eyebrow">Employers</h2>
+        <p className="note">
+          Each contract can only file months the platform has opened on it, under
+          the published rule set —{" "}
+          <Link to="/app/rules">which months those are, per contract</Link>.
+        </p>
         <EmployerTable instances={instances} networkId={networkId} onChanged={refresh} />
       </section>
 

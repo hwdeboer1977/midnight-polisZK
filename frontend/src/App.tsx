@@ -5,6 +5,7 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-route
 import { Landing } from "./pages/Landing";
 import { Public } from "./pages/Public";
 import { Operator } from "./pages/Operator";
+import { TaxRules } from "./pages/TaxRules";
 import { EmployerPayroll } from "./pages/EmployerPayroll";
 import { EmployerEmployees } from "./pages/EmployerEmployees";
 import { EmployerSettings } from "./pages/EmployerSettings";
@@ -107,6 +108,23 @@ const AREAS = [
 ];
 
 /**
+ * What the network publishes, in two parts.
+ *
+ * The overview is the figures; the parameters are the schedule that produced
+ * them. They were one page and a disclosure, which buried the half that makes
+ * the other half checkable — a total nobody can reproduce is a claim, not a
+ * proof, and the rules behind it should not be three clicks into "Technical
+ * details".
+ *
+ * Neither is locked and neither needs a wallet. Nothing here is anyone's
+ * private business.
+ */
+const PUBLIC_TABS = [
+  { to: "/app", label: "Overview", end: true },
+  { to: "/app/rules", label: "Tax parameters" },
+];
+
+/**
  * The two questions an employee asks of the same records: what was I paid, and
  * what am I owed now that it has stopped.
  *
@@ -183,6 +201,21 @@ function Nav() {
   );
 }
 
+function PublicTabs() {
+  const link = ({ isActive }: { isActive: boolean }) =>
+    isActive ? "subnav-link active" : "subnav-link";
+
+  return (
+    <nav className="subnav">
+      {PUBLIC_TABS.map((tab) => (
+        <NavLink key={tab.to} to={tab.to} end={tab.end} className={link}>
+          {tab.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
 function EmployeeTabs() {
   const link = ({ isActive }: { isActive: boolean }) =>
     isActive ? "subnav-link active" : "subnav-link";
@@ -239,8 +272,9 @@ export function App() {
   // The landing page is the product's front door, not part of the app shell:
   // it should not be framed by a network picker and area navigation.
   const isLanding = pathname === "/";
-  // The public page opens with the wordmark as its own heading.
-  const isPublic = pathname === "/app";
+  // The public area opens with its own heading on every tab, so the masthead
+  // drops its wordmark across the whole of it rather than only on the overview.
+  const inPublic = pathname === "/app" || pathname.startsWith("/app/");
   const inEmployer = pathname.startsWith("/employer");
   // Ordered so /employer does not also match the employee prefix — it does not,
   // but the two reads sit next to each other and the asymmetry is worth naming.
@@ -248,14 +282,19 @@ export function App() {
 
   return (
     <main className={isLanding ? "wide" : undefined}>
-      <Header showWordmark={!isLanding && !isPublic} showNetwork={!isLanding} />
+      <Header showWordmark={!isLanding && !inPublic} showNetwork={!isLanding} />
       {isLanding ? null : <Nav />}
+      {inPublic ? <PublicTabs /> : null}
       {inEmployer ? <EmployerTabs /> : null}
       {inEmployee ? <EmployeeTabs /> : null}
       {error ? <p className="status error">{error}</p> : null}
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/app" element={<Public />} />
+        {/* A tab of the public area, not a page of its own: an employer is held
+            to these rules rather than owning them, and the totals on the
+            overview cannot be checked without them. */}
+        <Route path="/app/rules" element={<TaxRules />} />
         <Route path="/operator" element={<Operator />} />
 
         <Route path="/employer" element={<EmployerPayroll />} />
@@ -268,6 +307,7 @@ export function App() {
 
         {/* The old flat routes, kept so a bookmark or a pasted link still lands
             somewhere sensible rather than on "page not found". */}
+        <Route path="/rules" element={<Navigate to="/app/rules" replace />} />
         <Route path="/payroll" element={<Navigate to="/employer/history" replace />} />
         {/* The previous employer IA. Every link written or bookmarked under
             Overview / Setup / Roster still lands on the page that took its

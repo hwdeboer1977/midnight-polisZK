@@ -1266,6 +1266,16 @@ export async function unpaidPeriod(
 export interface PeriodStatus {
   /** Periods already filed, newest first. */
   filed: number[];
+  /**
+   * Periods this contract has a rule set recorded for, oldest first.
+   *
+   * `setPayroll` asserts `paramsHashFor.member(p)`, so a month missing from
+   * this list cannot be filed — the call fails after proving, with "no rule set
+   * recorded for that period", which names a registry the employer has never
+   * heard of. It is platform-only to fix, so the page has to say so before
+   * anyone spends four minutes proving a filing that cannot land.
+   */
+  ruled: number[];
   /** Newest period filed but not fully paid, or null. */
   unpaid: number | null;
   /** Whether any sealed opening exists, i.e. whether a passphrase can be checked. */
@@ -1300,12 +1310,20 @@ export async function periodStatus(
 ): Promise<PeriodStatus> {
   const { ledger } = await import("../generated/payroll/index.js");
   const state = await currentLedgerState(networkId, contractAddress).catch(() => null);
-  if (!state) return { filed: [], unpaid: null, hasSealed: false, unremitted: null };
+  if (!state) {
+    return { filed: [], ruled: [], unpaid: null, hasSealed: false, unremitted: null };
+  }
 
   const readable = (ledger as any)(state);
   const periods = [...(readable.periods as Iterable<bigint>)].sort((a, b) =>
     a < b ? 1 : a > b ? -1 : 0
   );
+
+  // Free: the ledger is already in hand, and this is the one answer that says
+  // whether a month can be filed at all rather than how far along it is.
+  const ruled = [...(readable.paramsHashFor as Iterable<[bigint, unknown]>)]
+    .map(([period]) => Number(period))
+    .sort((a, b) => a - b);
 
   let unpaid: number | null = null;
   let hasSealed = false;
@@ -1338,7 +1356,7 @@ export async function periodStatus(
     }
   }
 
-  return { filed: periods.map(Number), unpaid, hasSealed, unremitted };
+  return { filed: periods.map(Number), ruled, unpaid, hasSealed, unremitted };
 }
 
 /**
