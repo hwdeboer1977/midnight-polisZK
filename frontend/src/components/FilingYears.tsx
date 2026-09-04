@@ -97,15 +97,15 @@ export function FilingYears({ networkId }: { networkId: string }) {
       instance: chosen ? instanceOf(chosen.label) : undefined,
     });
 
-  if (!platformActions) {
-    return (
-      <p className="note">
-        Opening a year needs the platform key, which lives in the local service —
-        run <code>npm run server</code> and open this page from there. From a
-        terminal it is <code>YEARS={now + 1} npm run deploy:tax</code>.
-      </p>
-    );
-  }
+  /**
+   * Whether this page can OPEN a year, as opposed to report on one.
+   *
+   * Only the action needs the platform key. Which years are open is public
+   * on-chain state and belongs on every copy of this page — gating the whole
+   * card on this left the hosted site with an explanatory note where the
+   * readout should have been, and no way to see what was open at all.
+   */
+  const canOpen = platformActions;
 
   const customYear = Number(custom);
   const customValid =
@@ -140,18 +140,20 @@ export function FilingYears({ networkId }: { networkId: string }) {
               ))}
             </select>
           ) : null}
-          <button
-            type="button"
-            className="button secondary compact"
-            onClick={() => setCustom((c) => (c === null ? String(now + 1) : null))}
-            disabled={submitting}
-          >
-            {custom === null ? "+ Open new year" : "Cancel"}
-          </button>
+          {canOpen ? (
+            <button
+              type="button"
+              className="button secondary compact"
+              onClick={() => setCustom((c) => (c === null ? String(now + 1) : null))}
+              disabled={submitting}
+            >
+              {custom === null ? "+ Open new year" : "Cancel"}
+            </button>
+          ) : null}
         </div>
       </div>
 
-      {custom !== null ? (
+      {canOpen && custom !== null ? (
         <div className="year-custom">
           <span className="try-input">
             <input
@@ -212,7 +214,7 @@ export function FilingYears({ networkId }: { networkId: string }) {
                   <Link className="year-link" to="/app/rules">
                     View tax parameters →
                   </Link>
-                ) : (
+                ) : canOpen ? (
                   <button
                     className="button compact"
                     disabled={submitting}
@@ -220,11 +222,20 @@ export function FilingYears({ networkId }: { networkId: string }) {
                   >
                     {submitting ? "Opening…" : `Open ${year}`}
                   </button>
-                )}
+                ) : null}
               </article>
             );
           })}
         </div>
+      )}
+
+      {canOpen ? null : (
+        <p className="note">
+          This is the published state, readable by anyone. Opening a year is the
+          platform's act and needs its key, which lives in the local service —
+          run <code>npm run server</code> and open this page from there, or from
+          a terminal <code>YEARS={now + 1} npm run deploy:tax</code>.
+        </p>
       )}
 
       {unavailable ? (

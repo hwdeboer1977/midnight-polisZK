@@ -1339,6 +1339,9 @@ button.primary.secondary-action {
 .settlement-flow { margin: 0 0 16px; }
 .settlement-row {
   display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+  /* Every field can shrink; without this the amount group's intrinsic width
+     wins and the last control lands outside the panel. */
+  min-width: 0;
   padding: 14px; border: 1px solid var(--line);
   border-radius: var(--radius) var(--radius) 0 0; border-bottom: 0;
 }
@@ -1350,12 +1353,29 @@ button.primary.secondary-action {
   font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
   color: var(--faint); font-weight: 650;
 }
+.settle-field { flex-shrink: 1; }
 .settle-field.period { flex: 1 1 240px; }
 .settle-field.period select, .settle-field.period input { width: 100%; }
-.settle-field.amount { flex: 0 1 200px; }
-.settle-amount { display: flex; gap: 6px; align-items: stretch; }
-.settle-amount input { min-width: 0; flex: 1; }
-.settle-amount .ghost { flex: none; }
+.settle-field.amount { flex: 1 1 220px; }
+.settle-amount { display: flex; gap: 8px; align-items: stretch; min-width: 0; }
+.settle-amount .ghost { flex: none; align-self: stretch; }
+/* Input and unit as ONE control. They were two siblings in a flex row with no
+   rules of their own, so the unit dropped under the field and the Max button
+   was pushed past the card's edge. The border moves to the wrapper and the
+   input inside it goes bare. */
+.settle-currency {
+  display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  padding: 0 12px; border-radius: 9px;
+  background: var(--bg); border: 1px solid var(--line);
+}
+.settle-currency:focus-within { border-color: var(--accent); }
+.settle-currency input {
+  flex: 1; min-width: 0; width: 100%;
+  background: transparent; border: 0; padding: 10px 0;
+  font: inherit; font-size: 14px; color: inherit;
+}
+.settle-currency input:focus { outline: none; }
+.settle-unit { flex: none; font-size: 12.5px; color: var(--faint); font-weight: 600; }
 /* The action carries the row rather than sitting at the end of it: it is the
    last thing decided, and its label is the amount about to move. */
 .primary.remit.wide {
@@ -1568,9 +1588,10 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
      in a tinted zone with enough air around it to read as half empty. */
   padding: 4px 4px 14px;
 }
-/* What Max would fill, under the field it fills. */
+/* What Max would fill, under the fields it fills — a full-width item of the
+   same row, so the group stays one bordered box. */
 .available-line {
-  margin: 10px 14px 0; font-size: 12.5px; color: var(--muted);
+  flex: 1 1 100%; margin: 2px 0 0; font-size: 12.5px; color: var(--muted);
 }
 .available-line strong {
   font-size: 15px; font-weight: 680; color: var(--accent);

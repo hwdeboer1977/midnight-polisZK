@@ -743,132 +743,132 @@ export function FundDeposit({
           controls in a row with a paragraph before them and two after, and the
           sequence had to be inferred from the prose. */}
       <div className="settlement-panel">
-        {/* What the selected wallet can actually send, once asked. Purple and
-            large, because it is the answer to "is there anything to do" at the
-            exact moment the operator is deciding — and because a Max button
-            beside a figure nobody has read is a guess. */}
         {/* Labelled rather than placeheld. A placeholder disappears the moment
             a value is entered, so a form of three bare controls stops saying
             what any of them are exactly when someone looks back to check. */}
         <div className="settlement-row">
-        <label className="settle-field">
-          <span>Transfer type</span>
-          <select
-            value={target}
-            disabled={working}
-            onChange={(e) => setTarget(e.target.value as "fund" | "taxvault")}
-          >
-            <option value="fund">Contributions → benefit fund</option>
-            <option value="taxvault">Wage tax → tax vault</option>
-          </select>
-        </label>
-        <label className="settle-field period">
-          <span>Period</span>
-          {periods && periods.length > 0 && !typingPeriod ? (
+          <label className="settle-field">
+            <span>Transfer type</span>
             <select
-              value={period}
+              value={target}
               disabled={working}
-              onChange={(e) => {
-                const value = e.target.value;
-                if (value === "__other") {
-                  setTypingPeriod(true);
-                  setPeriod("");
-                  return;
-                }
-                setPeriod(value);
-                // Prefill what that month still owes THIS destination. `Max` is
-                // what the wallet can send; this is what the period is short —
-                // they are different questions and the second is the one being
-                // answered by choosing a month.
-                const entry = periods.find((p) => String(p.period) === value);
-                const left = entry ? outstandingFor(entry) : null;
-                if (left !== null && left > 0n) setAmount(toPeurInput(left));
-              }}
+              onChange={(e) => setTarget(e.target.value as "fund" | "taxvault")}
             >
-              <option value="">Choose a period…</option>
-              {periods.map((entry) => {
-                const left = outstandingFor(entry);
-                return (
-                  <option key={entry.period} value={String(entry.period)}>
-                    {periodName(entry.period)}
-                    {left === null
-                      ? ""
-                      : left > 0n
-                        ? ` · €${formatPeur(left)} outstanding`
-                        : " · settled"}
-                  </option>
-                );
-              })}
-              <option value="__other">Another period…</option>
+              <option value="fund">Contributions → benefit fund</option>
+              <option value="taxvault">Wage tax → tax vault</option>
             </select>
-          ) : (
-            <input
-              value={period}
-              disabled={working}
-              placeholder="Period, e.g. 202609"
-              onChange={(e) => setPeriod(e.target.value)}
-              onBlur={() => {
-                // Back to the menu when the field is abandoned empty, so the
-                // fallback cannot become a dead end.
-                if (!period.trim() && periods && periods.length > 0) setTypingPeriod(false);
-              }}
-            />
-          )}
-        </label>
-        <label className="settle-field amount">
-          <span>Amount</span>
-          <span className="settle-amount">
-            <span className="settle-currency">
-              <input
-                value={amount}
+          </label>
+          <label className="settle-field period">
+            <span>Period</span>
+            {periods && periods.length > 0 && !typingPeriod ? (
+              <select
+                value={period}
                 disabled={working}
-                inputMode="decimal"
-                placeholder="0.00"
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "__other") {
+                    setTypingPeriod(true);
+                    setPeriod("");
+                    return;
+                  }
+                  setPeriod(value);
+                  // Prefill what that month still owes THIS destination. `Max` is
+                  // what the wallet can send; this is what the period is short —
+                  // they are different questions and the second is the one being
+                  // answered by choosing a month.
+                  const entry = periods.find((p) => String(p.period) === value);
+                  const left = entry ? outstandingFor(entry) : null;
+                  if (left !== null && left > 0n) setAmount(toPeurInput(left));
+                }}
+              >
+                <option value="">Choose a period…</option>
+                {periods.map((entry) => {
+                  const left = outstandingFor(entry);
+                  return (
+                    <option key={entry.period} value={String(entry.period)}>
+                      {periodName(entry.period)}
+                      {left === null
+                        ? ""
+                        : left > 0n
+                          ? ` · €${formatPeur(left)} outstanding`
+                          : " · settled"}
+                    </option>
+                  );
+                })}
+                <option value="__other">Another period…</option>
+              </select>
+            ) : (
+              <input
+                value={period}
+                disabled={working}
+                placeholder="Period, e.g. 202609"
+                onChange={(e) => setPeriod(e.target.value)}
+                onBlur={() => {
+                  // Back to the menu when the field is abandoned empty, so the
+                  // fallback cannot become a dead end.
+                  if (!period.trim() && periods && periods.length > 0) setTypingPeriod(false);
+                }}
               />
-              <span className="settle-unit" aria-hidden="true">pEUR</span>
+            )}
+          </label>
+          <label className="settle-field amount">
+            <span>Amount</span>
+            <span className="settle-amount">
+              <span className="settle-currency">
+                <input
+                  value={amount}
+                  disabled={working}
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+                <span className="settle-unit" aria-hidden="true">pEUR</span>
+              </span>
+              <button
+                type="button"
+                className="ghost"
+                // Only once a balance has actually been read. A Max that guesses
+                // is worse than no Max: it would fill a figure the wallet cannot
+                // cover and fail minutes later inside the balancer.
+                disabled={working || maxMinor === null || maxMinor === "0"}
+                title={
+                  maxMinor === null
+                    ? "Check the balances first — a shielded balance cannot be guessed"
+                    : `The most the ${WALLET_LABEL[from]} can send in one transaction`
+                }
+                onClick={() => maxMinor && setAmount(toPeurInput(BigInt(maxMinor)))}
+              >
+                Max
+              </button>
             </span>
-            <button
-              type="button"
-              className="ghost"
-              // Only once a balance has actually been read. A Max that guesses
-              // is worse than no Max: it would fill a figure the wallet cannot
-              // cover and fail minutes later inside the balancer.
-              disabled={working || maxMinor === null || maxMinor === "0"}
-              title={
-                maxMinor === null
-                  ? "Check the balances first — a shielded balance cannot be guessed"
-                  : `The most the ${WALLET_LABEL[from]} can send in one transaction`
-              }
-              onClick={() => maxMinor && setAmount(toPeurInput(BigInt(maxMinor)))}
-            >
-              Max
-            </button>
-          </span>
-        </label>
-      </div>
+          </label>
 
-      {/* What Max would fill, said in words beside it. A Max button next to a
-          figure nobody has read is a guess; this is the figure. Absent until a
-          balance has actually been read, because a shielded balance cannot be
-          known any other way. */}
-      <p className="available-line">
-        {maxMinor === null ? (
-          <span className="faint">
-            Available to remit: not read yet — a shielded balance needs the
-            spending key. Check the wallets below.
-          </span>
-        ) : maxMinor === "0" ? (
-          <span className="faint">
-            Available to remit: nothing in the {WALLET_LABEL[from].toLowerCase()}.
-          </span>
-        ) : (
-          <>
-            Available to remit: <strong>€{formatPeur(BigInt(maxMinor))}</strong>{" "}
-            <span className="faint">from the {WALLET_LABEL[from].toLowerCase()}</span>
-          </>
-        )}
-      </p>
+          {/* What Max would fill, said in words beside it. A Max button next to a
+              figure nobody has read is a guess; this is the figure. Absent until
+              a balance has actually been read, because a shielded balance cannot
+              be known any other way.
+
+              Inside the field row rather than under it: the row and the button
+              below are one bordered group, and a paragraph between them broke the
+              join into two boxes with a stray line between. */}
+          <p className="available-line">
+          {maxMinor === null ? (
+            <span className="faint">
+              Available to remit: not read yet — a shielded balance needs the
+              spending key. Check the wallets below.
+            </span>
+          ) : maxMinor === "0" ? (
+            <span className="faint">
+              Available to remit: nothing in the {WALLET_LABEL[from].toLowerCase()}.
+            </span>
+          ) : (
+            <>
+              Available to remit: <strong>€{formatPeur(BigInt(maxMinor))}</strong>{" "}
+              <span className="faint">from the {WALLET_LABEL[from].toLowerCase()}</span>
+            </>
+          )}
+          </p>
+        </div>
         {/* The amount on the button, not only in the field beside it. This is
             the last chance to notice a figure before minutes of proving, and a
             button reading "Remit" says nothing about what is about to move. */}
