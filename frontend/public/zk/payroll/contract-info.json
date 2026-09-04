@@ -9,10 +9,24 @@
       "proof": true,
       "arguments": [
         {
-          "name": "period",
+          "name": "year",
           "type": {
             "type-name": "Uint",
-            "maxval": 4294967295
+            "maxval": 65535
+          }
+        },
+        {
+          "name": "fromMonth",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 255
+          }
+        },
+        {
+          "name": "months",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 255
           }
         },
         {

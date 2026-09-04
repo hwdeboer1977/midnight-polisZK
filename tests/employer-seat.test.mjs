@@ -262,7 +262,7 @@ console.log("\nthe employer seat\n");
   } else {
     ok("the platform may rotate its own key");
 
-    const stale = call(PLATFORM, moved.state, "setParamsFor", 202603n, new Uint8Array(32).fill(0x77));
+    const stale = call(PLATFORM, moved.state, "setParamsFor", 2026n, 3n, 1n, new Uint8Array(32).fill(0x77));
     if (!stale.ok && /only the platform/.test(stale.error))
       ok("the retired platform key no longer sets rule sets");
     else
@@ -271,7 +271,7 @@ console.log("\nthe employer seat\n");
         stale.ok ? "the retired key was accepted" : stale.error
       );
 
-    const fresh_ = call(EMPLOYER_B, moved.state, "setParamsFor", 202603n, new Uint8Array(32).fill(0x77));
+    const fresh_ = call(EMPLOYER_B, moved.state, "setParamsFor", 2026n, 3n, 1n, new Uint8Array(32).fill(0x77));
     if (fresh_.ok) ok("the new platform key sets rule sets");
     else fail("the new platform key sets rule sets", fresh_.error);
   }
@@ -320,7 +320,7 @@ console.log("\nthe employer seat\n");
 // employer veto their own revocation by funding a slot and never paying it.
 {
   const held = call(PLATFORM, fresh(), "assignEmployer", EMPLOYER_A);
-  const withParams = call(PLATFORM, held.state, "setParamsFor", PERIOD, PARAMS_HASH);
+  const withParams = call(PLATFORM, held.state, "setParamsFor", PERIOD / 100n, PERIOD % 100n, 1n, PARAMS_HASH);
   const filed = call(EMPLOYER_A, withParams.state, "setPayroll",
     PERIOD, GROSS, [4n, 4n],
     LINES.map((l) => l.taxQuotient),

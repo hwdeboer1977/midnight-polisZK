@@ -102,7 +102,7 @@ function call(caller, state, circuit, ...args) {
 console.log("\nthe employer a period was filed by\n");
 
 let state = deploy().data;
-state = call(PLATFORM, state, "setParamsFor", PERIOD, PARAMS_HASH);
+state = call(PLATFORM, state, "setParamsFor", PERIOD / 100n, PERIOD % 100n, 1n, PARAMS_HASH);
 state = call(PLATFORM, state, "assignEmployer", EMPLOYER_A);
 state = call(EMPLOYER_A, state, "setPayroll",
   PERIOD,

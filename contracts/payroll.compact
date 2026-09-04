@@ -399,15 +399,60 @@ constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
 // Platform-only, and write-once per period: changing it after a filing would
 // retroactively alter what the employer already committed to, which is the
 // exact failure the append-only registry exists to prevent.
-export circuit setParamsFor(period: Uint<32>, hash: Bytes<32>): [] {
+//
+// ── Why this takes a range rather than one period ──────────────────────────
+//
+// A tax schedule is annual. Every month of 2026 carries the identical hash,
+// because the hash is of the schedule and not of the month — so recording a
+// year meant twelve proofs and twelve transactions stating one fact twelve
+// times. This writes up to twelve at once, and `(year, 1, 12)` is a year.
+//
+// It is a range on THIS circuit rather than a second circuit beside it, and
+// that is not a stylistic choice. A deploy transaction carries every circuit's
+// verifier key, and this contract sits close enough to the block limit that
+// adding a thirteenth key put the deployment over it — the chain refused it
+// with "Transaction would exhaust the block limits". So the year had to arrive
+// as a wider argument list, not as another entry point.
+//
+// Months already recorded are skipped rather than rejected. A month's rules are
+// a fact about that month and outrank anything said later about the year around
+// it — that is what write-once means — and skipping is also what makes "open
+// the year" safe to run twice, which is the only way it is useful as an
+// operation.
+export circuit setParamsFor(
+  year: Uint<16>,
+  fromMonth: Uint<8>,
+  months: Uint<8>,
+  hash: Bytes<32>
+): [] {
   assert(ownPublicKey() == platform, "only the platform may set the rule set");
 
-  const p = disclose(period);
-  assert(p >= 200001, "period must be YYYYMM, e.g. 202603");
-  assert(p <= 299912, "period must be YYYYMM, e.g. 202603");
-  assert(!paramsHashFor.member(p), "that period already has a rule set");
+  const y = disclose(year);
+  assert(y >= 2000, "year must be YYYY, e.g. 2026");
+  assert(y <= 2999, "year must be YYYY, e.g. 2026");
 
-  paramsHashFor.insert(p, disclose(hash));
+  const first = disclose(fromMonth);
+  const count = disclose(months);
+  assert(first >= 1, "the first month must be 1-12");
+  assert(first <= 12, "the first month must be 1-12");
+  assert(count >= 1, "must record at least one month");
+  // An upper bound on the last month rather than on the count, so a range can
+  // never roll past December into a month 13 — a key no period can ever equal,
+  // and therefore a rule set nothing could ever be filed under.
+  assert((first as Uint<16>) + (count as Uint<16>) <= 13, "the range runs past December");
+
+  const h = disclose(hash);
+  // Arithmetic widens the type; the bounds above keep every key inside
+  // Uint<32>, and the casts are what tell the compiler so.
+  const base = ((y as Uint<32>) * 100 + (first as Uint<32>)) as Uint<32>;
+  for (const i of 0..12) {
+    if ((i as Uint<8>) < count) {
+      const p = (base + (i as Uint<32>)) as Uint<32>;
+      if (!paramsHashFor.member(p)) {
+        paramsHashFor.insert(p, h);
+      }
+    }
+  }
 }
 
 // Hands the instance to an employer. Platform only, and only while the seat is

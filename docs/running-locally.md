@@ -24,7 +24,8 @@ npm run proof:up      # standalone proof server on :6300
 npm run compile       # compiles every contracts/*.compact
 npm run check-balance # sanity check: wallet syncs, has tNIGHT/tDUST
 
-INSTANCE=acme npm run deploy:tax       # registry + v1 rules + payroll + rule window
+INSTANCE=acme npm run deploy:tax       # registry + v1 rules + payroll
+YEARS=2026 npm run deploy:tax          # open a calendar year for filing
 INSTANCE=acme npm run payroll          # assign employer, set salaries
 
 npm run deploy:peur   # deploy pEUR and mint the initial supply
@@ -114,7 +115,7 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 | `npm run demo:server`    | ⚠️ demo-only self-service onboarding on :8787      |
 | `npm run roster:template`| write roster-template.xlsx                        |
 | `npm run deploy:payroll` | deploy a payroll instance (`INSTANCE=x`)          |
-| `npm run deploy:tax`     | registry, v1, payroll, employer, rule window — in the one order that works |
+| `npm run deploy:tax`     | registry, v1, payroll, employer, `YEARS=`/`PERIODS=` — in the one order that works |
 | `npm run registry`       | inspect `taxparams`: versions, rates, `paramsHash` |
 | `npm run payee`          | generate a keypair — used for the treasury keys   |
 | `npm run test:bands`     | differential test: TypeScript bracket arithmetic vs the circuit's |

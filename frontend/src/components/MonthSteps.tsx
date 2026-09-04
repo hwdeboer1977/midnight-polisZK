@@ -18,6 +18,7 @@
  * system cannot support.
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 export type StepState = "done" | "now" | "todo";
 
@@ -181,6 +182,14 @@ export interface Prereq {
   ok: boolean;
   /** Why it is not satisfied. Shown on hover, so the chip stays one line. */
   detail?: string;
+  /**
+   * Where the missing thing is obtained.
+   *
+   * A prerequisite that reports a shortfall and offers no route to fixing it
+   * leaves someone to guess which tab holds the answer — and the answer to "no
+   * pEUR" is on a different page from the one reporting it.
+   */
+  action?: { to: string; label: string };
 }
 
 /**
@@ -200,6 +209,11 @@ export function Prereqs({ items }: { items: Prereq[] }) {
           title={item.detail}
         >
           {item.ok ? "✓" : "!"} {item.label}
+          {item.action ? (
+            <Link className="chip-action" to={item.action.to}>
+              {item.action.label} →
+            </Link>
+          ) : null}
         </span>
       ))}
     </div>

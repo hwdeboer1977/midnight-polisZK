@@ -17,6 +17,7 @@ import { confirmPreparedDeposit, prepareDeposit } from "../utils/deposit-prepare
 import { readTreasuryBalances } from "../utils/treasury-balances.js";
 import { fundTreasuriesWithNight } from "../utils/treasury-night.js";
 import { onboardEmployer } from "../utils/onboarding.js";
+import { openYear } from "../utils/open-year.js";
 import {
   EMPLOYER_ALLOWANCE,
   fundEmployer,
@@ -870,6 +871,34 @@ export function createApp(config: ServerConfig): Express {
         note: "The deposit may have landed. Check `npm run fund -- pool` before retrying.",
       });
     }
+  });
+
+  /**
+   * Opens a calendar year on a payroll contract.
+   *
+   * The operator's half of the year boundary, and the reason it needs a route
+   * at all: the circuit is platform-gated, so an employer cannot do it, and
+   * until it is done every month of the new year is refused with an error about
+   * a rule set they have never heard of. The alternative was a terminal.
+   *
+   * Token-gated with the rest of the privileged routes. It costs a proof and a
+   * transaction, and it writes something that cannot be rewritten — a month's
+   * schedule is write-once — so it is not a thing a stranger should be able to
+   * decide on this deployment's behalf.
+   *
+   * Idempotent: months already recorded are skipped by the circuit itself, so
+   * calling this twice is safe and the second call does nothing.
+   */
+  platform.post("/payroll/open-year", (req: Request, res: Response) => {
+    const year = Number((req.body ?? {}).year);
+    if (!Number.isInteger(year) || year < 2000 || year > 2999) {
+      res.status(400).json({ error: "year is required, in YYYY form" });
+      return;
+    }
+    const instance = (req.body ?? {}).instance;
+    startJob(res, `opening ${year}`, (log) =>
+      openYear(year, log, instance ? String(instance) : undefined)
+    );
   });
 
   platform.post("/mint", (req: Request, res: Response) => {

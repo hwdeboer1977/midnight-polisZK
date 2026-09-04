@@ -92,6 +92,10 @@ try {
     "/api/faucet",
     "/api/mint",
     "/api/payroll/run",
+    // Opening a filing year writes something that cannot be rewritten: a
+    // month's schedule is recorded once, so a stranger who could open a year
+    // would permanently bind it to whatever rules were current.
+    "/api/payroll/open-year",
     "/api/registrations/status",
     // The most destructive of the set: it deletes the only record of where
     // onboarded contracts live. An open /reset is worse than an open /mint —

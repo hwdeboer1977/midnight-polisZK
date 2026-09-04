@@ -3,6 +3,7 @@
 
 import { InstallHelp, InstallLinks } from "./InstallHelp";
 import { useWallet } from "../wallet/WalletContext";
+import { walletSupport } from "../wallet/support";
 
 /**
  * `subject` exists because the same object means different things to different
@@ -27,26 +28,46 @@ export function WalletPicker({
         <InstallHelp subject={subject} />
       ) : (
         <>
-          {available.map(({ key, api }) => (
-            <div className="wallet" key={key}>
-              {/* Name and icon come from the extension and are attacker
-                  controlled: the name is rendered as text, the icon only ever
-                  as an img source. */}
-              {api.icon ? <img src={api.icon} alt="" /> : null}
-              <div className="meta">
-                <div className="name">{api.name || key}</div>
-                <details className="tech">
-                  <summary>Technical details</summary>
-                  <div className="rdns">
-                    {api.rdns || key} · api {api.apiVersion ?? "?"}
-                  </div>
-                </details>
+          {available.map(({ key, api }) => {
+            // Whether this build can actually finish a run with this wallet.
+            // Refused here rather than at the first proof, which fails minutes
+            // in and names a port instead of a wallet.
+            const support = walletSupport(key, api);
+            return (
+              <div
+                className={support.supported ? "wallet" : "wallet unsupported"}
+                key={key}
+              >
+                {/* Name and icon come from the extension and are attacker
+                    controlled: the name is rendered as text, the icon only ever
+                    as an img source. */}
+                {api.icon ? <img src={api.icon} alt="" /> : null}
+                <div className="meta">
+                  <div className="name">{api.name || key}</div>
+                  {support.supported ? null : (
+                    <div className="muted">{support.reason}</div>
+                  )}
+                  <details className="tech">
+                    <summary>Technical details</summary>
+                    <div className="rdns">
+                      {api.rdns || key} · api {api.apiVersion ?? "?"}
+                    </div>
+                  </details>
+                </div>
+                <button
+                  disabled={connecting || !support.supported}
+                  title={support.supported ? undefined : support.reason}
+                  onClick={() => void connect(api)}
+                >
+                  {!support.supported
+                    ? support.label
+                    : connecting
+                      ? "Connecting…"
+                      : "Connect"}
+                </button>
               </div>
-              <button disabled={connecting} onClick={() => void connect(api)}>
-                {connecting ? "Connecting…" : "Connect"}
-              </button>
-            </div>
-          ))}
+            );
+          })}
           <p className="note">
             Connecting asks for permission on <strong>{networkId}</strong>. Nothing
             happens until you approve it there, and no key ever leaves the app.

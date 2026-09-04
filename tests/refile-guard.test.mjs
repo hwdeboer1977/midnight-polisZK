@@ -153,7 +153,7 @@ const GROSS = [400000n, 650000n];
 const LINES = GROSS.map((g) => computeLine(g, DUTCH_V1));
 
 let base = deploy().data;
-base = call(PLATFORM, base, "setParamsFor", PERIOD, PARAMS_HASH);
+base = call(PLATFORM, base, "setParamsFor", PERIOD / 100n, PERIOD % 100n, 1n, PARAMS_HASH);
 base = call(PLATFORM, base, "assignEmployer", EMPLOYER);
 base = file(base, PERIOD, GROSS, [PAYEE_A, PAYEE_B]);
 

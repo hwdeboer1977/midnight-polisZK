@@ -27,7 +27,7 @@ import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js
  *   2. publish v1         — the rates, immutable once written
  *   3. payroll            — one per employer, with both treasuries frozen in
  *   4. assignEmployer     — hands the instance over, once and permanently
- *   5. setParamsFor       — records which rules each period is filed under
+ *   5. setParamsFor       — opens a year, or single months, for filing
  *
  * Why it is one script rather than five commands: every step after the first
  * needs a value the previous one produced, and three of them are irreversible.
@@ -39,6 +39,7 @@ import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js
  *   npm run deploy:tax                  deploy the registry, then a payroll
  *   INSTANCE=acme npm run deploy:tax    name the employer instance
  *   EMPLOYER_KEY=... npm run deploy:tax assign it on the way
+ *   YEARS=2026 npm run deploy:tax        open a whole year, in one transaction
  *   PERIODS=202608,202609 npm run deploy:tax   record rules for those months
  */
 
@@ -138,6 +139,30 @@ function periodsFromEnv(): number[] {
   return [...periods].sort((a, b) => a - b);
 }
 
+/**
+ * Whole calendar years to open, from `YEARS`.
+ *
+ * The unit a tax schedule actually comes in. `setParamsFor` takes a range, so
+ * `(year, 1, 12)` writes all twelve months in one transaction — one proof per
+ * year where `PERIODS` is one per month, and every month of a year carries the
+ * identical hash anyway, because the hash is of the schedule and not of the
+ * month.
+ */
+function yearsFromEnv(): number[] {
+  const raw = process.env.YEARS?.trim();
+  if (!raw) return [];
+
+  const years = new Set<number>();
+  for (const part of raw.split(",")) {
+    const year = Number(part.trim());
+    if (!Number.isInteger(year) || year < 2000 || year > 2999) {
+      throw new Error(`"${part.trim()}" is not a year in YYYY form`);
+    }
+    years.add(year);
+  }
+  return [...years].sort((a, b) => a - b);
+}
+
 async function main() {
   console.log();
   console.log(chalk.blue.bold(line()));
@@ -150,6 +175,7 @@ async function main() {
   const instance = currentInstance();
   const treasuries = requireTreasuries();
   const periods = periodsFromEnv();
+  const years = yearsFromEnv();
 
   setNetworkId(network.networkId);
 
@@ -378,12 +404,52 @@ async function main() {
       );
     }
 
-    // ── 5. record the rules for each period ────────────────────────────────
+    // ── 5. open the years, then any odd month ──────────────────────────────
     //
     // Needed because the payroll contract cannot read the registry — contracts
     // cannot read each other's state — so the platform writes the hash in.
     // Write-once per period: changing it afterwards would retroactively alter
     // what an employer already committed to.
+    //
+    // Years first, because that is the unit a schedule comes in and one
+    // transaction covers twelve months. `PERIODS` stays for the odd single
+    // month — a correction, or a year that is only partly this schedule's.
+    /** Months already recorded, read from the contract rather than remembered. */
+    const readRecorded = async (): Promise<Set<number>> => {
+      try {
+        const state = await providersFor("payroll").publicDataProvider.queryContractState(
+          payrollAddress
+        );
+        if (!state) return new Set();
+        const ledger = (payrollContract.contractModule as any).ledger(state.data);
+        return new Set([...ledger.paramsHashFor].map(([p]: [bigint, unknown]) => Number(p)));
+      } catch {
+        // An unreadable ledger is not a reason to refuse to record: the circuit
+        // skips months it already holds, and `setParamsFor` still asserts
+        // write-once itself. Worst case is a wasted proof.
+        return new Set();
+      }
+    };
+
+    if (years.length > 0) {
+      console.log();
+      const recorded = await readRecorded();
+      for (const year of years) {
+        const months = Array.from({ length: 12 }, (_, i) => year * 100 + i + 1);
+        const missing = months.filter((period) => !recorded.has(period));
+        if (missing.length === 0) {
+          console.log(chalk.gray(`   ${year} is already open — nothing to do`));
+          continue;
+        }
+        console.log(chalk.blue(`📅 Opening ${year} (${missing.length} month(s))...`));
+        const tx = await payrollDeployed.callTx.setParamsFor(BigInt(year), 1n, 12n, paramsHash);
+        console.log(
+          chalk.green(`   ✅ ${year} → v${DUTCH_V1.version}`) +
+            chalk.gray(`  tx ${tx.public.txHash}`)
+        );
+      }
+    }
+
     if (periods.length > 0) {
       console.log();
 
@@ -393,22 +459,8 @@ async function main() {
       // a year that overlapped an existing month cost a proof and then aborted
       // the whole run. Skipping them makes "record everything" a safe thing to
       // ask for twice, which is the only way it is useful.
-      let already = new Set<number>();
-      try {
-        const state = await providersFor("payroll").publicDataProvider.queryContractState(
-          payrollAddress
-        );
-        if (state) {
-          const ledger = (payrollContract.contractModule as any).ledger(state.data);
-          already = new Set(
-            periods.filter((period) => ledger.paramsHashFor.member(BigInt(period)))
-          );
-        }
-      } catch {
-        // An unreadable ledger is not a reason to refuse to record: the calls
-        // below still assert write-once themselves. Worst case is the old
-        // behaviour.
-      }
+      const recorded = await readRecorded();
+      const already = new Set(periods.filter((period) => recorded.has(period)));
 
       const todo = periods.filter((period) => !already.has(period));
       if (already.size > 0) {
@@ -425,21 +477,25 @@ async function main() {
       } else {
         console.log(chalk.blue(`📅 Recording the rule set for ${todo.length} period(s)...`));
         for (const period of todo) {
-          const tx = await payrollDeployed.callTx.setParamsFor(BigInt(period), paramsHash);
+          const tx = await payrollDeployed.callTx.setParamsFor(
+            BigInt(Math.floor(period / 100)),
+            BigInt(period % 100),
+            1n,
+            paramsHash
+          );
           console.log(chalk.green(`   ✅ ${period} → v${DUTCH_V1.version}`) + chalk.gray(`  tx ${tx.public.txHash}`));
         }
       }
-    } else {
+    } else if (years.length === 0) {
       console.log();
-      console.log(chalk.yellow("   ⚠️  No PERIODS set — no month can be filed yet."));
+      console.log(chalk.yellow("   ⚠️  No YEARS set — no month can be filed yet."));
       console.log(
         chalk.gray(
           "   A period needs its rule set recorded before setPayroll will accept it."
         )
       );
       console.log(
-        chalk.cyan("   Add them: ") +
-          chalk.yellow.bold("PERIODS=202608,202609,202610 npm run deploy:tax")
+        chalk.cyan("   Open a year: ") + chalk.yellow.bold("YEARS=2026 npm run deploy:tax")
       );
     }
 

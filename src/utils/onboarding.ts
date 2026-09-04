@@ -11,7 +11,7 @@ import { deploymentKey, getDeployment } from "./deployments.js";
 import { DUTCH_V1 } from "./tax-params.js";
 import { hex, toPublicKey } from "./keys.js";
 import { recordRegistration } from "./registry.js";
-import { DEFAULT_WINDOW_MONTHS, ruleSetHash, ruleWindow } from "./rule-window.js";
+import { filingYear, monthsOf, ruleSetHash } from "./rule-window.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./wallet.js";
 
 export interface OnboardResult {
@@ -56,7 +56,7 @@ export interface OnboardResult {
  *
  * ── The one irreversible thing it still does ───────────────────────────────
  *
- * `setParamsFor` is write-once per period. A period recorded under one employer
+ * Recording a period's rule set is write-once. A period recorded under one employer
  * keeps its rule set when the next employer takes the seat, and that is correct
  * — the rules for March are a fact about March, not about who was filing. So
  * this records only the periods that have none, and says which.
@@ -158,36 +158,35 @@ export async function onboardEmployer(
       );
     }
 
-    // Before handing it over, open the window of months this contract can file.
+    // Before handing it over, open the year this contract can file.
     //
     // Platform-only, so it has to happen while the platform still has a reason
-    // to act on this instance. Assigning first would work — `setParamsFor` is
+    // to act on this instance. Assigning first would work — opening a year is
     // gated on the platform, not the employer — but doing it after means an
     // employer can be handed a contract that rejects every period they try,
     // with an error about rule sets they have never heard of.
     const hash = await ruleSetHash(network.networkId);
-    const window = ruleWindow(new Date(), DEFAULT_WINDOW_MONTHS);
+    const year = filingYear();
 
-    // Skipped where already recorded, because `setParamsFor` is write-once per
-    // period and this contract outlives the employer sitting in it. The second
-    // employer to take the seat shares the first one's rule window wherever it
-    // overlaps — which is right, since a period's rules are a fact about the
-    // period — and would otherwise fail on "that period already has a rule set"
-    // partway through, leaving the seat unfilled for a reason that reads like a
-    // bug.
+    // One transaction for the year rather than twelve for its months. The
+    // circuit skips months already recorded — a month's rules are a fact about
+    // that month, and it outranks anything said later about the year around it
+    // — so this is safe on a contract that has been here before. The seat is
+    // reusable, and a second employer inherits the first one's open months,
+    // which is correct for the same reason.
+    const missing = monthsOf(year).filter(
+      (period) => !ledger.paramsHashFor.member(BigInt(period))
+    );
     const periodsRecorded: number[] = [];
-    const already: number[] = [];
-    for (const period of window) {
-      if (ledger.paramsHashFor.member(BigInt(period))) {
-        already.push(period);
-        continue;
+    if (missing.length === 0) {
+      log(`   ${year} is already open — left as it was`);
+    } else {
+      await deployed.callTx.setParamsFor(BigInt(year), 1n, 12n, hash);
+      log(`   ${year} open for filing — rule set v${DUTCH_V1.version}`);
+      if (missing.length < 12) {
+        log(`   ${12 - missing.length} month(s) already had a rule set — left as they were`);
       }
-      await deployed.callTx.setParamsFor(BigInt(period), hash);
-      log(`   ${period} → rule set v${DUTCH_V1.version}`);
-      periodsRecorded.push(period);
-    }
-    if (already.length > 0) {
-      log(`   ${already.length} period(s) already had a rule set — left as they were`);
+      periodsRecorded.push(...missing);
     }
 
     log("Assigning the employer…");

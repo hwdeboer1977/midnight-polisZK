@@ -112,13 +112,19 @@ export function EmployerPayroll() {
     countFor(loadedKey) > 0 &&
     paidCount(loadedKey) === countFor(loadedKey);
 
-  // What paying this month will move out of the employer's wallet.
+  // What running this month will move out of the employer's wallet.
   //
-  // The NET, not the gross: funding puts one coin per employee carrying exactly
-  // that employee's committed net, and the withheld tax and contribution never
-  // leave. Taken from the chain once a period is filed, and computed from the
-  // workbook before that — the same arithmetic the circuit will redo, so the
-  // figure shown is the figure that will be required.
+  // The GROSS, not the net — and this used to be the net, which passed an
+  // employer who held exactly the net and then failed inside the funding
+  // transaction. `fundPeriod` takes one coin per employee carrying that
+  // employee's committed net AND two more: it asserts
+  // `taxCoin.value == totalTaxFor[p]` and `socialCoin.value == totalSocialFor[p]`,
+  // so the withholding is paid out of the same wallet in the same transaction.
+  // It comes back to the treasuries later; it still has to be there first.
+  //
+  // Taken from the chain once a period is filed and from the workbook before
+  // that — the same arithmetic the circuit will redo, so the figure shown is
+  // the figure that will be required.
   const netNeeded: bigint | null = (() => {
     if (loadedKey !== null && filedLoaded && state?.totalNetFor?.member(loadedKey)) {
       return state.totalNetFor.lookup(loadedKey);
@@ -130,6 +136,51 @@ export function EmployerPayroll() {
     );
   })();
 
+  /** The tax and contribution, unless they are already in the contract. */
+  const withholdingNeeded: bigint | null = (() => {
+    if (withheldLoaded) return 0n;
+    if (loadedKey !== null && filedLoaded && state?.totalTaxFor?.member(loadedKey)) {
+      return (
+        state.totalTaxFor.lookup(loadedKey) +
+        (state.totalSocialFor?.member(loadedKey)
+          ? state.totalSocialFor.lookup(loadedKey)
+          : 0n)
+      );
+    }
+    if (!roster) return null;
+    return roster.rows.reduce((sum, row) => {
+      const line = computeLine(row.salaryMinor, DUTCH_V1);
+      return sum + line.taxMinor + line.contribMinor;
+    }, 0n);
+  })();
+
+  /**
+   * Net already funded for this period, so a resumed month is not asked twice.
+   *
+   * Needs the workbook: the chain publishes WHICH slots are funded but not what
+   * each one holds — that is the commitment's whole point. Without it the
+   * figure below overstates, which is the safe direction for a check whose job
+   * is to stop a transaction failing half way.
+   */
+  const fundedNet: bigint = (() => {
+    if (!roster || loadedKey === null || !state?.fundedFor?.member(loadedKey)) return 0n;
+    const flags = state.fundedFor.lookup(loadedKey);
+    return roster.rows.reduce((sum, row, index) => {
+      const idx = BigInt(index);
+      const funded = flags.member(idx) && flags.lookup(idx);
+      return funded ? sum + computeLine(row.salaryMinor, DUTCH_V1).netMinor : sum;
+    }, 0n);
+  })();
+
+  /** What the wallet still has to cover for this month. */
+  const monthCost: bigint | null =
+    netNeeded === null || withholdingNeeded === null
+      ? null
+      : (() => {
+          const left = netNeeded + withholdingNeeded - fundedNet;
+          return left > 0n ? left : 0n;
+        })();
+
   const peurTokenId = Object.values(deployments).find(
     (d) => d.contractName === "peur" && d.networkId === networkId
   )?.tokenId;
@@ -140,8 +191,8 @@ export function EmployerPayroll() {
         )?.[1] ?? 0n
       : null;
   const shortBy =
-    netNeeded !== null && peurHeld !== null && peurHeld < netNeeded
-      ? netNeeded - peurHeld
+    monthCost !== null && peurHeld !== null && peurHeld < monthCost
+      ? monthCost - peurHeld
       : 0n;
 
   // Everything a month needs that otherwise fails part way through a
@@ -159,7 +210,7 @@ export function EmployerPayroll() {
     },
     // Only meaningful once there is a figure to compare against, and pointless
     // once the month is paid — the money has already moved.
-    ...(netNeeded !== null && !paidLoaded && !latestDone
+    ...(monthCost !== null && !paidLoaded && !latestDone
       ? [
           {
             label:
@@ -173,8 +224,14 @@ export function EmployerPayroll() {
               peurHeld === null
                 ? "No pEUR deployment recorded for this network, so the balance cannot be checked."
                 : shortBy > 0n
-                  ? `Paying ${periodName(loadedPeriod!)} moves €${formatPeur(netNeeded)} of net pay out of your wallet, and it holds €${formatPeur(peurHeld)}. Funding fails part way through without this.`
-                  : `Holds €${formatPeur(peurHeld)}, needs €${formatPeur(netNeeded)}.`,
+                  ? `Running ${periodName(loadedPeriod!)} moves €${formatPeur(monthCost)} out of your wallet — net pay plus the tax and contribution, which are funded in the same transaction and returned to the treasuries later. This wallet holds €${formatPeur(peurHeld)}. Funding fails part way through without the rest.`
+                  : `Holds €${formatPeur(peurHeld)}, needs €${formatPeur(monthCost)} — net pay plus the withholding funded with it.`,
+            // The way out, on the chip that reports the problem. It was a
+            // number and no route to fixing it, on a page that has no mint.
+            action:
+              shortBy > 0n
+                ? { to: "/employer/settings", label: "Get pEUR" }
+                : undefined,
           },
         ]
       : []),
@@ -182,7 +239,7 @@ export function EmployerPayroll() {
     // itself information. It used to vanish whenever there was no figure to
     // compare against, which is precisely when an employer is about to load a
     // workbook and find out the hard way.
-    ...(peurHeld !== null && (netNeeded === null || paidLoaded || latestDone)
+    ...(peurHeld !== null && (monthCost === null || paidLoaded || latestDone)
       ? [
           {
             label: `pEUR €${formatPeurTile(peurHeld)}`,

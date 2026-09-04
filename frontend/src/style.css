@@ -755,13 +755,8 @@ table.roster .mono {
 /* The treasury balances, above the amount they bound. Read on demand — a
    shielded balance costs a wallet sync — so the control that asks sits with
    the figures rather than somewhere else on the page. */
-.treasury-balances { margin-top: 10px; }
-.treasury-balances ul { list-style: none; margin: 6px 0 0; padding: 0; }
-.treasury-balances li { font-size: 13px; color: var(--muted); padding: 1px 0; }
-.treasury-balances li strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.treasury-balances { margin-top: 14px; }
 .treasury-balances .faint { color: var(--faint); }
-.treasury-balances .capped { color: var(--faint); }
-.treasury-balances .no-fees { color: var(--danger, #b42318); font-weight: 600; }
 
 /* What reached the benefit fund and the tax vault for this period. Sits under
    the step as a result rather than beside it, and stays plain-weight: two
@@ -1230,7 +1225,6 @@ button.primary.secondary-action {
    card's own breakpoint rather than at a width of its own — a figure and the
    sentence that qualifies it must never be separated by a column boundary. */
 .national-totals { margin-top: 12px; }
-.balance-head { font-size: 13px; font-weight: 600; margin: 16px 0 8px; }
 .contract-balance { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
 .contract-balance h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
 .contract-balance .plain { margin: 0 0 6px; }
@@ -1344,8 +1338,30 @@ button.primary.secondary-action {
    the order it is decided rather than as a paragraph with controls in it. */
 .settlement-flow { margin: 0 0 16px; }
 .settlement-row {
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-  padding: 14px; border: 1px solid var(--line); border-radius: var(--radius);
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+  padding: 14px; border: 1px solid var(--line);
+  border-radius: var(--radius) var(--radius) 0 0; border-bottom: 0;
+}
+/* Each control says what it is, above itself. The row was three placeheld
+   boxes, and a placeholder is gone at exactly the moment someone looks back to
+   check what they picked. */
+.settle-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.settle-field > span:first-child {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--faint); font-weight: 650;
+}
+.settle-field.period { flex: 1 1 240px; }
+.settle-field.period select, .settle-field.period input { width: 100%; }
+.settle-field.amount { flex: 0 1 200px; }
+.settle-amount { display: flex; gap: 6px; align-items: stretch; }
+.settle-amount input { min-width: 0; flex: 1; }
+.settle-amount .ghost { flex: none; }
+/* The action carries the row rather than sitting at the end of it: it is the
+   last thing decided, and its label is the amount about to move. */
+.primary.remit.wide {
+  display: block; width: 100%;
+  border-radius: 0 0 var(--radius) var(--radius);
+  padding: 13px 20px; font-size: 15px;
 }
 .settlement-topup { display: inline-flex; margin-top: 10px; }
 .settlement-token {
@@ -1495,46 +1511,117 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
 }
 .work-zone > .eyebrow { margin-top: 0; }
 
+/* The three hops, as the card's headline rather than its footnote.
+   This is the concept the whole zone exists to teach — where the money came
+   from, where it sits, where it is going — and it was set smaller than the form
+   that acts on it. Cards, numbered, with the operator's own step lifted. */
 .process-strip {
-  display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap;
-  margin: 0 0 16px;
+  display: grid; grid-template-columns: 1fr auto 1fr auto 1fr;
+  align-items: stretch; gap: 8px;
+  margin: 0 0 16px; padding: 0; list-style: none;
 }
 .process-node {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 9px 14px; border-radius: 10px;
-  border: 1px solid transparent;
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 14px 16px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--line);
   min-width: 0;
 }
+.process-step {
+  flex: none; display: grid; place-items: center;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--line-soft); color: var(--muted);
+  font-size: 12.5px; font-weight: 700;
+}
+.process-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 /* Where the operator is standing, and where the money waits. */
 .process-node.current {
-  background: var(--card);
-  border-color: var(--work-line);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.process-label {
-  font-size: 11px; font-weight: 680; letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--muted);
+.process-node.current .process-step { background: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) {
+  .process-node.current .process-step { color: #14161a; }
 }
+.process-label { font-size: 13.5px; font-weight: 650; color: var(--text); }
 .process-node.current .process-label { color: var(--accent); }
-.process-sub { font-size: 12.5px; color: var(--faint); }
-.process-node.current .process-sub { color: var(--text); font-weight: 550; }
+.process-sub { font-size: 11.5px; color: var(--faint); line-height: 1.4; }
+/* The middle node's state, as a badge: three answers, not a phrase. */
+.process-badge {
+  display: inline-flex; align-self: flex-start;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 650;
+}
+.process-badge.settled { background: var(--ok-soft); color: var(--ok); }
+.process-badge.waiting { background: var(--accent-soft); color: var(--accent); }
+.process-badge.reading { background: var(--line-soft); color: var(--muted); }
 .process-arrow { align-self: center; color: var(--faint); font-size: 15px; }
+@media (max-width: 860px) {
+  .process-strip { grid-template-columns: 1fr; }
+  .process-arrow { display: none; }
+}
 
 .settlement-panel {
   background: var(--card);
   border: 1px solid var(--work-line);
   border-radius: var(--radius);
-  padding: 16px 18px;
+  /* Tighter than it was: the panel is a form and two lines, and it was sitting
+     in a tinted zone with enough air around it to read as half empty. */
+  padding: 4px 4px 14px;
 }
-.ready-line {
-  margin: 0 0 12px;
-  font-size: 14px;
-  color: var(--muted);
+/* What Max would fill, under the field it fills. */
+.available-line {
+  margin: 10px 14px 0; font-size: 12.5px; color: var(--muted);
 }
-.ready-line strong {
-  font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
-  color: var(--accent); margin-right: 4px;
+.available-line strong {
+  font-size: 15px; font-weight: 680; color: var(--accent);
 }
-.settlement .balance-head { margin-top: 20px; }
+
+/* Which wallet pays — a decision, not a preference, so it is panelled. */
+.funding-source {
+  margin-top: 14px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--card);
+}
+.funding-source.alt {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-soft);
+}
+.funding-head {
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;
+}
+.funding-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--faint); font-weight: 650;
+}
+.funding-head strong { font-size: 13.5px; }
+.funding-source .inline-check { font-size: 13px; }
+.funding-source .note { margin-top: 6px; }
+
+/* The wallets, as two cards rather than a heading and a list. Where the money
+   sits is half the concept this zone teaches; a bulleted list said it as an
+   afterthought. */
+.wallet-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px; margin-top: 12px;
+}
+.wallet-card {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 14px 16px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--line);
+}
+.wallet-name {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--faint); font-weight: 650;
+}
+.wallet-value {
+  font-size: 22px; font-weight: 680; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.wallet-sub { font-size: 11.5px; color: var(--muted); }
+.wallet-unread { font-size: 13px; color: var(--faint); }
+.wallet-card .capped, .wallet-card .no-fees {
+  font-size: 11px; color: var(--warn); margin-top: 4px;
+}
 .settlement .details summary { color: var(--muted); }
 
 /* The two institutions, told apart. A 4px cap and a tinted head rather than a
@@ -1563,7 +1650,6 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
    The lower half of the treasury zone had the same generous spacing as the
    action panel above it, so the section read as mostly lavender: the balances
    and the disclosure are supporting material and are now spaced like it. */
-.settlement .balance-head { margin: 14px 0 6px; font-size: 12px; }
 .settlement .treasury-balances { margin-top: 4px; }
 .settlement .treasury-balances ul { margin-top: 4px; }
 .settlement .treasury-balances li { padding: 0; }
@@ -2223,3 +2309,176 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
     content: "↓"; left: 50%; top: -20px; transform: translateX(-50%);
   }
 }
+
+/* ── Operator: filing years ──────────────────────────────────────────────────
+   The question is "which years are open", not "open a year" — so the state is
+   the content and the action lives inside whichever card lacks it. It was a
+   button and a sentence, which answered the question only if you read the
+   sentence and noticed the button had disabled itself. */
+
+/* A section title with its action on the same line, so a band reads as a thing
+   with a control rather than a heading followed by one. */
+.band-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.band-head > div:first-child { min-width: 0; }
+.band-head .eyebrow { margin: 0 0 4px; }
+.band-sub { margin: 0; font-size: 12.5px; color: var(--faint); max-width: 68ch; line-height: 1.5; }
+.band-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.button.compact { padding: 7px 14px; font-size: 13px; border-radius: 8px; }
+.year-contract {
+  padding: 7px 12px; border-radius: 8px;
+  background: var(--card); border: 1px solid var(--line); color: inherit;
+  font: inherit; font-size: 13px;
+}
+
+.year-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+.year-card {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 16px 18px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--line);
+}
+/* An open year is settled business; an unopened one is the only thing here
+   that can still be acted on, so it keeps the neutral card and the button. */
+.year-card.open {
+  background: var(--ok-soft);
+  border-color: color-mix(in srgb, var(--ok) 28%, transparent);
+}
+.year-card.partial {
+  background: var(--warn-soft);
+  border-color: var(--warn-line);
+}
+.year-card-head { display: flex; align-items: center; gap: 8px; }
+.year-number {
+  font-size: 24px; font-weight: 680; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.year-range { margin: 0; font-size: 11.5px; color: var(--faint); }
+.year-state { margin: 6px 0 2px; font-size: 13px; font-weight: 620; }
+.year-state span { display: block; font-size: 11.5px; font-weight: 500; color: var(--muted); margin-top: 2px; }
+.year-state.ok { color: var(--ok); }
+.year-state.partial { color: var(--warn); }
+.year-state.shut { color: var(--muted); }
+.year-card .button { align-self: flex-start; margin-top: 6px; }
+.year-link {
+  margin-top: 6px; font-size: 12px; color: var(--muted); text-decoration: none;
+}
+.year-link:hover { color: var(--text); }
+
+.year-custom {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  margin-bottom: 14px; padding: 12px 14px;
+  background: var(--card-tint); border: 1px solid var(--line); border-radius: 10px;
+}
+.year-custom .try-input { font-size: 16px; }
+.year-custom .try-input input { width: 5ch; }
+/* Progress from the service, as it arrives. A button that sits silent for two
+   minutes of proving reads as broken. */
+.job-log {
+  margin-top: 12px; padding: 10px 12px;
+  background: var(--line-soft); border-radius: 10px;
+}
+.job-log .status { margin: 0 0 2px; font-size: 12.5px; }
+.job-log .ok-line { margin: 6px 0 0; }
+
+/* The hero's second line: what this console is, under what it does. One is a
+   task and the other is an identity, and running them together as one sentence
+   made the page open on a sentence nobody finishes. */
+.dash-hero-sub {
+  display: block; margin-top: 6px;
+  font-size: 13.5px; line-height: 1.5;
+  color: var(--op-dark-muted);
+}
+/* Inside the tinted work zone the head's rule follows the zone, not the page. */
+.work-zone .band-head { margin-bottom: 14px; }
+
+/* ── Operator: identity beside the figures ───────────────────────────────────
+   The head moves onto the page and the dark block keeps only the money, so the
+   two statements stop competing inside one rectangle. */
+.dash-intro {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 24px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.dash-hero-head.light { flex: 1 1 380px; }
+.dash-hero-head.light h1 {
+  margin: 0 0 8px; font-size: 30px; letter-spacing: -0.03em; color: var(--text);
+  text-transform: none; font-weight: 700;
+}
+.dash-hero-head.light p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.55; }
+.dash-hero-head.light .dash-hero-sub { color: var(--faint); font-size: 13.5px; }
+.dash-aside { flex: 0 1 360px; }
+.role-card {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 14px 16px; border-radius: 12px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.role-icon {
+  flex: none; display: grid; place-items: center;
+  width: 34px; height: 34px; border-radius: 9px;
+  background: var(--card); color: var(--accent);
+}
+.role-card h3 {
+  margin: 0 0 3px; font-size: 11.5px; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--accent); font-weight: 650;
+}
+.role-card p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+
+/* The figures alone. Same dark block; without a head above them the padding
+   has to close at the bottom, which the head's own margin was doing. */
+.dash-hero.metrics-only { padding: 6px 24px 8px; }
+.dash-hero.metrics-only .dash-metrics { margin: 0; }
+.dash-hero.metrics-only .dash-metric { padding: 16px 20px 16px 0; }
+.dash-metric { display: flex; align-items: flex-start; gap: 12px; }
+.dash-metric-icon {
+  flex: none; display: grid; place-items: center;
+  width: 34px; height: 34px; border-radius: 9px;
+  background: color-mix(in srgb, var(--op-dark-accent) 16%, transparent);
+  color: var(--op-dark-accent);
+}
+.dash-metric-body { min-width: 0; }
+
+/* The two hops, spelled out only when asked. */
+.hop-list {
+  margin: 0 0 16px; padding-left: 20px;
+  font-size: 12.5px; line-height: 1.6; color: var(--muted); max-width: 74ch;
+}
+.hop-list li { margin-bottom: 6px; }
+.hop-list code { font-size: 11.5px; }
+
+/* A disclosure that says what it holds before you open it. */
+.details.advanced summary em {
+  font-style: normal; color: var(--faint); font-size: 12px; margin-left: 8px;
+}
+
+/* ── Wallets this build cannot finish a run with ─────────────────────────────
+   Refused at the connect button rather than at the first proof. Lace cannot
+   prove these circuits in the browser, so a run started there fails minutes in
+   against 127.0.0.1:6300 — an error that names a port, not a wallet. */
+.wallet.unsupported { opacity: 0.72; }
+.wallet.unsupported .name { color: var(--muted); }
+.install-option.soon .name { color: var(--muted); }
+.button.disabled {
+  background: var(--line-soft); color: var(--faint);
+  border-color: transparent; cursor: default;
+}
+/* In the header menu the label rides alongside the wallet's own name. */
+.wallet-menu-list button .soon {
+  margin-left: auto; font-style: normal;
+  font-size: 11px; font-weight: 650; color: var(--faint);
+}
+.wallet-menu-list button:disabled { opacity: 0.6; cursor: default; }
+
+/* The route out of a failed prerequisite, on the chip that reports it. A
+   shortfall with no way to act on it makes someone hunt for the tab that
+   holds the answer — and for pEUR that is a different page entirely. */
+.chip-pre .chip-action {
+  margin-left: 8px; padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  color: inherit; text-decoration: none; font-weight: 700;
+}
+.chip-pre .chip-action:hover { text-decoration: underline; }

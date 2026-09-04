@@ -209,3 +209,113 @@ export async function readNationalTotals(networkId: string): Promise<NationalTot
 
   return { fund, taxvault, unreadable };
 }
+
+/** One period an operator could settle, with both sides of the hop. */
+export interface SettlementPeriod {
+  period: number;
+  /** What the payroll contracts assessed for this period, in minor units. */
+  taxAssessed: bigint;
+  socialAssessed: bigint;
+  /** What has arrived at the national contracts, or null when unreadable. */
+  taxArrived: bigint | null;
+  contributionsArrived: bigint | null;
+}
+
+/**
+ * Every period worth settling, with what is outstanding on each side.
+ *
+ * The period field used to be typed, and a typed period is a guess: nothing on
+ * the page said which months had money in flight, so the operator either
+ * remembered or went and read a contract. This is that answer, read from both
+ * ends of the hop — assessed by payroll, arrived at the national contracts —
+ * so the difference is visible before anything is spent.
+ *
+ * Periods come from the payroll contracts' own `periods` set, unioned with any
+ * period the national contracts already hold something for. The union matters:
+ * a deposit recorded against a month no payroll contract on this build can
+ * decode still has to be visible, or it looks like it never happened.
+ */
+export async function readSettlementPeriods(
+  networkId: string
+): Promise<SettlementPeriod[]> {
+  const here = forNetwork(await loadDeployments(), networkId);
+  const payrolls = here.filter(([, d]) => d.contractName === "payroll" && !d.retired);
+  const fund = here.find(([, d]) => d.contractName === "fund")?.[1] ?? null;
+  const taxvault = here.find(([, d]) => d.contractName === "taxvault")?.[1] ?? null;
+
+  const taxAssessed = new Map<number, bigint>();
+  const socialAssessed = new Map<number, bigint>();
+
+  const payroll = await loadContract("payroll").catch(() => null);
+  if (payroll) {
+    for (const [, deployment] of payrolls) {
+      try {
+        const state = await fetchContractState(networkId, deployment.contractAddress);
+        if (!state) continue;
+        const ledger = payroll.ledger(state.data) as any;
+        for (const period of ledger.periods as Iterable<bigint>) {
+          const key = Number(period);
+          // Summed across contracts on purpose: several employers can file the
+          // same month, and the treasury settles the month, not the employer.
+          if (ledger.totalTaxFor?.member(period)) {
+            taxAssessed.set(key, (taxAssessed.get(key) ?? 0n) + ledger.totalTaxFor.lookup(period));
+          }
+          if (ledger.totalSocialFor?.member(period)) {
+            socialAssessed.set(
+              key,
+              (socialAssessed.get(key) ?? 0n) + ledger.totalSocialFor.lookup(period)
+            );
+          }
+        }
+      } catch {
+        // A contract this build cannot decode is already counted as unreadable
+        // on the public page; it must not take the rest of the list with it.
+      }
+    }
+  }
+
+  const arrivals = async (
+    contractName: "fund" | "taxvault",
+    address: string | null,
+    field: "contributedFor" | "receivedFor"
+  ): Promise<Map<number, bigint> | null> => {
+    if (!address) return null;
+    try {
+      const contract = await loadContract(contractName);
+      const state = await fetchContractState(networkId, address);
+      if (!state) return null;
+      const ledger = contract.ledger(state.data) as any;
+      const map = ledger[field];
+      if (!map) return null;
+      const out = new Map<number, bigint>();
+      for (const [period, amount] of map as Iterable<[bigint, bigint]>) {
+        out.set(Number(period), amount);
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  };
+
+  const [contributions, tax] = await Promise.all([
+    arrivals("fund", fund?.contractAddress ?? null, "contributedFor"),
+    arrivals("taxvault", taxvault?.contractAddress ?? null, "receivedFor"),
+  ]);
+
+  const periods = new Set<number>([
+    ...taxAssessed.keys(),
+    ...socialAssessed.keys(),
+    ...(contributions?.keys() ?? []),
+    ...(tax?.keys() ?? []),
+  ]);
+
+  return [...periods]
+    .sort((a, b) => b - a)
+    .map((period) => ({
+      period,
+      taxAssessed: taxAssessed.get(period) ?? 0n,
+      socialAssessed: socialAssessed.get(period) ?? 0n,
+      taxArrived: tax ? (tax.get(period) ?? 0n) : null,
+      contributionsArrived: contributions ? (contributions.get(period) ?? 0n) : null,
+    }));
+}

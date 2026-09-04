@@ -3,7 +3,6 @@
 
 import { useState } from "react";
 import { CopyRow } from "./CopyRow";
-import { EmployerAssign } from "./EmployerAssign";
 import { revokeEmployer } from "../lib/revokeEmployer";
 import { walletCanProve } from "../lib/submitPayroll";
 import { bytesToHex } from "../lib/keys";
@@ -49,7 +48,6 @@ export function EmployerTable({
   // platform that assigned itself — which every local deployment does — would
   // vanish from its own table.
   const mine = instances.filter((instance) => instance.isPlatform);
-  const vacant = mine.filter((instance) => instance.state && !instance.state.employerAssigned);
 
   const rowFor = (address: string): Registration | undefined =>
     (registrations ?? []).find(
@@ -67,7 +65,7 @@ export function EmployerTable({
             <span>Status</span>
             <span>Registered</span>
             <span>Contract</span>
-            <span />
+            <span>Actions</span>
           </div>
           {mine.map((instance) => {
             const address = instance.deployment.contractAddress;
@@ -126,9 +124,9 @@ export function EmployerTable({
                       <RevokeAction instance={instance} onRevoked={onChanged} />
                     ) : (
                       <p className="note">
-                        This seat is vacant. Fill it below —{" "}
-                        <code>assignEmployer</code> can be called exactly once
-                        per contract.
+                        This seat is vacant — <strong>Register employer</strong>,
+                        above the table, fills it. <code>assignEmployer</code> can
+                        be called exactly once per contract.
                       </p>
                     )}
                   </div>
@@ -139,11 +137,6 @@ export function EmployerTable({
         </div>
       )}
 
-      {/* Rendered once, under the table, rather than inside a vacant row: it is
-          the same form whichever seat is empty, and there is only ever one. */}
-      {vacant.length > 0 ? (
-        <EmployerAssign instances={instances} onAssigned={onChanged} />
-      ) : null}
     </>
   );
 }

@@ -18,6 +18,7 @@ export function DashHero({
   eyebrow,
   title,
   metrics,
+  aside,
 }: {
   /** Small caps above the title — the area, not the instance. */
   eyebrow: string;
@@ -31,7 +32,31 @@ export function DashHero({
    * authorised is not one.
    */
   metrics?: DashMetric[];
+  /**
+   * A standing note beside the title — what this console IS, not what it holds.
+   *
+   * When given, the head moves out of the dark block and onto the page, with
+   * the figures alone in the dark. The identity of a page and the state of its
+   * money are two statements, and stacking them inside one black rectangle made
+   * the smaller one furniture.
+   */
+  aside?: React.ReactNode;
 }) {
+  if (aside) {
+    return (
+      <>
+        <section className="dash-intro">
+          <div className="dash-hero-head light">
+            <h1>{eyebrow}</h1>
+            <p>{title}</p>
+          </div>
+          <div className="dash-aside">{aside}</div>
+        </section>
+        {metrics ? <MetricRow metrics={metrics} /> : null}
+      </>
+    );
+  }
+
   return (
     <section className={metrics ? "dash-hero" : "dash-hero bare"}>
       <div className="dash-hero-head">
@@ -58,6 +83,35 @@ export function DashHero({
   );
 }
 
+/** The figures alone, in the dark, when the head has moved onto the page. */
+function MetricRow({ metrics }: { metrics: DashMetric[] }) {
+  return (
+    <section className="dash-hero metrics-only">
+      <div className="dash-metrics">
+        {metrics.map((metric) => (
+          <div
+            key={metric.label}
+            className={metric.attention ? "dash-metric attention" : "dash-metric"}
+          >
+            {metric.icon ? (
+              <span className="dash-metric-icon" aria-hidden="true">
+                {metric.icon}
+              </span>
+            ) : null}
+            <div className="dash-metric-body">
+              <div className="dash-metric-value" title={metric.exact}>
+                {metric.value}
+              </div>
+              <div className="dash-metric-label">{metric.label}</div>
+              <div className="dash-metric-note">{metric.note}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export interface DashMetric {
   value: string;
   label: string;
@@ -72,4 +126,6 @@ export interface DashMetric {
    * work.
    */
   attention?: boolean;
+  /** A small mark for the figure. Decoration, so it is hidden from readers. */
+  icon?: React.ReactNode;
 }

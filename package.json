@@ -19,7 +19,7 @@
     "reset": "rm -rf contracts/managed deployment.json dist && npm run compile",
     "validate": "tsc --noEmit && npm run compile",
     "clean": "rm -rf dist contracts/managed deployment.json",
-    "test": "npm run test:bands && npm run test:payslip && npm run test:tree && npm run test:benefit-tax && npm run test:withholding-nonce && npm run test:nullifier && npm run test:seat && npm run test:period-employer && npm run test:refile-guard && npm run test:rule-set && npm run test:wallet-auth && npm run test:routes",
+    "test": "npm run test:bands && npm run test:payslip && npm run test:tree && npm run test:benefit-tax && npm run test:withholding-nonce && npm run test:nullifier && npm run test:seat && npm run test:period-employer && npm run test:refile-guard && npm run test:rule-set && npm run test:rule-year && npm run test:wallet-auth && npm run test:routes",
     "test:bands": "npm run build && node tests/bands.test.mjs",
     "deploy:payroll": "npm run build && CONTRACT_NAME=payroll node dist/deploy.js",
     "deploy:tax": "npm run build && node dist/deploy-tax.js",
@@ -54,7 +54,8 @@
     "test:wallet-auth": "npm run build && npm run build:server && node tests/wallet-auth.test.mjs",
     "test:routes": "npm run build:server && node tests/route-posture.test.mjs",
     "server": "npm run build:server && node dist/server/index.js",
-    "build:server": "tsc -p tsconfig.server.json"
+    "build:server": "tsc -p tsconfig.server.json",
+    "test:rule-year": "npm run build && node tests/rule-year.test.mjs"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-js": "2.5.1",

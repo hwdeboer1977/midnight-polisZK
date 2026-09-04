@@ -5,7 +5,9 @@ export type Witnesses<PS> = {
 
 export type ImpureCircuits<PS> = {
   setParamsFor(context: __compactRuntime.CircuitContext<PS>,
-               period_0: bigint,
+               year_0: bigint,
+               fromMonth_0: bigint,
+               months_0: bigint,
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
@@ -110,7 +112,9 @@ export type ImpureCircuits<PS> = {
 
 export type ProvableCircuits<PS> = {
   setParamsFor(context: __compactRuntime.CircuitContext<PS>,
-               period_0: bigint,
+               year_0: bigint,
+               fromMonth_0: bigint,
+               months_0: bigint,
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;
@@ -234,7 +238,9 @@ export type PureCircuits = {
 
 export type Circuits<PS> = {
   setParamsFor(context: __compactRuntime.CircuitContext<PS>,
-               period_0: bigint,
+               year_0: bigint,
+               fromMonth_0: bigint,
+               months_0: bigint,
                hash_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   assignEmployer(context: __compactRuntime.CircuitContext<PS>,
                  newEmployer_0: { bytes: Uint8Array }): __compactRuntime.CircuitResults<PS, []>;

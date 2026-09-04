@@ -7,7 +7,13 @@ import { depositFromWallet } from "../lib/depositFromWallet";
 import { useWallet } from "../wallet/WalletContext";
 import { loadDeployments } from "../lib/deployments";
 import { formatPeur, parsePeurInput, toPeurInput } from "../lib/format";
-import { readNationalDeposits, type NationalDeposits } from "../lib/nationalDeposits";
+import {
+  readNationalDeposits,
+  readSettlementPeriods,
+  type NationalDeposits,
+  type SettlementPeriod,
+} from "../lib/nationalDeposits";
+import { periodName } from "../lib/period";
 import { NationalArrivals } from "./NationalArrivals";
 
 type TreasuryName = "social-treasury" | "tax-treasury" | "platform";
@@ -197,6 +203,43 @@ export function FundDeposit({
       cancelled = true;
     };
   }, [networkId, shownPeriod, nationalNonce]);
+  /**
+   * The months with money in flight, so the period can be chosen rather than
+   * remembered.
+   *
+   * A typed period was a guess in a field that accepts any six digits: nothing
+   * on the page said which months had been assessed, or which had already
+   * arrived, so the operator either remembered or went and read a contract. The
+   * list is read from both ends of the hop, which is also what lets each option
+   * carry its own outstanding figure.
+   */
+  const [periods, setPeriods] = useState<SettlementPeriod[] | null>(null);
+  const [typingPeriod, setTypingPeriod] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void readSettlementPeriods(networkId)
+      .then((list) => {
+        if (cancelled) return;
+        setPeriods(list);
+      })
+      .catch(() => {
+        // The typed field is the fallback, and it is always reachable.
+        if (!cancelled) setPeriods([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [networkId, nationalNonce]);
+
+  /** What this period still owes the contract the transfer is aimed at. */
+  const outstandingFor = (entry: SettlementPeriod): bigint | null => {
+    const assessed = target === "fund" ? entry.socialAssessed : entry.taxAssessed;
+    const arrived = target === "fund" ? entry.contributionsArrived : entry.taxArrived;
+    if (arrived === null) return null;
+    const left = assessed - arrived;
+    return left > 0n ? left : 0n;
+  };
+
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -704,69 +747,145 @@ export function FundDeposit({
             large, because it is the answer to "is there anything to do" at the
             exact moment the operator is deciding — and because a Max button
             beside a figure nobody has read is a guess. */}
-        {maxMinor !== null && maxMinor !== "0" ? (
-          <p className="ready-line">
-            <strong>€{formatPeur(BigInt(maxMinor))}</strong> ready to remit from the{" "}
-            {WALLET_LABEL[from].toLowerCase()}
-          </p>
-        ) : null}
-
+        {/* Labelled rather than placeheld. A placeholder disappears the moment
+            a value is entered, so a form of three bare controls stops saying
+            what any of them are exactly when someone looks back to check. */}
         <div className="settlement-row">
-        <select
-          value={target}
-          disabled={working}
-          onChange={(e) => setTarget(e.target.value as "fund" | "taxvault")}
-        >
-          <option value="fund">Contributions → benefit fund</option>
-          <option value="taxvault">Wage tax → tax vault</option>
-        </select>
-        <input
-          value={period}
-          disabled={working}
-          placeholder="Period, e.g. 202609"
-          style={{ minWidth: 130 }}
-          onChange={(e) => setPeriod(e.target.value)}
-        />
-        <input
-          value={amount}
-          disabled={working}
-          inputMode="decimal"
-          placeholder="Amount in pEUR"
-          style={{ minWidth: 150 }}
-          onChange={(e) => setAmount(e.target.value)}
-        />
-        <button
-          type="button"
-          className="ghost"
-          // Only once a balance has actually been read. A Max that guesses is
-          // worse than no Max: it would fill a figure the wallet cannot cover
-          // and fail minutes later inside the balancer.
-          disabled={working || maxMinor === null || maxMinor === "0"}
-          title={
-            maxMinor === null
-              ? "Check the balances first — a shielded balance cannot be guessed"
-              : `The most the ${WALLET_LABEL[from]} can send in one transaction`
-          }
-          onClick={() => maxMinor && setAmount(toPeurInput(BigInt(maxMinor)))}
-        >
-          Max
-        </button>
+        <label className="settle-field">
+          <span>Transfer type</span>
+          <select
+            value={target}
+            disabled={working}
+            onChange={(e) => setTarget(e.target.value as "fund" | "taxvault")}
+          >
+            <option value="fund">Contributions → benefit fund</option>
+            <option value="taxvault">Wage tax → tax vault</option>
+          </select>
+        </label>
+        <label className="settle-field period">
+          <span>Period</span>
+          {periods && periods.length > 0 && !typingPeriod ? (
+            <select
+              value={period}
+              disabled={working}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === "__other") {
+                  setTypingPeriod(true);
+                  setPeriod("");
+                  return;
+                }
+                setPeriod(value);
+                // Prefill what that month still owes THIS destination. `Max` is
+                // what the wallet can send; this is what the period is short —
+                // they are different questions and the second is the one being
+                // answered by choosing a month.
+                const entry = periods.find((p) => String(p.period) === value);
+                const left = entry ? outstandingFor(entry) : null;
+                if (left !== null && left > 0n) setAmount(toPeurInput(left));
+              }}
+            >
+              <option value="">Choose a period…</option>
+              {periods.map((entry) => {
+                const left = outstandingFor(entry);
+                return (
+                  <option key={entry.period} value={String(entry.period)}>
+                    {periodName(entry.period)}
+                    {left === null
+                      ? ""
+                      : left > 0n
+                        ? ` · €${formatPeur(left)} outstanding`
+                        : " · settled"}
+                  </option>
+                );
+              })}
+              <option value="__other">Another period…</option>
+            </select>
+          ) : (
+            <input
+              value={period}
+              disabled={working}
+              placeholder="Period, e.g. 202609"
+              onChange={(e) => setPeriod(e.target.value)}
+              onBlur={() => {
+                // Back to the menu when the field is abandoned empty, so the
+                // fallback cannot become a dead end.
+                if (!period.trim() && periods && periods.length > 0) setTypingPeriod(false);
+              }}
+            />
+          )}
+        </label>
+        <label className="settle-field amount">
+          <span>Amount</span>
+          <span className="settle-amount">
+            <span className="settle-currency">
+              <input
+                value={amount}
+                disabled={working}
+                inputMode="decimal"
+                placeholder="0.00"
+                onChange={(e) => setAmount(e.target.value)}
+              />
+              <span className="settle-unit" aria-hidden="true">pEUR</span>
+            </span>
+            <button
+              type="button"
+              className="ghost"
+              // Only once a balance has actually been read. A Max that guesses
+              // is worse than no Max: it would fill a figure the wallet cannot
+              // cover and fail minutes later inside the balancer.
+              disabled={working || maxMinor === null || maxMinor === "0"}
+              title={
+                maxMinor === null
+                  ? "Check the balances first — a shielded balance cannot be guessed"
+                  : `The most the ${WALLET_LABEL[from]} can send in one transaction`
+              }
+              onClick={() => maxMinor && setAmount(toPeurInput(BigInt(maxMinor)))}
+            >
+              Max
+            </button>
+          </span>
+        </label>
+      </div>
+
+      {/* What Max would fill, said in words beside it. A Max button next to a
+          figure nobody has read is a guess; this is the figure. Absent until a
+          balance has actually been read, because a shielded balance cannot be
+          known any other way. */}
+      <p className="available-line">
+        {maxMinor === null ? (
+          <span className="faint">
+            Available to remit: not read yet — a shielded balance needs the
+            spending key. Check the wallets below.
+          </span>
+        ) : maxMinor === "0" ? (
+          <span className="faint">
+            Available to remit: nothing in the {WALLET_LABEL[from].toLowerCase()}.
+          </span>
+        ) : (
+          <>
+            Available to remit: <strong>€{formatPeur(BigInt(maxMinor))}</strong>{" "}
+            <span className="faint">from the {WALLET_LABEL[from].toLowerCase()}</span>
+          </>
+        )}
+      </p>
         {/* The amount on the button, not only in the field beside it. This is
             the last chance to notice a figure before minutes of proving, and a
             button reading "Remit" says nothing about what is about to move. */}
-        <button
-          type="button"
-          className="primary remit"
-          disabled={working || amountMinor === null || !period.trim() || !source.trim()}
-          onClick={() => void deposit()}
-        >
-          {busy
-            ? "Remitting…"
-            : amountMinor === null
-              ? "Remit"
-              : `Remit €${formatPeur(amountMinor)} →`}
-        </button>
-      </div>
+      <button
+        type="button"
+        className="primary remit wide"
+        disabled={working || amountMinor === null || !period.trim() || !source.trim()}
+        onClick={() => void deposit()}
+      >
+        {busy
+          ? "Remitting…"
+          : amountMinor === null
+            ? "Remit to treasury"
+            : `Remit €${formatPeur(amountMinor)} to the ${
+                target === "fund" ? "benefit fund" : "tax vault"
+              }`}
+      </button>
 
         <AmountEcho
           typed={amount}
@@ -776,22 +895,30 @@ export function FundDeposit({
         />
       </div>
 
-      <label className="inline-check settlement-topup">
-        <input
-          type="checkbox"
-          checked={topUp}
-          disabled={working}
-          onChange={(e) => setTopUp(e.target.checked)}
-        />
-        Top up from the platform wallet instead
-      </label>
-
-      <p className="note" style={{ marginTop: 4 }}>
-        Paying from <strong>{WALLET_LABEL[from]}</strong>.
-        {topUp
-          ? " A top-up is the platform covering the contract, not a period's withholding arriving — the deposit is still recorded against the period above."
-          : " Each destination is paid by the treasury that was remitted for it, so the pairing is not a choice."}
-      </p>
+      {/* Which wallet pays is a different decision from how much, and it was a
+          bare checkbox under the form — the same weight as a preference. It
+          changes where the money comes from, so it gets its own panel and says
+          what it currently is. */}
+      <div className={topUp ? "funding-source alt" : "funding-source"}>
+        <div className="funding-head">
+          <span className="funding-label">Funding source</span>
+          <strong>{WALLET_LABEL[from]}</strong>
+        </div>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={topUp}
+            disabled={working}
+            onChange={(e) => setTopUp(e.target.checked)}
+          />
+          Top up from the platform wallet instead
+        </label>
+        <p className="note">
+          {topUp
+            ? "A top-up is the platform covering the contract, not a period's withholding arriving — the deposit is still recorded against the period above."
+            : "Each destination is paid by the treasury that was remitted for it."}
+        </p>
+      </div>
 
       {shownPeriod === null ? null : (
         <div className="settlement-arrivals">
@@ -807,7 +934,6 @@ export function FundDeposit({
         </div>
       )}
 
-      <h3 className="balance-head">Treasury wallets</h3>
       <TreasuryBalances
         balances={balances}
         reading={reading}
@@ -819,30 +945,12 @@ export function FundDeposit({
         needsToken={needsToken}
       />
 
+      {/* What is left of the old "How settlement works" disclosure: the
+          explanation moved to the band's own "How it works" control, since two
+          accounts of the same two hops on one card is one too many. This holds
+          the control that was buried inside it. */}
       <details className="details">
-        <summary>How settlement works</summary>
-        <p className="note">
-          Each period's withholding leaves the payroll contract in two
-          transactions the EMPLOYER signs — <code>remitTax</code> and{" "}
-          <code>remitSocial</code> — which put it in the two treasury wallets.
-          At that point nothing on chain says what it was for. This step is the
-          second hop: it moves the money into the contracts that govern it, and
-          records the period and the paying payroll contract as it lands.
-        </p>
-        <p className="note">
-          Contributions go to the benefit fund, which pays claims out of them.
-          Wage tax goes to the vault, which records it per period and can only
-          ever pay out to the authority frozen at its deploy. Neither
-          destination can be redirected.
-        </p>
-        <p className="note">
-          <code>contributedFor</code> and <code>receivedFor</code> can therefore
-          be compared against that period's totals on the payroll contract.
-          Neither contract can verify the claim — one contract cannot read
-          another's ledger — so a mismatch is publicly visible rather than
-          refused. It is also cumulative rather than write-once: depositing the
-          same period twice adds, so read the arrivals line above first.
-        </p>
+        <summary>Advanced</summary>
         <p className="note">
           The paying payroll contract, recorded with the deposit. Defaulted to
           the one this deployment runs; editable for a deposit made on behalf of
@@ -966,20 +1074,24 @@ function TreasuryBalances({
         </p>
       ) : null}
       {balances ? (
-        <ul>
+        <div className="wallet-cards">
           {balances.map((balance) => (
-            <li key={balance.from}>
-              {WALLET_LABEL[balance.from]}:{" "}
+            <article key={balance.from} className="wallet-card">
+              <span className="wallet-name">{WALLET_LABEL[balance.from]}</span>
               {balance.minor === null ? (
-                <span className="faint">{balance.error ?? "could not be read"}</span>
+                <span className="wallet-unread">
+                  {balance.error ?? "could not be read"}
+                </span>
               ) : (
                 <>
-                  <strong>€{formatPeur(BigInt(balance.minor))}</strong>
+                  <span className="wallet-value">
+                    €{formatPeur(BigInt(balance.minor))}
+                  </span>
+                  <span className="wallet-sub">available</span>
                   {balance.spendableMinor !== null &&
                   balance.spendableMinor !== balance.minor ? (
                     <span className="capped">
-                      {" "}
-                      · €{formatPeur(BigInt(balance.spendableMinor))} in one transaction
+                      €{formatPeur(BigInt(balance.spendableMinor))} in one transaction
                     </span>
                   ) : null}
                   {/* The fee, beside the money it moves. A treasury only ever
@@ -987,13 +1099,13 @@ function TreasuryBalances({
                       spend is its ordinary state rather than an odd one, and
                       the balancer reports that as a segment number. */}
                   {balance.nightMinor === "0" && balance.minor !== "0" ? (
-                    <span className="no-fees"> · no NIGHT — cannot pay a fee to spend this</span>
+                    <span className="no-fees">no NIGHT — cannot pay a fee to spend this</span>
                   ) : null}
                 </>
               )}
-            </li>
+            </article>
           ))}
-        </ul>
+        </div>
       ) : (
         <p className="note" style={{ margin: 0 }}>
           A shielded balance is not public — only the holder of the spending key

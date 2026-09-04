@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useWallet } from "../wallet/WalletContext";
+import { walletSupport } from "../wallet/support";
 
 /**
  * Connect and disconnect, in the header, on every page.
@@ -70,13 +71,19 @@ export function HeaderWallet() {
 
   if (available.length === 1) {
     const only = available[0]!;
+    const support = walletSupport(only.key, only.api);
     return (
       <button
         className="connect"
-        disabled={connecting}
+        disabled={connecting || !support.supported}
+        title={support.supported ? undefined : support.reason}
         onClick={() => void connect(only.api)}
       >
-        {connecting ? "Connecting…" : `Connect ${only.api.name || only.key}`}
+        {!support.supported
+          ? `${only.api.name || only.key} — ${support.label}`
+          : connecting
+            ? "Connecting…"
+            : `Connect ${only.api.name || only.key}`}
       </button>
     );
   }
@@ -88,19 +95,26 @@ export function HeaderWallet() {
       </button>
       {open ? (
         <div className="wallet-menu-list">
-          {available.map(({ key, api }) => (
-            <button
-              key={key}
-              disabled={connecting}
-              onClick={() => {
-                setOpen(false);
-                void connect(api);
-              }}
-            >
-              {api.icon ? <img src={api.icon} alt="" /> : null}
-              <span>{api.name || key}</span>
-            </button>
-          ))}
+          {available.map(({ key, api }) => {
+            const support = walletSupport(key, api);
+            return (
+              <button
+                key={key}
+                disabled={connecting || !support.supported}
+                title={support.supported ? undefined : support.reason}
+                onClick={() => {
+                  setOpen(false);
+                  void connect(api);
+                }}
+              >
+                {api.icon ? <img src={api.icon} alt="" /> : null}
+                <span>{api.name || key}</span>
+                {support.supported ? null : (
+                  <em className="soon">{support.label}</em>
+                )}
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>

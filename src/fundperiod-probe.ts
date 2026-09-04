@@ -130,7 +130,12 @@ async function main(): Promise<void> {
     console.log();
     console.log(chalk.cyan(`2. Recording the rule set for ${PERIOD}`));
     const hash = await ruleSetHash(network.networkId);
-    await bound.callTx.setParamsFor(BigInt(PERIOD), hash);
+    await bound.callTx.setParamsFor(
+      BigInt(Math.floor(PERIOD / 100)),
+      BigInt(PERIOD % 100),
+      1n,
+      hash
+    );
     say(`rule set v${DUTCH_V1.version} recorded`);
 
     // ── 3. assign ──────────────────────────────────────────────────────────

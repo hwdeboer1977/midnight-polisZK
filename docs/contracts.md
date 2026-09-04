@@ -424,11 +424,37 @@ number.
 
 ### Which rules a period was filed under
 
-`payroll` cannot read the registry, so the platform records the hash per period
-with `setParamsFor`, and `setPayroll` rejects any period with none recorded
-("no rule set recorded for that period"). Onboarding therefore opens a window —
-`ruleWindow` in `src/utils/rule-window.ts`, six months starting two months back,
-because an employer's first act is usually to file the month that just ended.
+`payroll` cannot read the registry, so the platform records the hash per period,
+and `setPayroll` rejects any period with none recorded ("no rule set recorded
+for that period").
+
+The unit is the calendar year. A schedule is annual — every month of 2026 holds
+the identical hash, because the hash is of the schedule and not of the month —
+so `setParamsFor` takes a range: `setParamsFor(year, fromMonth, months, hash)`,
+where `(2026, 1, 12)` is a year and `(2026, 9, 1)` is one month. Onboarding opens
+the current year.
+
+It is a range on one circuit rather than a second circuit beside it because a
+deploy transaction carries every circuit's verifier key, and payroll sits close
+enough to the block limit that a thirteenth key made the contract undeployable —
+the chain refuses it with "Transaction would exhaust the block limits".
+
+Months already recorded are skipped rather than rejected, by the circuit itself.
+A month's rules are a fact about that month and outrank anything said later
+about the year around it, which is also what makes "open the year" safe to run
+twice.
+
+Onboarding deliberately opens the CURRENT year and no further. Opening a month
+decides which schedule it is filed under and the decision is write-once, so
+opening 2027 today would bind next year to this year's rates before anyone has
+published next year's. Open a year once its schedule is known — from a terminal:
+
+    YEARS=2027 npm run deploy:tax
+
+or from the operator's own page, under **Filing years**, which calls
+`POST /api/payroll/open-year` on the platform service (`npm run server`). Both
+run the same `openYear` in `src/utils/open-year.ts`, and both are idempotent:
+the circuit skips months already recorded, so a second run does nothing.
 
 A contract that is deployed, assigned and owned by its employer, but has no
 periods recorded, can file nothing at all.

@@ -3,9 +3,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { FilingYears } from "../components/FilingYears";
 import { CopyRow } from "../components/CopyRow";
 import { DashHero, type DashMetric } from "../components/DashHero";
+import { EmployerAssign } from "../components/EmployerAssign";
 import { EmployerTable } from "../components/EmployerTable";
+import {
+  IconBank,
+  IconClock,
+  IconPeople,
+  IconRole,
+  IconShield,
+} from "../components/icons";
 import { FundDeposit } from "../components/FundDeposit";
 import { NationalTotals } from "../components/NationalTotals";
 import { ServiceReset } from "../components/ServiceReset";
@@ -77,6 +86,9 @@ export function Operator() {
   // and `fetchContractState` caches, so this costs nothing an unauthorised
   // visitor could not have done from the public page.
   const { stats } = useNetworkStats(networkId);
+  /** Both are page furniture: which panel is expanded, nothing more. */
+  const [explaining, setExplaining] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [totalsNonce, setTotalsNonce] = useState(0);
   const [readingTotals, setReadingTotals] = useState(false);
@@ -137,6 +149,10 @@ export function Operator() {
     );
   }
 
+  const vacant = instances.filter(
+    (instance) => instance.isPlatform && instance.state && !instance.state.employerAssigned
+  );
+
   const pending = pendingSettlement(
     totals,
     stats.taxRemitted + stats.socialRemitted
@@ -151,7 +167,30 @@ export function Operator() {
           stack of equally important boxes. */}
       <DashHero
         eyebrow="Operator"
-        title="Manage treasury settlement and employer access."
+        title={
+          <>
+            Manage treasury settlement and employer access.
+            <span className="dash-hero-sub">
+              This key receives contributions, holds the tax vault, and opens the
+              years employers may file.
+            </span>
+          </>
+        }
+        aside={
+          <div className="role-card">
+            <span className="role-icon" aria-hidden="true">
+              <IconRole />
+            </span>
+            <div>
+              <h3>Protocol role</h3>
+              <p>
+                The operator holds the treasury keys, routes what payroll
+                withheld into the national contracts, and opens the years those
+                filings are checked against.
+              </p>
+            </div>
+          </div>
+        }
         metrics={operatorMetrics(instances, totals, pending)}
       />
 
@@ -160,7 +199,55 @@ export function Operator() {
           owed every month, and until it runs the money sits in a keypair with
           no contract behind it. The tint is the page saying so. */}
       <section className="work-zone">
-        <h2 className="eyebrow">Treasury settlement</h2>
+        <div className="band-head">
+          <div>
+            <h2 className="eyebrow">Treasury settlement</h2>
+            <p className="band-sub">
+              Route withheld payroll from the treasury wallets into the national
+              contracts. Owed every month.
+            </p>
+          </div>
+          <div className="band-head-actions">
+            <button
+              type="button"
+              className="button secondary compact"
+              onClick={() => setExplaining((open) => !open)}
+            >
+              {explaining ? "Hide" : "ⓘ How it works"}
+            </button>
+          </div>
+        </div>
+        {explaining ? (
+          <ol className="hop-list">
+            <li>
+              An employer files a month. The withholding is assessed in circuit
+              and published as a total — but the money is still theirs.
+            </li>
+            <li>
+              <code>remitTax</code> and <code>remitSocial</code> empty the
+              contract's pools into the two treasury wallets. That is the last
+              hop the payroll contract can see or record.
+            </li>
+            <li>
+              This card is the second hop: it spends those wallets into the
+              benefit fund and the tax vault, which record the amount against the
+              period. Until it runs, the money sits in a keypair with no contract
+              behind it.
+            </li>
+            <li>
+              Contributions pay claims out of the benefit fund; wage tax goes to
+              the vault, which can only ever pay the authority frozen at its
+              deploy. Neither destination can be redirected.
+            </li>
+            <li>
+              Deposits are cumulative rather than write-once, and neither
+              contract can check the claim — one contract cannot read another's
+              ledger. So depositing a period twice adds, and a mismatch against
+              that period's payroll totals is publicly visible rather than
+              refused. Read the arrivals line before remitting.
+            </li>
+          </ol>
+        ) : null}
         <ProcessStrip pending={pending} />
         <FundDeposit
           networkId={networkId}
@@ -173,7 +260,15 @@ export function Operator() {
           than acts. Shown to a treasury key too — the national totals are public
           and are what a treasury is settling against. */}
       <section className="band">
-        <h2 className="eyebrow">National contracts</h2>
+        <div className="band-head">
+          <div>
+            <h2 className="eyebrow">National contracts</h2>
+            <p className="band-sub">
+              What has arrived in the benefit fund and the tax vault. Read-only,
+              and public — this is what a treasury settles against.
+            </p>
+          </div>
+        </div>
         <NationalTotals
           totals={totals}
           networkId={networkId}
@@ -182,13 +277,53 @@ export function Operator() {
         />
       </section>
 
+      {/* Owed once a year, and only the platform can do it — so it sits with the
+          employers it unblocks rather than in a terminal. An employer whose
+          year is not open cannot file at all, and the error they get names a
+          registry they have never heard of. */}
       <section className="band">
-        <h2 className="eyebrow">Employers</h2>
-        <p className="note">
-          Each contract can only file months the platform has opened on it, under
-          the published rule set —{" "}
-          <Link to="/app/rules">which months those are, per contract</Link>.
-        </p>
+        <FilingYears networkId={networkId} />
+      </section>
+
+      <section className="band">
+        <div className="band-head">
+          <div>
+            <h2 className="eyebrow">Employers</h2>
+            <p className="band-sub">
+              One live employer per payroll contract, each filing only the months
+              opened above —{" "}
+              <Link to="/app/rules">the schedule those months are pinned to</Link>.
+            </p>
+          </div>
+          <div className="band-head-actions">
+            <button
+              type="button"
+              className="button secondary compact"
+              // Disabled rather than hidden when every seat is filled: the
+              // reason is worth stating, and it is not "you cannot" but "there
+              // is nowhere to put them" — a contract holds one employer, so
+              // another employer needs another contract.
+              disabled={vacant.length === 0}
+              title={
+                vacant.length === 0
+                  ? "Every contract already has an employer — deploy another payroll contract to register one more"
+                  : undefined
+              }
+              onClick={() => setRegistering((open) => !open)}
+            >
+              {registering ? "Cancel" : "+ Register employer"}
+            </button>
+          </div>
+        </div>
+        {registering && vacant.length > 0 ? (
+          <EmployerAssign
+            instances={instances}
+            onAssigned={() => {
+              setRegistering(false);
+              refresh();
+            }}
+          />
+        ) : null}
         <EmployerTable instances={instances} networkId={networkId} onChanged={refresh} />
       </section>
 
@@ -199,7 +334,9 @@ export function Operator() {
           button rather than after. */}
       <section className="band">
         <details className="details advanced">
-          <summary>Testing tools</summary>
+          <summary>
+            Testing tools <em>Developer utilities and diagnostics.</em>
+          </summary>
           <p className="note">
             Not part of normal operation. This service keeps two local files —
             the deployment record and the fund's coin pool — and resetting
@@ -257,31 +394,47 @@ function pendingSettlement(
  * system rather than a picture of it.
  */
 function ProcessStrip({ pending }: { pending: { minor: bigint; toppedUp: boolean } | null }) {
+  /**
+   * The middle step's state, as a badge rather than a phrase.
+   *
+   * "Nothing in flight" was accurate and read like a trader's aside on a page
+   * that is otherwise plain. What the operator needs from this node is one of
+   * three answers — waiting, settled, or not yet read — and a badge says which
+   * without being read as prose.
+   */
+  const status =
+    pending === null
+      ? { tone: "reading", text: "Reading…" }
+      : pending.minor > 0n
+        ? { tone: "waiting", text: `€${formatPeurTile(pending.minor)} waiting` }
+        : { tone: "settled", text: "✓ No pending transfers" };
+
   return (
-    <div className="process-strip">
-      <div className="process-node">
-        <span className="process-label">Payroll</span>
-        <span className="process-sub">withholding assessed and remitted</span>
-      </div>
-      <span className="process-arrow" aria-hidden="true">→</span>
-      <div className="process-node current">
-        <span className="process-label">Treasury wallets</span>
-        <span className="process-sub">
-          {pending === null
-            ? "reading…"
-            : pending.toppedUp
-              ? "nothing in flight"
-              : pending.minor === 0n
-                ? "nothing waiting"
-                : `€${formatPeurTile(pending.minor)} waiting`}
+    <ol className="process-strip">
+      <li className="process-node">
+        <span className="process-step" aria-hidden="true">1</span>
+        <span className="process-body">
+          <span className="process-label">Payroll</span>
+          <span className="process-sub">withholding assessed and remitted</span>
         </span>
-      </div>
+      </li>
       <span className="process-arrow" aria-hidden="true">→</span>
-      <div className="process-node">
-        <span className="process-label">National contracts</span>
-        <span className="process-sub">benefit fund · tax vault</span>
-      </div>
-    </div>
+      <li className="process-node current">
+        <span className="process-step" aria-hidden="true">2</span>
+        <span className="process-body">
+          <span className="process-label">Treasury wallets</span>
+          <span className={`process-badge ${status.tone}`}>{status.text}</span>
+        </span>
+      </li>
+      <span className="process-arrow" aria-hidden="true">→</span>
+      <li className="process-node">
+        <span className="process-step" aria-hidden="true">3</span>
+        <span className="process-body">
+          <span className="process-label">National contracts</span>
+          <span className="process-sub">benefit fund · tax vault</span>
+        </span>
+      </li>
+    </ol>
   );
 }
 
@@ -299,6 +452,7 @@ function operatorMetrics(
 
   return [
     {
+      icon: <IconPeople />,
       value: String(active),
       label: active === 1 ? "Active employer" : "Active employers",
       note: vacant > 0 ? `${vacant} seat${vacant === 1 ? "" : "s"} vacant` : "every seat filled",
@@ -306,18 +460,21 @@ function operatorMetrics(
     {
       value: totals?.fund ? money(totals.fund.contributedMinor) : "—",
       exact: totals?.fund ? exact(totals.fund.contributedMinor) : undefined,
+      icon: <IconBank />,
       label: "Benefit fund",
       note: "contributions received",
     },
     {
       value: totals?.taxvault ? money(totals.taxvault.heldMinor) : "—",
       exact: totals?.taxvault ? exact(totals.taxvault.heldMinor) : undefined,
+      icon: <IconShield />,
       label: "Tax vault",
       note: "held now",
     },
     {
       value: pending === null ? "…" : money(pending.minor),
       exact: pending === null ? undefined : exact(pending.minor),
+      icon: <IconClock />,
       label: "Pending remittance",
       note:
         pending === null

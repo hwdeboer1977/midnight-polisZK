@@ -34,8 +34,13 @@ const FUND = bytes(9);
 const OTHER_FUND = bytes(10);
 const WINDOW = 202601n;
 
+// `payee` is a ZswapCoinPublicKey, so it arrives wrapped. It used to be a bare
+// `Bytes<32>` claim key; the claim key was removed when the employee side was
+// simplified, and this test kept calling the old shape — which nothing noticed,
+// because `contracts/managed` is generated and gitignored, so a stale artifact
+// answered for it until the contracts were next recompiled.
 const nullifier = (key, window, fundAddr) =>
-  hex(fund.pureCircuits.claimNullifier(key, window, fundAddr));
+  hex(fund.pureCircuits.claimNullifier({ bytes: key }, window, fundAddr));
 
 const base = nullifier(KEY, WINDOW, FUND);
 
@@ -47,14 +52,15 @@ check("stable across calls", nullifier(KEY, WINDOW, FUND) === base);
 
 // Each input alone must move it. Any that does not is an input the nullifier is
 // silently ignoring — and an ignored `window` would mean one claim per person
-// ever, while an ignored `claimKey` would collide every claimant on the fund.
+// ever, while an ignored `payee` would collide every claimant on the fund.
 check("window changes it", nullifier(KEY, 202602n, FUND) !== base);
-check("claim key changes it", nullifier(OTHER_KEY, WINDOW, FUND) !== base);
+check("payee key changes it", nullifier(OTHER_KEY, WINDOW, FUND) !== base);
 check("fund changes it", nullifier(KEY, WINDOW, OTHER_FUND) !== base);
 
-// The transposition guard. If the circuit hashed the two Bytes<32> arguments
-// symmetrically, a call site that swapped them would agree with one that did
-// not, and nothing else here would notice.
+// The transposition guard. Both values are 32 bytes in the caller's hands, so
+// a call site that swapped them still compiles; if the circuit hashed them
+// symmetrically, the swap would agree with the correct call and nothing else
+// here would notice.
 check("key and fund are not interchangeable", nullifier(FUND, WINDOW, KEY) !== base);
 
 // Windows are consecutive months in practice, so the pair most likely to

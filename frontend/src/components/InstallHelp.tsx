@@ -21,6 +21,11 @@ export const WALLET_OPTIONS = [
     note: "By Input Output, who build Midnight and Cardano.",
     site: "https://www.lace.io/",
     store: "https://chromewebstore.google.com/detail/lace/gafhhkghbfjjkeiendhlofajokpaflmk",
+    // Detected and refused at the connect button too, in `wallet/support.ts`.
+    // Offering an install that leads to a wallet this build cannot finish a run
+    // with is the same mistake made earlier: it costs someone an extension and
+    // a failed filing to discover.
+    soon: "Lace cannot prove these circuits in the browser — support is not ready yet.",
   },
 ];
 
@@ -33,14 +38,23 @@ export function InstallHelp({ subject }: { subject: string }) {
       </p>
 
       {WALLET_OPTIONS.map((option) => (
-        <div className="install-option" key={option.name}>
+        <div
+          className={option.soon ? "install-option soon" : "install-option"}
+          key={option.name}
+        >
           <div className="meta">
             <div className="name">{option.name}</div>
-            <div className="muted">{option.note}</div>
+            <div className="muted">{option.soon ?? option.note}</div>
           </div>
-          <a className="button" href={option.store} target="_blank" rel="noreferrer noopener">
-            Install
-          </a>
+          {option.soon ? (
+            <span className="button disabled" aria-disabled="true">
+              Coming soon
+            </span>
+          ) : (
+            <a className="button" href={option.store} target="_blank" rel="noreferrer noopener">
+              Install
+            </a>
+          )}
           <a className="button secondary" href={option.site} target="_blank" rel="noreferrer noopener">
             Website
           </a>
@@ -64,8 +78,10 @@ export function InstallHelp({ subject }: { subject: string }) {
 export function InstallLinks({ subject }: { subject: string }) {
   return (
     <p className="note install-links">
-      Do not have a {subject} yet, or want to use a different app?{" "}
-      {WALLET_OPTIONS.map((option, index) => (
+      {/* Only the ones a run can actually finish with. This line offered Lace
+          as an equal option, which is where someone would have picked it. */}
+      Do not have a {subject} yet?{" "}
+      {WALLET_OPTIONS.filter((option) => !option.soon).map((option, index) => (
         <span key={option.name}>
           {index > 0 ? " or " : ""}
           <a href={option.store} target="_blank" rel="noreferrer noopener">

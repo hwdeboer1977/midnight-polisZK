@@ -9,29 +9,32 @@ import { DUTCH_V1 } from "./tax-params.js";
  * Which periods a freshly deployed payroll contract can file against.
  *
  * A payroll contract cannot read the rule registry — contracts cannot read each
- * other's state — so the platform records the rule-set hash per period with
- * `setParamsFor`. A contract with none recorded is deployed, assigned, owned by
- * its employer, and unable to file anything: `setPayroll` rejects every period
- * with "no rule set recorded for that period".
+ * other's state — so the platform records the rule-set hash per period. A
+ * contract with none recorded is deployed, assigned, owned by its employer, and
+ * unable to file anything: `setPayroll` rejects every period with "no rule set
+ * recorded for that period".
  *
- * So onboarding has to open a window. It is a window rather than "all of time"
- * because each period is its own transaction, and rather than "just this month"
- * because an employer's first act is often to file the month that just ended.
+ * So onboarding has to open something, and the unit is the calendar year.
+ * Schedules are annual — every month of 2026 carries the identical hash — and
+ * `setParamsFor` takes a range, so `(year, 1, 12)` writes all twelve in one
+ * transaction. The old six-month rolling window bought nothing but five extra
+ * proofs and a cliff that landed four months after whoever signed up, rather
+ * than on 1 January where it can be seen coming.
+ *
+ * Deliberately the CURRENT year and no further. Opening a month decides which
+ * schedule it is filed under, and that decision is write-once — so opening 2027
+ * today would permanently bind next year to this year's rates, before anyone
+ * has published next year's. A year is opened once its schedule is known.
  */
-export const DEFAULT_WINDOW_MONTHS = 6;
 
-/** YYYYMM for `count` months, starting `back` months before the current one. */
-export function ruleWindow(
-  now: Date = new Date(),
-  count = DEFAULT_WINDOW_MONTHS,
-  back = 2
-): number[] {
-  const periods: number[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back + i, 1));
-    periods.push(d.getUTCFullYear() * 100 + d.getUTCMonth() + 1);
-  }
-  return periods;
+/** The calendar year a filing is being opened for. */
+export function filingYear(now: Date = new Date()): number {
+  return now.getUTCFullYear();
+}
+
+/** Every YYYYMM in a calendar year, January first. */
+export function monthsOf(year: number): number[] {
+  return Array.from({ length: 12 }, (_, i) => year * 100 + i + 1);
 }
 
 /**
