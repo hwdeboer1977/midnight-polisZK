@@ -119,6 +119,16 @@ claims.json
 # an artefact of a run, never source.
 claims/
 
+# Termination records written by `src/terminate-cli.ts` and read back by the
+# relay, plus the payslips exported alongside them.
+#
+# Worse than the claim bundles above: a payslip carries the commitment's NONCE
+# together with the gross, tax, social and net it is supposed to hide. That is
+# the entire private half of the opening — the thing the commitment exists to
+# keep off the chain — sitting in a public repo in plain JSON. Slot 1 of 202601
+# went up that way before this rule existed.
+terminations/
+
 # Which employer keys have already self-onboarded. Operational state, not
 # source: it answers "you already have a contract" across restarts. The chain
 # and deployment.json remain the source of truth, so losing this costs a
