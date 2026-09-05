@@ -19,6 +19,13 @@ backup/
 # Contract artifacts
 contracts/managed/
 
+# The probe stubs' compiled output. Same reason as above, and it needs its own
+# rule: the line above is anchored to `contracts/`, so `probe/managed/` slipped
+# past it and 35 MB of prover keys went into history. Regenerable from the
+# `.compact` sources next to it; nothing imports it. The probe SOURCES stay
+# committed — they are the record of which platform limits were tested.
+probe/managed/
+
 # Deployment info
 deployment.json
 
@@ -103,6 +110,14 @@ claims.json
 # runner cannot rebuild them. Proving keys are public by construction, so there
 # is nothing here to protect — the cost is repo size, not secrecy.
 # frontend/public/zk/
+
+# Claim bundles written by the relay (`src/relay.ts`) under `claims/<period>/`.
+#
+# These carry the fund pool coin's NONCE, alongside its value and colour. That
+# is the same secret `/fund-pool*` above exists to keep out of the repo, and a
+# bundle for 202601 published one before this rule existed. A claim bundle is
+# an artefact of a run, never source.
+claims/
 
 # Which employer keys have already self-onboarded. Operational state, not
 # source: it answers "you already have a contract" across restarts. The chain
