@@ -8,6 +8,14 @@ import { Link } from "react-router-dom";
 // renders nothing rather than a dead play button.
 const DEMO_VIDEO_URL = "";
 
+// What the closing block offers. Same rule as the video: an empty string
+// renders no link rather than a promise the page cannot keep. Point the papers
+// at a file dropped in frontend/public/, or at wherever they are hosted.
+const POSITION_PAPER_URL = "/position-paper.pdf";
+const WHITE_PAPER_URL = "/white-paper.pdf";
+const REPO_URL = "https://github.com/hwdeboer1977/midnight-polisZK";
+const CONTACT_EMAIL = "hwdeboer@gmail.com";
+
 type Diagram = { src: string; title: string; alt: string };
 
 // The two diagrams are the argument, so they are also the two things a reader
@@ -82,6 +90,17 @@ export function Landing() {
           benefits — with every individual figure sealed and every aggregate
           provably correct.
         </p>
+        {/* The problem the product is an answer to, stated before the buttons:
+            the first line is the number, the second says why it is not a
+            funding number. */}
+        <p className="hero-stat">
+          <strong>
+            Only 16.7% of the world's unemployed receive a benefit.
+          </strong>{" "}
+          Not because the money is unaffordable, but because proving who
+          qualifies has always meant building a register.
+        </p>
+
         {/* Understanding before commitment: a jury reads what the system does
             before it is asked to connect a wallet, so the explainer leads. */}
         <div className="cta">
@@ -99,6 +118,31 @@ export function Landing() {
             </a>
           </p>
         ) : null}
+      </section>
+
+      {/* The argument compressed. It is the premise, not the conclusion, so it
+          comes before the mechanism: a policy reader who lands cold needs to
+          know what is being contested before being shown how. The band is the
+          navy the diagrams are drawn in, so the thesis is visibly not one more
+          section of the page. */}
+      <section className="thesis">
+        <div className="thesis-inner">
+          <p>
+            The ILO says pool the risk, because social security is a right. The
+            World Bank says you can't pool what you can't verify. Both are right
+            — and both assume that verifying an income history needs an
+            apparatus poor states can't afford and citizens have reason to
+            distrust.
+          </p>
+          {/* Its own paragraph rather than a bolder run inside the one above:
+              the break is what gives the line its weight. */}
+          <p className="thesis-turn">That assumption is now contestable.</p>
+          {/* What turns the first two sentences from a slogan into a citation. */}
+          <p className="thesis-source">
+            ILO, World Social Protection Report 2024–26 · World Bank, Protecting
+            All, 2019
+          </p>
+        </div>
       </section>
 
       {/* The two diagrams carry the argument better than prose does: one shows a
@@ -168,6 +212,37 @@ export function Landing() {
           The whole roster is submitted in one transaction on purpose. Paying people
           one at a time would move the public total by exactly one salary each time,
           and anyone watching blocks could read every amount off the differences.
+        </p>
+      </section>
+
+      {/* The ask. The band argues the case in section two; by here a reader has
+          seen the mechanism and is finally ready to leave for a long PDF. */}
+      <section className="closing">
+        <h2>Read the argument in full</h2>
+        {POSITION_PAPER_URL || WHITE_PAPER_URL ? (
+          <p className="closing-links">
+            {POSITION_PAPER_URL ? (
+              <a className="button secondary" href={POSITION_PAPER_URL}>
+                Read the position paper
+              </a>
+            ) : null}
+            {WHITE_PAPER_URL ? (
+              <a className="button secondary" href={WHITE_PAPER_URL}>
+                Read the white paper
+              </a>
+            ) : null}
+          </p>
+        ) : null}
+        <p className="closing-meta">
+          <a href={REPO_URL} target="_blank" rel="noreferrer noopener">
+            Source on GitHub
+          </a>
+          {CONTACT_EMAIL ? (
+            <>
+              {" · "}
+              <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+            </>
+          ) : null}
         </p>
       </section>
 

@@ -857,7 +857,13 @@ table.roster .mono {
 
 /* ---------- landing ---------- */
 
-main.wide { max-width: 980px; }
+/* The landing page is a front door, not a document: it opens on the wordmark
+   rather than on 100px of air. The masthead here carries only the connect
+   button, so the usual 44px page top and 30px masthead gap were being spent on
+   an empty row beside it. Scoped to .wide, which is the landing and nothing
+   else. */
+main.wide { max-width: 980px; padding-top: 20px; }
+main.wide .top { margin-bottom: 8px; }
 
 .wordmark {
   display: inline-block; text-decoration: none; color: var(--text);
@@ -865,9 +871,9 @@ main.wide { max-width: 980px; }
 }
 .wordmark:hover { opacity: 0.85; }
 
-.landing { padding-top: 8px; }
+.landing { padding-top: 0; }
 
-.hero { padding: 18px 0 40px; max-width: 660px; }
+.hero { padding: 0 0 40px; max-width: 660px; }
 .hero h1 {
   font-size: 40px; line-height: 1.12; letter-spacing: -0.03em;
   margin: 0 0 16px; font-weight: 680;
@@ -883,6 +889,15 @@ main.wide { max-width: 980px; }
   font-weight: 550; margin: 0 0 18px; color: var(--text);
 }
 .lede { font-size: 17px; line-height: 1.55; color: var(--muted); margin: 0 0 26px; }
+
+/* The framing statistic. A rule rather than a tint, so it reads as an aside
+   inside the hero and not as a second call to action. */
+.hero-stat {
+  margin: 0 0 26px; padding: 2px 0 2px 15px;
+  border-left: 2px solid var(--accent);
+  font-size: 16px; line-height: 1.55; color: var(--muted);
+}
+.hero-stat strong { color: var(--text); font-weight: 620; }
 
 .cta { display: flex; gap: 10px; flex-wrap: wrap; }
 .demo-link { margin: 18px 0 0; font-size: 14px; }
@@ -1018,6 +1033,59 @@ main.wide { max-width: 980px; }
 .col.private { background: var(--accent-soft); }
 .col.private h4 { color: var(--accent); }
 
+/* The premise, on the navy the diagrams are drawn in. It sits directly under
+   the hero: the argument comes before the mechanism, because a policy reader
+   who lands cold has to know what is being contested first.
+   Only the colour goes full-bleed — the box itself stays in the centred column,
+   so its text sits on exactly the same left edge as the hero above it. The
+   background is painted out to the viewport by a box-shadow spread rather than
+   a 100vw breakout: a shadow never adds scrollable overflow, and 100vw centres
+   on the viewport while main centres on the viewport minus the scrollbar, which
+   put the two axes a few pixels apart. clip-path keeps the spread horizontal. */
+.thesis {
+  margin: 4px 0 40px;
+  padding: 52px 0 56px;
+  background: #16213e;
+  box-shadow: 0 0 0 100vmax #16213e;
+  clip-path: inset(0 -100vmax);
+}
+/* The band is navy in both themes, so its ink is fixed rather than tokenised —
+   --accent is a near-black indigo in light mode and would vanish here.
+   The font-size here is what the 46ch measure resolves against; the paragraphs
+   inherit it. */
+.thesis-inner { max-width: 46ch; font-size: 19.5px; }
+.thesis-inner p {
+  margin: 0; font-size: inherit; line-height: 1.5;
+  letter-spacing: -0.015em; font-weight: 400;
+  color: #ffffff; text-wrap: pretty;
+}
+/* The only weighted run in the band. The paragraph above it is 400 precisely
+   so this line has something to be heavier than. */
+.thesis-inner .thesis-turn {
+  margin-top: 22px; color: #a5b4fc; font-weight: 620;
+}
+.thesis-inner .thesis-source {
+  margin-top: 26px;
+  font-size: 12px; line-height: 1.6; font-weight: 400; letter-spacing: normal;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* The ask. A rule and open background rather than a card: it closes the page
+   rather than adding one more panel to it. Left-aligned like everything else —
+   the page holds one axis from the hero down. */
+.closing {
+  margin: 40px 0 0; padding-top: 30px;
+  border-top: 1px solid var(--line);
+}
+.closing h2 { margin: 0 0 18px; font-size: 19px; letter-spacing: -0.02em; }
+.closing-links {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 20px;
+}
+.closing-meta { margin: 0; font-size: 13.5px; color: var(--muted); }
+.closing-meta a { color: var(--muted); text-decoration: none; }
+.closing-meta a:hover { color: var(--text); text-decoration: underline; }
+
 .next { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.6; }
 .next li { margin-bottom: 12px; }
 .next li:last-child { margin-bottom: 0; }
@@ -1034,6 +1102,9 @@ main.wide { max-width: 980px; }
   .hero h1 { font-size: 30px; }
   .hero h1.brand { font-size: 40px; }
   .tagline { font-size: 19px; }
+  .hero-stat { font-size: 15px; }
+  .thesis { padding: 42px 0 46px; }
+  .thesis-inner p { font-size: 17px; }
 }
 
 /* ---------- registration ---------- */
