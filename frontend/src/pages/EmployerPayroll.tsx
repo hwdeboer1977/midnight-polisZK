@@ -307,41 +307,81 @@ export function EmployerPayroll() {
       null
     : null;
 
-  /** The hero's four figures: who, how much, which month, and is it done. */
-  const monthMetrics = (): DashMetric[] => {
+  /**
+   * What the dark block says: the figures if there are any, one line if not.
+   *
+   * This was a fixed row of four cells, so a freshly opened month rendered two
+   * of them reading "—". Dropping the empties was not enough on its own — one
+   * surviving cell still got a quarter of the block and broke "Not filed"
+   * across two lines at 27px. So a month with nothing counted yet gets a
+   * sentence, and the cells appear only once they have something to hold.
+   *
+   * The period is deliberately not among the cells. It was the fourth, two
+   * inches above a work-zone heading that also read "October 2026" — the month
+   * stated twice, once as a statistic and once where the work happens. It
+   * belongs at the work, and in the status line's own wording.
+   */
+  const monthSummary = (): { metrics?: DashMetric[]; status?: React.ReactNode } => {
     const settled = filedLoaded && paidLoaded && withheldLoaded;
-    return [
-      {
-        value: headcount > 0 ? group(BigInt(headcount)) : "—",
+    const month = loadedPeriod ? periodName(loadedPeriod) : null;
+
+    const state: { value: string; note: string; attention: boolean } = {
+      value: settled
+        ? "✓ Settled"
+        : filedLoaded
+          ? paidLoaded
+            ? "Withholding"
+            : "Unpaid"
+          : "Not filed",
+      note: settled
+        ? "filed, paid and withheld"
+        : filedLoaded
+          ? paidLoaded
+            ? "withholding still to send"
+            : "filed, not yet paid"
+          : `nothing filed for ${month ?? "this month"}`,
+      attention: Boolean(loadedPeriod) && !settled,
+    };
+
+    const figures: DashMetric[] = [];
+
+    if (headcount > 0) {
+      figures.push({
+        value: group(BigInt(headcount)),
         label: headcount === 1 ? "Employee" : "Employees",
         note: loadedKey !== null && countFor(loadedKey) > 0 ? "on this period" : "in the workbook",
-      },
-      {
-        value: monthGross === null ? "—" : `€${formatPeurTile(monthGross)}`,
-        exact: monthGross === null ? undefined : `Exactly €${formatPeur(monthGross)}`,
+      });
+    }
+
+    if (monthGross !== null) {
+      figures.push({
+        value: `€${formatPeurTile(monthGross)}`,
+        exact: `Exactly €${formatPeur(monthGross)}`,
         label: "Gross payroll",
         note: filedLoaded ? "filed on chain" : "from the workbook, not yet filed",
-      },
-      {
-        value: loadedPeriod ? periodName(loadedPeriod) : "—",
-        label: "Current period",
-        note: latestDone && !roster ? "next month — the last one is done" : "the month in progress",
-      },
-      {
-        value: settled ? "✓ Settled" : filedLoaded ? (paidLoaded ? "Withholding" : "Unpaid") : "Not filed",
-        label: "Payroll status",
-        note: settled
-          ? "filed, paid and withheld"
-          : !loadedPeriod
-            ? "load a workbook to begin"
-            : filedLoaded
-              ? paidLoaded
-                ? "withholding still to send"
-                : "filed, not yet paid"
-              : "nothing filed for this month",
-        attention: Boolean(loadedPeriod) && !settled,
-      },
-    ];
+      });
+    }
+
+    // Nothing counted yet. One line — the state and, in the same breath, which
+    // month it is the state of.
+    if (figures.length === 0) {
+      return {
+        status: (
+          <>
+            <span className={state.attention ? "dash-status-dot attention" : "dash-status-dot"} />
+            <strong>{state.value}</strong>
+            <span className="dash-status-note">{state.note}</span>
+          </>
+        ),
+      };
+    }
+
+    return {
+      metrics: [
+        ...figures,
+        { value: state.value, label: "Payroll status", note: state.note, attention: state.attention },
+      ],
+    };
   };
 
   return (
@@ -359,9 +399,9 @@ export function EmployerPayroll() {
             ? "Run private payroll and manage employee records."
             : "Complete your setup to run your first private payroll."
         }
-        // Only once there is a contract to report on. Four dashes above a setup
+        // Only once there is a contract to report on. A dashboard above a setup
         // checklist is a dashboard for a system that does not exist yet.
-        metrics={instance ? monthMetrics() : undefined}
+        {...(instance ? monthSummary() : {})}
       />
 
       {checking && account ? <p className="muted">Reading your contract…</p> : null}

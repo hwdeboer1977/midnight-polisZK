@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { CopyRow } from "../components/CopyRow";
+import { PageHead } from "../components/PageHead";
 import { EXPLORERS } from "../lib/chain";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { usePayrollInstances } from "../lib/usePayrollInstances";
@@ -30,8 +31,7 @@ export function EmployerSettings() {
 
   return (
     <>
-      <section className="area-head">
-        <h1>Settings</h1>
+      <PageHead title="Settings">
         {/* The page and its tab finally agree. This was the "Setup" tab whose
             own heading read "Reference" — a page arguing with its label,
             because setup stops being setup the moment onboarding is done and
@@ -42,11 +42,9 @@ export function EmployerSettings() {
             stated here, on the payroll page, and again inside Register — three
             places answering one question. Payroll owns "what do I have to do";
             this page owns "how is it configured". */}
-        <p className="lede">
-          View your company, payroll contract and wallet configuration. To run
-          payroll, go to <Link to="/employer">Payroll</Link>.
-        </p>
-      </section>
+        View your company, payroll contract and wallet configuration. To run
+        payroll, go to <Link to="/employer">Payroll</Link>.
+      </PageHead>
 
       {/* ── Company & contract ─────────────────────────────────────────
           Configuration and reference: what this organization IS, on chain. The

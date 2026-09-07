@@ -33,6 +33,28 @@
      the work zone, which is a full tint because something happens in it. */
   --card-tint: #faf9ff;
   --radius: 14px;
+
+  /* ── The four card types ─────────────────────────────────────────────────
+     Nine screens is enough that this stops being a habit and becomes a rule.
+     Every block on every page is one of these, and nothing else:
+
+       information   white (--card)          records, history, parameters
+       action        pale purple (--work-tint) what the user can or must do
+       status        dark navy (--op-dark)   high-level operational state
+       attention     pale green / orange     a state worth noticing
+
+     Reach for a new background only by adding a fifth type here, deliberately,
+     rather than by tinting one card in one place.
+
+     ── Vertical rhythm ─────────────────────────────────────────────────────
+     Named so the same gap is the same number everywhere. Operator and Employer
+     had drifted a few pixels off Employee, which is invisible on any one page
+     and exactly what makes a set of pages feel separately built. */
+  --gap-status: 24px;  /* nav → the global status line */
+  --gap-title: 8px;    /* status → h1, and h1 → description */
+  --gap-head: 30px;    /* the header block → the first card */
+  --gap-card: 16px;    /* card → card */
+  --gap-section: 28px; /* section → section */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -194,7 +216,7 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 20px 22px;
-  margin-bottom: 18px;
+  margin-bottom: var(--gap-card);
 }
 .card > h2 {
   font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.07em;
@@ -453,15 +475,81 @@ table.roster .mono {
 .subnav-link.locked:hover { background: transparent; color: var(--faint); }
 .tab-done { color: var(--ok); margin-left: 5px; font-weight: 700; }
 
-.area-head, .net-head { margin-bottom: 26px; }
-.area-head h1, .net-head h1 {
-  font-size: 30px; line-height: 1.15; letter-spacing: -0.025em; margin: 0 0 10px;
+/* A single privacy or verification claim under a table, standing in for the
+   paragraphs that used to be there. Small, one line, and the reasoning behind
+   it is in a `details` immediately below — the table is what the page is for,
+   and the explanation was outweighing it. */
+.privacy-line, .verified-line {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 14px 0 0; font-size: 13px; line-height: 1.55; color: var(--muted);
 }
-.area-head .lede, .net-head .lede { font-size: 15.5px; margin: 0; max-width: 62ch; }
-/* Stands in for the masthead on this page, so it carries a little more weight. */
-.net-head h1.brand-head {
-  font-size: 34px; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 12px;
+.privacy-line strong { color: var(--text); font-weight: 620; }
+.verified-line { color: var(--ok); }
+.verified-line span:first-child { font-weight: 700; }
+
+/* THE SHELL'S STATUS LINE. Under the nav, above the page header, on every
+   page — and gone entirely when there is nothing to say. Pale orange rather
+   than the loud --warn text it replaced: it should be noticeable at a glance
+   and then ignorable, which a full-weight orange sentence at the top of the
+   content column was not. */
+.global-status {
+  display: flex; align-items: center; gap: 9px;
+  margin: 0 0 var(--gap-status);
+  padding: 8px 13px;
+  background: var(--warn-soft); border: 1px solid var(--warn-line);
+  border-radius: 999px;
+  font-size: 13px; line-height: 1.4; color: var(--warn);
 }
+.global-status-dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--warn);
+  /* Slow enough to read as "working", not as an alarm. */
+  animation: status-pulse 2s ease-in-out infinite;
+}
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .global-status-dot { animation: none; }
+}
+
+/* THE PAGE HEADER. One rule, every page — see components/PageHead.
+   Title → 8px → description → 28px → the page's first card, so nine screens
+   start at the same height and settle into the same rhythm. Anything that
+   varies per page (a count, a role badge, an action) hangs off the component
+   rather than off a second copy of these numbers. */
+.page-head { margin-bottom: var(--gap-head); }
+.page-head h1 {
+  font-size: 30px; line-height: 1.15; letter-spacing: -0.025em;
+  margin: 0 0 var(--gap-title);
+}
+.page-head .lede { font-size: 15.5px; margin: 0; max-width: 62ch; }
+/* Stands in for the masthead on the network pages, so it carries a little
+   more weight. Same block, one size up — not a different header. */
+.page-head h1.brand-head {
+  font-size: 34px; font-weight: 700; letter-spacing: -0.03em;
+  margin-bottom: var(--gap-title);
+}
+
+/* A standing fact about the page's role, directly under the description: what
+   this console IS. Operator's was a 360px card level with the title, which
+   made its header twice the height of every other page's and pushed the first
+   figure below the fold. One line, indented off the accent, reads as an
+   annotation to the description rather than as content. */
+.page-badge {
+  display: flex; align-items: flex-start; gap: 9px;
+  margin: 14px 0 0; padding: 9px 13px 9px 12px;
+  max-width: 62ch;
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent); border-radius: 0 8px 8px 0;
+  font-size: 13px; line-height: 1.5; color: var(--muted);
+}
+.page-badge strong { color: var(--text); font-weight: 620; }
+.page-badge .page-badge-icon {
+  flex: none; display: flex; color: var(--accent); margin-top: 1px;
+}
+.page-badge .page-badge-icon svg { width: 15px; height: 15px; }
 .area-sub { margin: 30px 0 -6px; }
 
 /* The employer's identity line, under the page title. */
@@ -1385,6 +1473,12 @@ button.primary.secondary-action {
    key. The title and lede moved into the hero itself. */
 .op-head { margin-bottom: 20px; }
 
+/* Columns follow the number of figures. Fixed at four, a block holding two of
+   them packed both into the left half and left the right half blank. */
+.dash-metrics[data-count="1"] { grid-template-columns: 1fr; }
+.dash-metrics[data-count="2"] { grid-template-columns: repeat(2, 1fr); }
+.dash-metrics[data-count="3"] { grid-template-columns: repeat(3, 1fr); }
+
 .dash-metrics {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1538,7 +1632,9 @@ button.ghost.danger-text { color: var(--danger); border-color: var(--line); }
 button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-soft); }
 
 @media (max-width: 860px) {
-  .dash-metrics { grid-template-columns: 1fr 1fr; }
+  /* The narrow-screen cap on the metric grid is NOT here: it has to come after
+     the hero-scoped count rules further down, which match at the same weight
+     and would otherwise win on source order. */
   .contract-pair { grid-template-columns: 1fr; }
   .op-row { grid-template-columns: 1.4fr 1fr auto; }
   .op-row > :nth-child(3), .op-row > :nth-child(4) { display: none; }
@@ -1558,7 +1654,7 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
   background: var(--op-dark);
   border-radius: var(--radius);
   padding: 22px 24px 4px;
-  margin-bottom: 26px;
+  margin-bottom: var(--gap-section);
 }
 .dash-hero-head h1 {
   font-size: 13px; font-weight: 680; letter-spacing: 0.1em; text-transform: uppercase;
@@ -1570,6 +1666,22 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
 
 /* The KPI strip lives inside the hero, so it loses its own borders and card
    background and is divided by hairlines in the hero's own palette instead. */
+/* One line where the figures would be, when there is nothing to count yet.
+   Reads as a state, not as a statistic — no 27px numeral, no cell. */
+.dash-status {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 4px; padding: 14px 0 18px;
+  border-top: 1px solid var(--op-dark-line);
+  font-size: 14px; color: var(--op-dark-muted);
+}
+.dash-status strong { color: var(--op-dark-text); font-weight: 640; }
+.dash-status-dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--op-dark-muted);
+}
+.dash-status-dot.attention { background: var(--op-dark-accent); }
+.dash-status-note::before { content: "· "; }
+
 .dash-hero .dash-metrics {
   grid-template-columns: repeat(4, 1fr);
   gap: 0;
@@ -1578,6 +1690,22 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
   border-top: 1px solid var(--op-dark-line);
   border-radius: 0;
   margin: 0;
+}
+/* Restated inside the hero: `.dash-hero .dash-metrics` matches at the same
+   weight as `.dash-metrics[data-count]` and comes later, so without these the
+   count would be ignored in the one place the block is actually used. */
+.dash-hero .dash-metrics[data-count="1"] { grid-template-columns: 1fr; }
+.dash-hero .dash-metrics[data-count="2"] { grid-template-columns: repeat(2, 1fr); }
+.dash-hero .dash-metrics[data-count="3"] { grid-template-columns: repeat(3, 1fr); }
+
+/* Two across at most on a narrow screen, whatever the count. Last, so it beats
+   every count rule above it — media queries add no specificity of their own. */
+@media (max-width: 860px) {
+  .dash-metrics,
+  .dash-metrics[data-count],
+  .dash-hero .dash-metrics[data-count] { grid-template-columns: 1fr 1fr; }
+  .dash-metrics[data-count="1"],
+  .dash-hero .dash-metrics[data-count="1"] { grid-template-columns: 1fr; }
 }
 .dash-hero .dash-metric {
   background: transparent;
@@ -1599,7 +1727,7 @@ button.ghost.danger-text:hover:not(:disabled) { border-color: var(--danger); bac
   border: 1px solid var(--work-line);
   border-radius: var(--radius);
   padding: 20px 22px;
-  margin-bottom: 26px;
+  margin-bottom: var(--gap-section);
 }
 .work-zone > .eyebrow { margin-top: 0; }
 
@@ -2523,37 +2651,10 @@ table.roster.periods td { padding-top: 9px; padding-bottom: 9px; }
 /* Inside the tinted work zone the head's rule follows the zone, not the page. */
 .work-zone .band-head { margin-bottom: 14px; }
 
-/* ── Operator: identity beside the figures ───────────────────────────────────
-   The head moves onto the page and the dark block keeps only the money, so the
-   two statements stop competing inside one rectangle. */
-.dash-intro {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 24px; flex-wrap: wrap; margin-bottom: 18px;
-}
-.dash-hero-head.light { flex: 1 1 380px; }
-.dash-hero-head.light h1 {
-  margin: 0 0 8px; font-size: 30px; letter-spacing: -0.03em; color: var(--text);
-  text-transform: none; font-weight: 700;
-}
-.dash-hero-head.light p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.55; }
-.dash-hero-head.light .dash-hero-sub { color: var(--faint); font-size: 13.5px; }
-.dash-aside { flex: 0 1 360px; }
-.role-card {
-  display: flex; gap: 12px; align-items: flex-start;
-  padding: 14px 16px; border-radius: 12px;
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-}
-.role-icon {
-  flex: none; display: grid; place-items: center;
-  width: 34px; height: 34px; border-radius: 9px;
-  background: var(--card); color: var(--accent);
-}
-.role-card h3 {
-  margin: 0 0 3px; font-size: 11.5px; text-transform: uppercase;
-  letter-spacing: 0.07em; color: var(--accent); font-weight: 650;
-}
-.role-card p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+/* `.dash-intro`, `.dash-hero-head.light`, `.dash-aside`, `.role-card` and
+   `.role-icon` lived here: Operator's own header, a title beside a 360px role
+   card, in place of the header every other page used. It is a `PageHead` with
+   a `page-badge` now — one header, nine pages. */
 
 /* The figures alone. Same dark block; without a head above them the padding
    has to close at the bottom, which the head's own margin was doing. */

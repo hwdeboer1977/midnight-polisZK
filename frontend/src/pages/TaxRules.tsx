@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { PageHead } from "../components/PageHead";
 import { DUTCH_V1, computeLine, type TaxParams } from "../generated/tax-params";
 import { formatPeur, formatPeurWhole, group } from "../lib/format";
 import { describeMonths, periodName } from "../lib/period";
@@ -62,13 +63,10 @@ export function TaxRules() {
 
   return (
     <>
-      <section className="net-head">
-        <h1 className="brand-head">Tax parameters</h1>
-        <p className="lede">
-          The published payroll rules behind every figure this network reports —
-          on chain, versioned, and checkable by anyone.
-        </p>
-      </section>
+      <PageHead brand title="Tax parameters">
+        The published payroll rules behind every figure this network reports —
+        on chain, versioned, and checkable by anyone.
+      </PageHead>
 
       {loading ? <p className="note">Reading the registry…</p> : null}
       {error ? <p className="status error">Could not read the registry: {error}</p> : null}
@@ -223,8 +221,12 @@ function Schedule({ params }: { params: TaxParams }) {
               rate={params.contribRate}
             />
           </ul>
+          {/* "Demo parameter" undercut a page whose whole argument is that
+              these rules are real, published and immutable. The ceiling IS a
+              pilot's number — that is worth saying — but the word for it is
+              the deployment's stage, not a disclaimer about the system. */}
           <p className="demo-param">
-            <strong>Demo parameter</strong>
+            <strong>Pilot configuration</strong>
             <span className="demo-marker">*</span> Ceiling €
             {formatPeurWhole(params.maxContribBase)} / month — above any salary
             this system will see, so the contribution is effectively uncapped. A

@@ -8,6 +8,7 @@ import { bytesToHex as hex } from "../lib/keys";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { PayslipRecovery } from "../components/PayslipRecovery";
 import { StageGate } from "../components/StageGate";
+import { PageHead } from "../components/PageHead";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { formatPeur, group } from "../lib/format";
 import type { PayrollLedger } from "../lib/contracts";
@@ -123,15 +124,26 @@ function PeriodHistory({ instance }: { instance: PayrollInstance }) {
             </tbody>
           </table>
 
-          {/* Stated once, below the table, rather than as three columns of
-              dashes. A column that never has a value is not information; it is
-              a reminder of something missing, repeated once per row. */}
-          <p className="note">
-            Every figure is read from the contract's own public ledger. The
-            withholding is computed inside the circuit from each gross salary and
-            the rule set recorded for that period, so these columns are what the
-            published rates produce — not what anyone typed.
+          {/* The claim in one line, the argument for it a click away. A
+              paragraph here competed with the table it was vouching for; the
+              table is the page. */}
+          <p className="verified-line">
+            <span aria-hidden="true">✓</span> Totals verified from on-chain
+            payroll state.
           </p>
+          <details className="details">
+            <summary>How these totals are verified</summary>
+            <p className="note">
+              Every figure above is read from the contract's own public ledger.
+              The withholding is computed inside the circuit from each gross
+              salary and the rule set recorded for that period, so these columns
+              are what the{" "}
+              <Link to="/app/rules">published rates</Link> produce — not what
+              anyone typed. The figures behind each row never left your machine:
+              what is on chain is the aggregate and one opaque commitment per
+              employee.
+            </p>
+          </details>
 
           <details className="details">
             <summary>Commitments per period</summary>
@@ -201,15 +213,10 @@ export function EmployerHistory() {
   }, [loading, instances]);
 
   const head = (
-    <section className="area-head">
-      <h1>Payroll history</h1>
-      <p className="lede">
-        View each filed payroll period and retrieve its private payslips. The
-        figures behind each row never left your machine — what is on chain is the
-        aggregate and one opaque commitment per employee. To run a month, go to{" "}
-        <Link to="/employer">Payroll</Link>.
-      </p>
-    </section>
+    <PageHead title="Payroll history">
+      View each filed payroll period and retrieve its private payslips. To run a
+      month, go to <Link to="/employer">Payroll</Link>.
+    </PageHead>
   );
 
   if (!account) {

@@ -7,6 +7,7 @@ import { WalletPicker } from "../components/WalletPicker";
 import { findAttestations, type Attestation } from "../lib/attestations";
 import { CopyRow } from "../components/CopyRow";
 import { FilePicker } from "../components/FilePicker";
+import { PageHead } from "../components/PageHead";
 import { formatPeur, formatPeurTile } from "../lib/format";
 import {
   loadDeployments,
@@ -120,13 +121,10 @@ export function Employee() {
   if (!account) {
     return (
       <>
-        <section className="area-head">
-          <h1>Your salary</h1>
-          <p className="lede">
-            Your salary details stay private. They are not published on chain and
-            can only be seen from your payslip.
-          </p>
-        </section>
+        <PageHead title="Your salary">
+          Your salary details stay private. They are not published on chain and
+          can only be seen from your payslip.
+        </PageHead>
 
         <PayslipCheck
           onCheck={check}
@@ -167,13 +165,10 @@ export function Employee() {
 
   return (
     <>
-      <section className="area-head">
-        <h1>Your salary</h1>
-        <p className="lede">
-          Your salary details stay private. Only you can see these figures — they
-          are not hidden behind a login, they were never published.
-        </p>
-      </section>
+      <PageHead title="Your salary">
+        Your salary details stay private. Only you can see these figures — they
+        are not hidden behind a login, they were never published.
+      </PageHead>
 
       {error ? <p className="status error">{error}</p> : null}
 
@@ -292,7 +287,7 @@ export function Employee() {
                 figure of €1,016.40 invites exactly one question, and "pEUR in
                 your wallet" answered it only if you already knew the difference
                 between a month's pay and a running balance. */}
-            <div className="headline-label">Payroll wallet balance</div>
+            <div className="headline-label">Available salary balance</div>
             <div className="headline-sub">pEUR this wallet can spend</div>
             <p className="ok-line" style={{ margin: "10px 0 0" }}>
               ✓ Received privately

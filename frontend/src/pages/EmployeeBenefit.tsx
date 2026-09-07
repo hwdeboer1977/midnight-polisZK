@@ -7,6 +7,7 @@ import { useWallet } from "../wallet/WalletContext";
 import { ClaimForm } from "../components/ClaimForm";
 import { ClaimStatus } from "../components/ClaimStatus";
 import { WalletPicker } from "../components/WalletPicker";
+import { PageHead } from "../components/PageHead";
 import { useAttestations } from "../lib/useAttestations";
 import { type Attestation } from "../lib/attestations";
 import { BENEFIT_V1, PILOT_DURATION_MONTHS } from "../generated/benefit-params";
@@ -109,13 +110,10 @@ export function EmployeeBenefit() {
   if (!account) {
     return (
       <>
-        <section className="area-head">
-          <h1>Unemployment benefit</h1>
-          <p className="lede">
-            Prove you qualify without revealing your salary history, employer or
-            identity.
-          </p>
-        </section>
+        <PageHead title="Unemployment benefit">
+          Prove you qualify without revealing your salary history, employer or
+          identity.
+        </PageHead>
 
         <section className="callout">
           <h2>Connect your wallet</h2>
@@ -134,13 +132,10 @@ export function EmployeeBenefit() {
 
   return (
     <>
-      <section className="area-head">
-        <h1>Unemployment benefit</h1>
-        <p className="lede">
-          Prove you qualify without revealing your salary history, employer or
-          identity.
-        </p>
-      </section>
+      <PageHead title="Unemployment benefit">
+        Prove you qualify without revealing your salary history, employer or
+        identity.
+      </PageHead>
 
       {error ? <p className="status error">{error}</p> : null}
 

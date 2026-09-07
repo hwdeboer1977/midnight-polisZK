@@ -3,6 +3,7 @@
 
 import { Link } from "react-router-dom";
 import { CopyRow } from "../components/CopyRow";
+import { PageHead } from "../components/PageHead";
 import { EXPLORERS } from "../lib/chain";
 import { formatPeur, formatPeurTile, group } from "../lib/format";
 import { useNetworkStats } from "../lib/useNetworkStats";
@@ -56,16 +57,18 @@ export function Public() {
 
   return (
     <>
-      <section className="net-head">
-        <h1 className="brand-head">
-          IncomeLayer<span className="zk">ZK</span> Network
-        </h1>
-        <p className="lede">
-          Private payroll and social protection with publicly verifiable
-          aggregates. Every figure below is read directly from on-chain contract
-          state — no individual salary, identity or payment amount is exposed.
-        </p>
-      </section>
+      <PageHead
+        brand
+        title={
+          <>
+            IncomeLayer<span className="zk">ZK</span> Network
+          </>
+        }
+      >
+        Private payroll and social protection with publicly verifiable
+        aggregates. Every figure below is read directly from on-chain contract
+        state — no individual salary, identity or payment amount is exposed.
+      </PageHead>
 
       {error ? <p className="status error">Could not read the chain: {error}</p> : null}
 

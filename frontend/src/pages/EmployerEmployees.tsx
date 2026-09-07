@@ -7,6 +7,7 @@ import { CopyRow } from "../components/CopyRow";
 import { EndEmployment } from "../components/EndEmployment";
 import { RelayPanel } from "../components/RelayPanel";
 import { StageGate } from "../components/StageGate";
+import { PageHead } from "../components/PageHead";
 import { ROSTER_COLUMNS, ROSTER_SIZE, periodName } from "../generated/roster";
 import { loadDeployments, type Deployments } from "../lib/deployments";
 import { bytesToHex, keyToHex } from "../lib/keys";
@@ -161,10 +162,9 @@ export function EmployerEmployees() {
   if (!account || mine.length === 0) {
     return (
       <>
-        <section className="area-head">
-          <h1>Employees</h1>
-          <p className="lede">Manage the employees included in your payroll.</p>
-        </section>
+        <PageHead title="Employees">
+          Manage the employees included in your payroll.
+        </PageHead>
         <StageGate
           title="Register first"
           needs={
@@ -292,10 +292,11 @@ export function EmployerEmployees() {
 
   return (
     <>
-      <section className="area-head">
-        <h1>Employees</h1>
-        <p className="lede">Manage the employees included in your payroll.</p>
-        <div className="roster-head">
+      <PageHead title="Employees">
+        Manage the employees included in your payroll.
+      </PageHead>
+
+      <div className="roster-head">
           <span className="count">
             {employees.length} employee{employees.length === 1 ? "" : "s"}
             {latest ? (
@@ -310,11 +311,10 @@ export function EmployerEmployees() {
               at the old home — so "Add / import employees" landed on a page
               whose only message was "No periods filed on this contract yet",
               with nothing to press. */}
-          <Link className="button" to="/employer">
-            Add / import employees
-          </Link>
-        </div>
-      </section>
+        <Link className="button" to="/employer">
+          Add / import employees
+        </Link>
+      </div>
 
       {employees.length === 0 ? (
         <section className="card">
@@ -416,18 +416,38 @@ export function EmployerEmployees() {
               chain is unchanged either way.
             </p>
           ) : null}
-          <p className="note">
-            "Wallet / key" is the hash the contract stores, not the key itself. A
-            public map of the keys on your payroll would publish the employment
-            relationships everything else here exists to hide — so the preimage
-            stays in your workbook, and the chain only ever checks a recipient
-            rather than naming one.
+          {/* One line, then the reasoning behind it a click away.
+              
+              This was three stacked paragraphs of technical explanation under
+              a two-row table — all of it true, none of it what someone came to
+              this page to read. A roster should look like a roster; the
+              privacy model is why it looks that way, which is a different
+              question and now asked separately. */}
+          <p className="privacy-line">
+            <span aria-hidden="true">🔒</span>
+            <span>
+              <strong>Privacy.</strong> Employee names stay local to your
+              workbook. Only their payment-key hashes are stored on chain, and
+              salaries appear only in a{" "}
+              <Link to="/employer/history">payroll period</Link>.
+            </span>
           </p>
-          <p className="note">
-            No salary column, on purpose. A worker belongs to this page; what
-            they were paid belongs to a{" "}
-            <Link to="/employer/history">payroll period</Link>.
-          </p>
+          <details className="details">
+            <summary>How employee privacy works</summary>
+            <p className="note">
+              The column shows the hash the contract stores, not the key itself.
+              A public map of the keys on your payroll would publish the
+              employment relationships everything else here exists to hide — so
+              the preimage stays in your workbook, and the chain only ever
+              checks a recipient rather than naming one.
+            </p>
+            <p className="note">
+              There is no salary column on purpose. A worker belongs to this
+              page; what they were paid belongs to a{" "}
+              <Link to="/employer/history">payroll period</Link>, where it is
+              one row of an aggregate rather than a figure beside a name.
+            </p>
+          </details>
         </section>
       ) : null}
 

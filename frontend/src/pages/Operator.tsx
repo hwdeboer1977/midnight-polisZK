@@ -6,6 +6,7 @@ import { Link } from "react-router-dom";
 import { FilingYears } from "../components/FilingYears";
 import { CopyRow } from "../components/CopyRow";
 import { DashHero, type DashMetric } from "../components/DashHero";
+import { PageHead } from "../components/PageHead";
 import { EmployerAssign } from "../components/EmployerAssign";
 import { EmployerTable } from "../components/EmployerTable";
 import {
@@ -111,14 +112,12 @@ export function Operator() {
   if (!account) {
     return (
       <>
-        <DashHero eyebrow="Operator" title="Manage treasury settlement and employer access." />
-        <section className="op-head">
-          <p className="note" style={{ marginTop: 0 }}>
-            Connect the key that deployed these contracts. Every control here is
-            checked again by the service or by the chain, so connecting the
-            wrong one shows nothing rather than doing anything.
-          </p>
-        </section>
+        <PageHead title="Operator">
+          Manage treasury settlement and employer access. Connect the key that
+          deployed these contracts — every control here is checked again by the
+          service or by the chain, so connecting the wrong one shows nothing
+          rather than doing anything.
+        </PageHead>
         <WalletPicker heading="Connect the platform key" subject="platform key" />
       </>
     );
@@ -127,17 +126,14 @@ export function Operator() {
   if (!isPlatform && !treasuryRole) {
     return (
       <>
-      <DashHero
-        eyebrow="Operator"
-        title={
-          loading
-            ? "Reading the contracts…"
-            : `This key is not the platform of any contract on ${networkId}.`
-        }
-      />
+      <PageHead title="Operator">
+        {loading
+          ? "Reading the contracts…"
+          : `This key is not the platform of any contract on ${networkId}.`}
+      </PageHead>
       <section className="op-head">
         {loading ? null : (
-          <p className="note">
+          <p className="note" style={{ marginTop: 0 }}>
             Every payroll contract records the key that deployed it, and this is
             not it. If you are an employer, your own contract is under{" "}
             <Link to="/employer">Employer</Link>.
@@ -160,34 +156,32 @@ export function Operator() {
 
   return (
     <>
-      {/* The dark zone. Title and standing figures together, because they are
-          one statement — who you are and what is outstanding — and because a
-          console needs somewhere the eye lands first. Everything below it is
-          progressively lighter, so the page reads as depth rather than as a
-          stack of equally important boxes. */}
-      <DashHero
-        eyebrow="Operator"
-        title={
+      {/* The same header every other page opens with, then the standing
+          figures in the dark below it.
+
+          The protocol role used to be a 360px card sitting level with the
+          title, which made this header roughly twice the height of Employer's
+          and Employee's and pushed the first figure most of a screen down. It
+          is one sentence of standing context, so it is now one line under the
+          description — the badge slot — and Operator lines up with the rest. */}
+      <PageHead
+        title="Operator"
+        badge={
           <>
-            Controls treasury settlement, filing years and employer access.
-          </>
-        }
-        aside={
-          <div className="role-card">
-            <span className="role-icon" aria-hidden="true">
+            <span className="page-badge-icon">
               <IconRole />
             </span>
-            <div>
-              <h3>Protocol role</h3>
-              <p>
-                Holds the treasury keys, routes withheld payroll into the
-                national contracts, and opens the years employers file against.
-              </p>
-            </div>
-          </div>
+            <span>
+              <strong>Protocol role.</strong> Holds the treasury keys, routes
+              withheld payroll into the national contracts, and opens the years
+              employers file against.
+            </span>
+          </>
         }
-        metrics={operatorMetrics(instances, totals, pending)}
-      />
+      >
+        Controls treasury settlement, filing years and employer access.
+      </PageHead>
+      <DashHero metrics={operatorMetrics(instances, totals, pending)} />
 
       {/* The purple zone: the one action owed on a schedule. Everything else
           here is occasional — a company joins, a company leaves — while this is

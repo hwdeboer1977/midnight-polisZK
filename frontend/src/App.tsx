@@ -263,6 +263,29 @@ const EMPLOYER_TABS: {
   { to: "/employer/settings", label: "Settings" },
 ];
 
+/**
+ * The shell's one status line, directly under the navigation on every page.
+ *
+ * This was a bare orange sentence rendered between the nav and each page's
+ * title, at the same weight as the page's own content. A wallet that has not
+ * finished syncing is a temporary system state, not a level of the information
+ * hierarchy — but sitting where it did, it read as the first thing each page
+ * had to say, on nine pages at once.
+ *
+ * So: one compact strip, one position, a dot rather than a paragraph, and
+ * nothing at all once the condition clears.
+ */
+function GlobalStatus() {
+  const { error } = useWallet();
+  if (!error) return null;
+  return (
+    <div className="global-status" role="status">
+      <span className="global-status-dot" aria-hidden="true" />
+      <span>{error}</span>
+    </div>
+  );
+}
+
 function Nav() {
   const link = ({ isActive }: { isActive: boolean }) =>
     isActive ? "nav-link active" : "nav-link";
@@ -344,7 +367,6 @@ function EmployerTabs() {
 }
 
 export function App() {
-  const { error } = useWallet();
   const pathname = useLocation().pathname;
   // The landing page is the product's front door, not part of the app shell:
   // it should not be framed by a network picker and area navigation.
@@ -369,7 +391,7 @@ export function App() {
       {inPublic ? <PublicTabs /> : null}
       {inEmployer ? <EmployerTabs /> : null}
       {inEmployee ? <EmployeeTabs /> : null}
-      {error ? <p className="status error">{error}</p> : null}
+      <GlobalStatus />
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/app" element={<Public />} />
