@@ -76,7 +76,13 @@ export function Landing() {
     <div className="landing">
       <section className="hero">
         {/* The wordmark and the positioning line are one lockup here, so the
-            masthead drops its copy on this route rather than saying it twice. */}
+            masthead drops its copy on this route rather than saying it twice.
+
+            The mark leads it, at the size it was drawn to be seen — this is
+            the one page with room for it. The rest of the app gets the small
+            version beside the masthead wordmark. Decorative: the h1 below is
+            the name, so a reader hears it once. */}
+        <img className="hero-mark" src="/logo-mark.png" alt="" aria-hidden="true" />
         <h1 className="brand">
           IncomeLayer<span className="zk">ZK</span>
         </h1>

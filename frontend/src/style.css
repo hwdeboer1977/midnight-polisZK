@@ -984,10 +984,22 @@ main.wide { max-width: 980px; padding-top: 20px; }
 main.wide .top { margin-bottom: 8px; }
 
 .wordmark {
-  display: inline-block; text-decoration: none; color: var(--text);
+  display: inline-flex; align-items: center; gap: 10px;
+  text-decoration: none; color: var(--text);
   font-size: 27px; font-weight: 680; letter-spacing: -0.02em; margin: 0 0 5px;
 }
+/* Sized off the cap height beside it rather than to a round number, so the
+   mark sits in the line instead of on top of it. */
+.wordmark img { width: 30px; height: 30px; display: block; }
 .wordmark:hover { opacity: 0.85; }
+
+/* The mark at full size, on the one page with room for it. Bounded in ch-free
+   pixels because it is an image, not type — it should not grow with the
+   heading. */
+.hero-mark {
+  display: block; width: 96px; height: 96px;
+  margin: 0 0 18px; margin-left: -6px;
+}
 
 .landing { padding-top: 0; }
 

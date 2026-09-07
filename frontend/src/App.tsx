@@ -88,12 +88,27 @@ function Header({
   return (
     <div className="top">
       <div>
-        {/* Hidden wherever the page below already carries the name at full
-            size — the landing hero and the public network page both do, and a
-            second wordmark 80px above is an echo, not navigation. */}
+        {/* Hidden only on the landing page, whose hero IS the wordmark.
+            
+            It used to be hidden on the public area too, on the grounds that
+            the page below already carries the name at full size and a second
+            wordmark 80px above is an echo. True as typography and wrong as
+            navigation: this is the only route back to the front door, so
+            Overview and Tax parameters were the two pages in the app with no
+            way out, and an echo beats a dead end. The two do read close on
+            /app, where the heading is the wordmark plus one word — if that
+            wants fixing, it is the heading that should change, not the only
+            link home. */}
         {showWordmark ? (
           <Link to="/" className="wordmark">
-            IncomeLayer<span className="zk">ZK</span>
+            {/* The mark alone, not the full lockup — that one carries the
+                wordmark and two taglines of its own, and a masthead is not the
+                place to say the name three times. Decorative here, so it is
+                hidden from readers: the link's text already names it. */}
+            <img src="/logo-mark.png" alt="" aria-hidden="true" />
+            <span>
+              IncomeLayer<span className="zk">ZK</span>
+            </span>
           </Link>
         ) : null}
       </div>
@@ -371,8 +386,6 @@ export function App() {
   // The landing page is the product's front door, not part of the app shell:
   // it should not be framed by a network picker and area navigation.
   const isLanding = pathname === "/";
-  // The public area opens with its own heading on every tab, so the masthead
-  // drops its wordmark across the whole of it rather than only on the overview.
   const inPublic = pathname === "/app" || pathname.startsWith("/app/");
   const inEmployer = pathname.startsWith("/employer");
   // Ordered so /employer does not also match the employee prefix — it does not,
@@ -382,7 +395,7 @@ export function App() {
   return (
     <main className={isLanding ? "wide" : undefined}>
       <Header
-        showWordmark={!isLanding && !inPublic}
+        showWordmark={!isLanding}
         showNetwork={!isLanding}
         showWallet={!isLanding}
         showDocs={isLanding}
