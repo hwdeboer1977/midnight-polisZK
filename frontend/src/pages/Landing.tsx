@@ -3,18 +3,16 @@
 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  CONTACT_EMAIL,
+  POSITION_PAPER_URL,
+  REPO_URL,
+  WHITE_PAPER_URL,
+} from "../lib/links";
 
 // Drop the URL in here to surface the demo link under the hero; empty
 // renders nothing rather than a dead play button.
 const DEMO_VIDEO_URL = "";
-
-// What the closing block offers. Same rule as the video: an empty string
-// renders no link rather than a promise the page cannot keep. Point the papers
-// at a file dropped in frontend/public/, or at wherever they are hosted.
-const POSITION_PAPER_URL = "/position-paper.pdf";
-const WHITE_PAPER_URL = "/white-paper.pdf";
-const REPO_URL = "https://github.com/hwdeboer1977/midnight-polisZK";
-const CONTACT_EMAIL = "hwdeboer@gmail.com";
 
 type Diagram = { src: string; title: string; alt: string };
 

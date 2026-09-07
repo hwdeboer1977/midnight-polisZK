@@ -1,6 +1,7 @@
 // Copyright 2026 Henk Wim de Boer
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Landing } from "./pages/Landing";
 import { Public } from "./pages/Public";
@@ -14,6 +15,12 @@ import { Employee } from "./pages/Employee";
 import { EmployeeBenefit } from "./pages/EmployeeBenefit";
 import { useEmployerStage } from "./lib/useEmployerStage";
 import { HeaderWallet } from "./components/HeaderWallet";
+import {
+  CONTACT_EMAIL,
+  POSITION_PAPER_URL,
+  REPO_URL,
+  WHITE_PAPER_URL,
+} from "./lib/links";
 import { useWallet } from "./wallet/WalletContext";
 
 // preview is the only live network. preprod is listed but unselectable, so the
@@ -25,12 +32,56 @@ const NETWORKS = [
   { id: "preprod", label: "preprod (coming soon)", live: false },
 ];
 
+/**
+ * The masthead's one call to action, outside the docs nav so it does not pick
+ * up that group's separator dots.
+ *
+ * It is a mailto, but a mailto alone is not enough: the browser only acts on
+ * one if a mail handler is registered, and on a desktop with no mail client
+ * installed the click does nothing whatsoever — a button that appears dead.
+ * So the click also puts the address on the clipboard. Where a handler exists
+ * the link still hands off to it as before; where none does, the reader comes
+ * away with the address instead of with nothing. Hovering shows it too, for
+ * anyone who would rather read it than trust a button.
+ */
+function ContactButton() {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <a
+      className="top-contact"
+      href={`mailto:${CONTACT_EMAIL}`}
+      title={CONTACT_EMAIL}
+      onClick={() => {
+        // Deliberately not preventing the default: the mail client should
+        // still open for the people who have one.
+        navigator.clipboard?.writeText(CONTACT_EMAIL).then(
+          () => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 2500);
+          },
+          // Clipboard access is refused on an insecure origin and can be
+          // denied outright. The mailto is unaffected, so there is nothing to
+          // report — swallow it rather than logging at a visitor.
+          () => {}
+        );
+      }}
+    >
+      {copied ? "Address copied" : "Contact"}
+    </a>
+  );
+}
+
 function Header({
   showWordmark,
   showNetwork,
+  showWallet,
+  showDocs,
 }: {
   showWordmark: boolean;
   showNetwork: boolean;
+  showWallet: boolean;
+  showDocs: boolean;
 }) {
   const { networkId, setNetworkId } = useWallet();
 
@@ -67,7 +118,33 @@ function Header({
             {NETWORKS[0].label}
           </span>
         )}
-        <HeaderWallet />
+        {/* The landing page asks nobody to connect. A wallet button above the
+            first sentence of a payroll product is a request for commitment
+            from a reader who has not yet been told what the thing does, and
+            the page's own argument is that understanding comes first. The
+            slot it vacates goes to the documents, which is what a visitor
+            standing here actually wants next — they were buried at the
+            bottom of a long page, four screens past the point where a policy
+            reader decides whether to keep reading. */}
+        {showDocs ? (
+          <nav className="top-docs" aria-label="Documents">
+            {POSITION_PAPER_URL ? (
+              <a href={POSITION_PAPER_URL} target="_blank" rel="noreferrer noopener">
+                Position paper
+              </a>
+            ) : null}
+            {WHITE_PAPER_URL ? (
+              <a href={WHITE_PAPER_URL} target="_blank" rel="noreferrer noopener">
+                White paper
+              </a>
+            ) : null}
+            <a href={REPO_URL} target="_blank" rel="noreferrer noopener">
+              GitHub
+            </a>
+          </nav>
+        ) : null}
+        {showDocs && CONTACT_EMAIL ? <ContactButton /> : null}
+        {showWallet ? <HeaderWallet /> : null}
       </div>
     </div>
   );
@@ -282,7 +359,12 @@ export function App() {
 
   return (
     <main className={isLanding ? "wide" : undefined}>
-      <Header showWordmark={!isLanding && !inPublic} showNetwork={!isLanding} />
+      <Header
+        showWordmark={!isLanding && !inPublic}
+        showNetwork={!isLanding}
+        showWallet={!isLanding}
+        showDocs={isLanding}
+      />
       {isLanding ? null : <Nav />}
       {inPublic ? <PublicTabs /> : null}
       {inEmployer ? <EmployerTabs /> : null}

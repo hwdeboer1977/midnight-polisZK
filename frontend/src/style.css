@@ -94,6 +94,36 @@ h1 { font-size: 27px; margin: 0 0 5px; letter-spacing: -0.02em; font-weight: 680
 
 .top-right { display: flex; align-items: center; gap: 10px; }
 
+/* The landing masthead's right-hand slot: the two papers and the source, in
+   place of the wallet button. Quiet text at the scale of the network pill
+   rather than three more buttons — the hero below owns the page's only pair of
+   filled controls, and a masthead that shouts competes with it. The dots are
+   drawn between the links so the group reads as one line of navigation. */
+.top-docs { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.top-docs a { color: var(--muted); text-decoration: none; white-space: nowrap; }
+.top-docs a:hover { color: var(--text); text-decoration: underline; }
+.top-docs a + a::before {
+  content: "·"; margin-right: 8px; color: var(--faint); text-decoration: none;
+  display: inline-block;
+}
+
+/* The contact pill. Filled in the accent so it is unmistakably the one thing
+   up here that is meant to be pressed — the papers beside it are quiet text by
+   comparison, which is the hierarchy this corner wants.
+
+   min-width holds the pill still while the label swaps to its confirmation, so
+   the masthead does not twitch on click; the two labels are sized to fit it. */
+.top-contact {
+  display: inline-block; box-sizing: border-box;
+  min-width: 118px; text-align: center;
+  background: var(--accent); color: #fff;
+  border: 1px solid transparent; border-radius: 999px;
+  padding: 6px 15px; font-size: 13px; font-weight: 620;
+  text-decoration: none; white-space: nowrap; cursor: pointer;
+}
+@media (prefers-color-scheme: dark) { .top-contact { color: #14161a; } }
+.top-contact:hover { opacity: 0.88; }
+
 /* Form controls, everywhere.
  *
  * Only `.field input` and `.passphrase input` were ever styled, so every bare
