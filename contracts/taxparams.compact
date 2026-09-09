@@ -8,93 +8,93 @@ import CompactStandardLibrary;
 // The rule sets payroll is computed under, versioned and immutable.
 //
 // One instance, shared by every employer. It holds no money and has exactly one
-// job: to be the record of what the rates were, so that a period filed in
+// job: to be the record of what the tax rates were, so that a period filed in
 // August 2026 stays checkable against August 2026's rules forever. A payroll
 // whose rules can be rewritten afterwards proves nothing, and every claim
 // derived from it becomes unprovable the moment the rates change.
 //
 // ── Append-only, and that is the whole safety property ────────────────────
-//
-// A version is written once and can never be edited or replaced. The design
-// this replaces was "editable until first use, then frozen", which is strictly
-// weaker AND unbuildable here: freezing on first use needs the payroll contract
-// to tell this one that it has been used, and cross-contract calls are not
-// supported by the compiler. Append-only needs no such signal — nothing can be
-// edited, so there is no moment at which editing must stop.
-//
+// A version is written once and can never be edited or replaced. 
 // The cost is that a mistake is permanent. It is corrected the way a mistake in
 // a published statute is corrected: by publishing a later version that
 // supersedes it, not by altering the record.
 
+// The tax rules used to compute net pay from gross. Stored on chain and public:
+// everyone must be able to check that a payslip used the real rates, even
+// though the salary itself stays private.
 struct TaxParams {
-  // Monotonic. Identifies the rule set; the map is keyed by it.
+  // Which rule set this is. The on-chain map is keyed by this number.
   version: Uint<16>;
-  // YYYYMM this version first applies to. A field rather than the key, so a
-  // correction can supersede an earlier version for the same month.
+  // The month this version starts applying, as YYYYMM (e.g. 202601 = Jan 2026).
+  // Kept as a field, not the key, so a correction can replace an earlier
+  // version for the same month.
   validFrom: Uint<32>;
 
-  // Three brackets, so two thresholds. Monthly, in minor units.
+  // Income tax: three brackets, so two thresholds between them.
+  // Monthly amounts, in minor units (1 EUR = 1_000_000).
   threshold1: Uint<60>;
   threshold2: Uint<60>;
-  // Basis points: 3705 is 37.05%.
-  rate1: Uint<16>;
-  rate2: Uint<16>;
-  rate3: Uint<16>;
+  // Rates in basis points: 3705 = 37.05%.
+  rate1: Uint<16>;  // on income up to threshold1
+  rate2: Uint<16>;  // on the part between threshold1 and threshold2
+  rate3: Uint<16>;  // on everything above threshold2
 
-  // The social contribution: a flat rate on gross up to a ceiling.
-  maxContribBase: Uint<60>;
-  contribRate: Uint<16>;
+  // Social contributions: one flat rate, charged on gross only up to a ceiling.
+  maxContribBase: Uint<60>;  // income above this is not charged
+  contribRate: Uint<16>;     // also basis points
 }
 
-// Whoever may publish a version.
-//
-// In production this is a public body or a threshold key — the party that sets
-// tax rates is not the party that runs a payroll platform. In this deployment
-// it is one key, and the app says so rather than implying otherwise.
+// Who is allowed to publish a tax rule set.
+// In production this would be a public body or a threshold key: whoever sets
+// tax rates isn't whoever runs a payroll platform. 
 export ledger authority: ZswapCoinPublicKey;
 
-// version -> the rule set. Written once per version, never overwritten.
+// The registry: version number -> its rule set.
+// Written once per version and never overwritten, so a published rule set can't
+// change under a payslip that already used it.
 export ledger paramsFor: Map<Uint<16>, TaxParams>;
 
-// Every version published, so the registry can be enumerated and audited
-// without knowing what to look for.
+// Every version number ever published. `paramsFor` can only be read if you
+// already know which version to ask for; this lets anyone list them all and
+// audit the registry from scratch.
 export ledger versions: Set<Uint<16>>;
+
+// Highest version published so far, and how many there are. Both public — the
+// whole registry is meant to be checkable by anyone.
 export ledger latestVersion: Uint<16>;
 export ledger versionCount: Uint<16>;
 
+// Sets the authority to whoever deploys. disclose() = publish a private value
+// on purpose. No rule sets exist yet; publish them after deployment.
 constructor() {
   authority = disclose(ownPublicKey());
   latestVersion = 0;
   versionCount = 0;
 }
 
-// Hands the publishing seat to a new key. The current holder only.
+
+// Hands the authority seat to a new key.
 //
-// The consequence of losing this key is the worst of the three seats in this
-// codebase, which is why the circuit exists. `payroll.setPayroll` refuses a
-// period with no recorded rule set, and `payroll.setParamsFor` can only record
-// a hash of something published HERE. So once the calendar moves past the last
-// published version's usefulness, an unrotatable lost key means no new period
-// can be filed on ANY payroll instance — not one contract stranded, the whole
-// platform.
+// This is the most important key in the codebase. Payroll can't file a period
+// without a rule set published here, so if this key is lost and can't be
+// rotated, no new period can be filed on ANY payroll instance once the calendar
+// moves past the last published version — the whole platform, not one contract.
+// (Compare `taxvault.transferAuthority`, which protects a balance, and
+// `payroll.transferSeat`, which protects one instance.)
 //
-// Compare `taxvault.transferAuthority`, which protects a balance, and
-// `payroll.transferSeat(true, ...)`, which protects one instance. This protects
-// the ability to keep operating at all.
-//
-// It grants nothing new: the holder can already publish any rule set they like,
-// and publication is append-only, so rotation cannot alter or withdraw anything
-// already published.
+// Rotation grants nothing new: the holder could already publish any rule set,
+// and publication is append-only, so a new authority cannot alter or withdraw
+// anything already published.
 export circuit transferAuthority(newAuthority: ZswapCoinPublicKey): [] {
   assert(ownPublicKey() == authority, "only the authority may transfer the seat");
 
   authority = disclose(newAuthority);
 }
 
-// Publishes a rule set. Once.
+// Publishes a rule set. Once — a version can never be changed after this.
 //
-// Everything here is public — the rates have to be, or nobody can recheck the
-// arithmetic that a payroll's published totals claim to follow.
+// Everything here is public, and has to be: nobody can recheck a payroll's
+// published totals without knowing the rates it claims to have used.
 export circuit publish(params: TaxParams): [] {
   assert(ownPublicKey() == authority, "only the authority may publish rules");
 
@@ -106,37 +106,23 @@ export circuit publish(params: TaxParams): [] {
   assert(startsAt >= 200001, "validFrom must be YYYYMM, e.g. 202601");
   assert(startsAt <= 299912, "validFrom must be YYYYMM, e.g. 202601");
 
-  // Ordering the brackets here means the payroll circuit does not have to.
+  // Checked here so the payroll circuit doesn't have to.
   assert(
     disclose(params.threshold1) < disclose(params.threshold2),
     "thresholds must be in ascending order"
   );
 
-  // ── The rates must leave something of the gross ─────────────────────────
+  // ── Tax plus contributions must not exceed gross pay ────────────────────
   //
-  // Caught at publication because the alternative is not a bad error message,
-  // it is a permanently unfileable month. `payroll.setParamsFor` is write-once
-  // per period: once a period is pointed at a rule set, it can never be pointed
-  // at another. So a version whose rates cannot produce a filing bricks every
-  // period assigned to it, on every instance, with a new payroll deployment as
-  // the only way out.
+  // Checked at publication, not at payroll, because a bad rule set is
+  // unfixable: a period can only ever be pointed at one version, so a version
+  // whose rates can't produce a valid filing bricks every period using it.
   //
-  // What payroll asserts per employee is `taxQ + socialQ <= gross`. The bound
-  // that guarantees it is NOT that each rate is at most 10000 — take rate1 and
-  // contribRate both exactly 10000 and the tax alone is the whole gross while
-  // the contribution is the whole gross again, so the sum is twice it and the
-  // filing still fails. The bands PARTITION the gross (b1 + b2 + b3 == gross by
-  // construction), so
-  //
-  //     tax + contribution <= gross x (max(rate1, rate2, rate3) + contribRate) / 10000
-  //
-  // and the condition that actually delivers payroll's assert is the SUM of the
-  // worst marginal rate and the contribution rate. It also subsumes the
-  // per-rate check, since no rate can exceed the sum.
-  //
-  // Not restrictive in practice: the published Dutch schedule's worst case is
-  // rate3 4950 plus contribRate 300, or 52.5%. A schedule needing more than 100%
-  // combined would produce negative net pay, which payroll refuses anyway.
+  // Simplified tax system for DEMO: 
+  // Payroll asserts per employee that taxQ + socialQ <= gross — you can't deduct more than someone earns.
+  // max(rate1, rate2, rate3) + contribRate ≤ 10000
+  // Not restrictive in practice: the Dutch schedule's worst case is rate3 4950
+  // plus contribRate 300, or 52.5%.
   const r12 = params.rate1 > params.rate2 ? params.rate1 : params.rate2;
   const rateMax = r12 > params.rate3 ? r12 : params.rate3;
   assert(
@@ -144,35 +130,39 @@ export circuit publish(params: TaxParams): [] {
     "the worst marginal rate plus the contribution rate must not exceed 10000 basis points"
   );
 
-  // ⚠️ NOT checked, and considered rather than missed:
+  // ⚠️ Deliberately NOT checked:
   //
-  //   · `rate1 <= rate2 <= rate3` is not required. A regressive or flat
-  //     schedule is publishable, because real ones are not always progressive —
-  //     the Dutch system this models has had a bracket where the marginal rate
-  //     FALLS, once credits are folded in. Refusing it here would encode one
-  //     jurisdiction's shape into a registry meant to outlast it.
-  //   · `maxContribBase` is unbounded. A ceiling above any real salary makes the
-  //     contribution effectively uncapped, which is a policy choice rather than
-  //     an error, and one the published figures make visible.
-  //   · `versionCount` is Uint<16> and would overflow at 65,536 versions. At one
-  //     version a year that is longer than the tax code has existed; the cast
-  //     would fail rather than wrap (Compact range-checks — see findings.md), so
-  //     the failure mode is a refused publish and not a corrupted count.
+  //   · Rates need not increase across brackets. Real schedules aren't always
+  //     progressive — the Dutch one has a bracket where the marginal rate falls
+  //     once credits are included. Requiring it would bake one country's shape
+  //     into a registry meant to outlive it.
+  //   · `maxContribBase` has no upper limit. Setting it above any real salary
+  //     makes contributions effectively uncapped — a policy choice, and a
+  //     visible one.
+  //   · `versionCount` overflows at 65,536 versions. Compact range-checks the
+  //     cast, so it would refuse the publish rather than wrap (see findings.md).
 
   paramsFor.insert(v, disclose(params));
   versions.insert(v);
   versionCount = (versionCount + 1) as Uint<16>;
+  // Guarded, so publishing an out-of-order correction doesn't move the pointer
+  // backwards.
   if (v > latestVersion) {
     latestVersion = v;
   }
 }
 
-// The hash a payroll contract records for a period.
+// Computes the hash a payroll contract records for a period.
 //
-// Pure, so the employer, the platform and any reviewer all compute the identical
-// value from the identical published fields — and so a claim circuit can later
-// prove WHICH rules produced an attestation without re-reading this registry,
-// which it could not do anyway: contracts cannot read each other's state.
+// `pure` means it reads no ledger state and touches nothing — the employer, the
+// platform and any reviewer all feed in the same published fields and get the
+// same 32 bytes back.
+//
+// Why a hash and not a version number: contracts on Midnight can't read each
+// other's state, so a payroll or claim circuit has no way to look up
+// `paramsFor[v]` here. Passing the params in and hashing them lets it prove
+// exactly which rules produced an attestation, without needing this registry at
+// all.
 export pure circuit paramsHash(params: TaxParams): Bytes<32> {
   return persistentHash<TaxParams>(params);
 }
