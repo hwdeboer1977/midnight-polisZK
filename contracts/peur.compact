@@ -11,57 +11,48 @@ import CompactStandardLibrary;
 // contract that hides salaries is pointless if paying them publishes the same
 // numbers as transfers.
 //
-// The token type is derived from this contract's own address, so it is unique
-// to this deployment and cannot be forged by another contract:
-//   tokenType(pad(32, "pEUR"), kernel.self())
 //
 // ⚠️  DEMO TOKEN. Anyone may mint, in any amount, without permission. That makes
 // pEUR worthless as a store of value and it is meant to: this exists so a demo
 // can hand out payroll funds without a faucet queue or an operator in the loop.
 // A real stablecoin's whole claim is that supply is controlled and auditable
-// against reserves, which is exactly the property given up here. Restoring it is
-// one line — the issuer check removed from both circuits below.
+// against reserves, which is exactly the property given up here. 
 //
 // `mint` pays the caller, which avoids a key exchange entirely: a shielded coin
 // can only be found and spent by someone whose encryption key the transaction
 // was built with, and the caller's own wallet already has it. Paying anyone else
 // needs their coin public key AND encryption public key, which is `mintTo`.
 
-// The deployer. Provenance ONLY — it gates nothing.
-//
-// No circuit reads this. Minting is open to anyone (see the demo warning
-// above), so anything describing `issuer` as "who may mint" is wrong; it names
-// who deployed, and that is all.
+// The deployer. Provenance ONLY — it gates nothing. Everyone can mint freely for this demo
 export ledger issuer: ZswapCoinPublicKey;
 
 // This deployment's token type, recorded on the first mint. Zero until then.
 export ledger tokenId: Bytes<32>;
 
-// Public: how much pEUR exists. Individual holdings stay private — supply
-// transparency is what makes a stablecoin auditable against its reserves.
+// Public: how much pEUR exists. Individual holdings stay private
 export ledger totalSupply: Uint<64>;
 
-// Makes each mint's coin nonce unique. Two mints of equal value would otherwise
-// produce identical coins.
+
+// Counts how many times pEUR has been minted, and gives each new coin a
+// different nonce.
 //
-// Public and monotonic, so it publishes exactly how many mints have ever
-// happened — and with `totalSupply`, the average mint size. On a faucet that is
-// a usage signal rather than nothing. It is accepted rather than overlooked:
-// the nonce has to be distinct per mint and derived from something the caller
-// cannot replay, and a public counter is what `evolveNonce` takes.
+// Every shielded coin needs a unique nonce, or two mints of the same amount
+// would create two identical coins. `evolveNonce` takes this counter and the
+// contract address and produces one. Both mint circuits bump it, so no two
+// mints anywhere in this contract can clash.
+//
+// Like all ledger state in Midnight, this is public. That's fine here: the
+// mint amounts are public too (see `totalSupply`), so the counter doesn't
+// reveal anything new.
 export ledger mintCounter: Counter;
 
-// Amounts are minor units of 1e-6 pEUR, capped at Uint<48> — about 281 million
-// EUR per mint — so accumulating into the Uint<64> supply cannot overflow in
-// practice. Six decimals rather than cents because no token metadata exists on
-// chain for wallets to read: they fall back to Midnight's default of six, and a
-// token that picks anything else is rendered wrong everywhere but in this app.
-// The initial supply is NOT minted here. A deploy transaction cannot carry the
-// mint: the contract's address is not fixed until the transaction is built, so
-// `kernel.self()` in a constructor does not yet name this deployment — the mint
-// fails to balance, and a token type derived here comes out wrong. `npm run
-// deploy:peur` therefore deploys and then immediately mints, in two
-// transactions but one command.
+
+// pEUR has 6 decimals: 1 pEUR = 1_000_000. So `mint(5_000_000)` mints
+// 5 pEUR. 
+
+// Constructor: 
+// Issuer is the deployer (public) but anyone can mint in this demo 
+// No minting of initial supply at deployment
 constructor() {
   issuer = disclose(ownPublicKey());
   totalSupply = 0;
@@ -75,65 +66,71 @@ constructor() {
 // supply the recipient's encryption public key off-circuit, via the SDK's
 // `additionalCoinEncPublicKeyMappings`. Get both from `npm run frontend` or the
 // recipient's `npm run peur`.
+
+
+
+// export circuit — makes it a callable entry point. An exported circuit gets its own verifier key, 
+// lands in the generated TypeScript as a callable, and can be invoked in a transaction. 
+// A circuit without export is internal 
+// All ledger state in Midnight is public on chain, exported or not
+
+
+// Function 1 mintTo: Mints pEUR to someone else — an employer being funded, say.
+//
+// The recipient's coin public key isn't enough on its own: a shielded coin can
+// only be spent by someone whose encryption key the transaction was built with.
+// The caller must also pass the recipient's encryption public key off-circuit,
+// via the SDK's `additionalCoinEncPublicKeyMappings`. Both come from
+// `npm run frontend` or the recipient's `npm run peur`.
 export circuit mintTo(amount: Uint<48>, recipient: ZswapCoinPublicKey): [] {
+  // The token type, derived from this contract's address so it's unique to this
+  // deployment. Set here rather than in the constructor, where the address
+  // isn't known yet. Rewriting it every mint is harmless.
   tokenId = tokenType(pad(32, "pEUR"), kernel.self());
 
+  // Compact widens the sum instead of wrapping it, so `next` holds the true
+  // total even if it doesn't fit in 64 bits. This catches that case with a
+  // readable error. (The `as Uint<64>` cast below would also catch it, but the
+  // message is a cryptic compiler one.)
   const next = totalSupply + disclose(amount);
-  // This assert FIRES — it is not the tautology it looks like. Compact widens
-  // the sum rather than wrapping it, so `next` is a 65-bit value holding the
-  // true total, and comparing it against Uint<64>'s maximum rejects exactly the
-  // sums that would not fit. Probed at Uint<8>/Uint<4>, where the overflow is
-  // reachable: 250 + 10 is refused here, 250 + 5 is accepted.
-  //
-  // It is belt and braces rather than the only guard. `as Uint<64>` below is a
-  // CHECKED cast, not a truncation — the same probe with this assert deleted
-  // fails at the cast with "cast from Field or Uint value to smaller Uint value
-  // failed: 260 is greater than 255". What the assert buys is the message: a
-  // named overflow instead of a compiler-generated cast error.
   assert(next <= 18446744073709551615, "pEUR supply would overflow");
   totalSupply = next as Uint<64>;
 
+  // The counter makes each coin's nonce unique — see `mintCounter` above.
   mintCounter.increment(1);
   mintShieldedToken(
-    pad(32, "pEUR"),
-    disclose(amount),
-    evolveNonce(mintCounter, kernel.self().bytes),
-    left<ZswapCoinPublicKey, ContractAddress>(disclose(recipient))
+    pad(32, "pEUR"),                                    // token name
+    disclose(amount),                                   // published on chain
+    evolveNonce(mintCounter, kernel.self().bytes),      // unique per mint
+    left<ZswapCoinPublicKey, ContractAddress>(disclose(recipient))  // pay a user, not a contract
   );
 }
 
-// Mints to the caller. Open to anyone — see the demo warning at the top.
+// Function 2 mint: Mints pEUR to the caller. Open to anyone — see the demo warning at the top.
+// No key exchange needed, unlike `mintTo`: a shielded coin can only be spent by
+// someone whose encryption key the transaction was built with, and the caller's
+// own wallet already has it.
 export circuit mint(amount: Uint<48>): [] {
-  // Recorded here rather than in the constructor, where `kernel.self()` would
-  // not yet resolve to this deployment. Rewriting it every mint is idempotent.
-  //
-  // Guarding the write with `if (tokenId == default<Bytes<32>>)` looks like it
-  // would save a ledger write per mint. Measured, it does the opposite: 1,770
-  // bytes of ZKIR against 1,544, because the 32-byte comparison and the branch
-  // cost more than the unconditional write. Verifier keys are identical either
-  // way. The straight-line version is both smaller and simpler.
+  // The token type, derived from this contract's address so it's unique to this
+  // deployment. Set here rather than in the constructor, where the address
+  // isn't known yet. Rewriting it every mint is harmless — and measurably
+  // cheaper than branching to skip the write.
   tokenId = tokenType(pad(32, "pEUR"), kernel.self());
 
+  // Compact widens the sum instead of wrapping it, so `next` holds the true
+  // total even if it doesn't fit in 64 bits. This catches that case with a
+  // readable error. (The `as Uint<64>` cast below would also catch it, but the
+  // message is a cryptic compiler one.)
   const next = totalSupply + disclose(amount);
-  // This assert FIRES — it is not the tautology it looks like. Compact widens
-  // the sum rather than wrapping it, so `next` is a 65-bit value holding the
-  // true total, and comparing it against Uint<64>'s maximum rejects exactly the
-  // sums that would not fit. Probed at Uint<8>/Uint<4>, where the overflow is
-  // reachable: 250 + 10 is refused here, 250 + 5 is accepted.
-  //
-  // It is belt and braces rather than the only guard. `as Uint<64>` below is a
-  // CHECKED cast, not a truncation — the same probe with this assert deleted
-  // fails at the cast with "cast from Field or Uint value to smaller Uint value
-  // failed: 260 is greater than 255". What the assert buys is the message: a
-  // named overflow instead of a compiler-generated cast error.
   assert(next <= 18446744073709551615, "pEUR supply would overflow");
   totalSupply = next as Uint<64>;
 
+  // The counter makes each coin's nonce unique — see `mintCounter` above.
   mintCounter.increment(1);
   mintShieldedToken(
-    pad(32, "pEUR"),
-    disclose(amount),
-    evolveNonce(mintCounter, kernel.self().bytes),
-    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey())
+    pad(32, "pEUR"),                                // token name
+    disclose(amount),                               // published on chain
+    evolveNonce(mintCounter, kernel.self().bytes),  // unique per mint
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey())  // pay the caller
   );
 }
