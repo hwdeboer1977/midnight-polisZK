@@ -9,7 +9,7 @@ import CompactStandardLibrary;
 //
 // A claimant proves two things and discloses neither: that she was employed for
 // long enough, and what her final salary was. The benefit derives from that
-// salary. Nobody is recorded as unemployed anywhere — there is no claimant
+// salary. Nobody is recorded as unemployed anywhere: there is no claimant
 // list, no status field, and nothing an observer can enumerate to find one.
 //
 // Why this is a separate contract, and what that costs. A payroll contract
@@ -24,18 +24,12 @@ import CompactStandardLibrary;
 
 // The anonymity set is what makes a claim safe to make, so it is worth being
 // explicit about its shape. Anchors are published as ONE Merkle root per
-// period, over every accredited employer on the platform — not per employer,
+// period, over every accredited employer on the platform. So not per employer,
 // and not per employee. A claim discloses the period its attestation names and
 // nothing else, so a claimant is indistinguishable from everyone terminated in
 // the same month anywhere on the platform. A root per employer would undo that
 // by making the disclosed root name the employer.
 //
-// `NoLeafHash` rather than `merkleTreePathRoot`, and the difference is not
-// cosmetic: the latter hashes the leaf again under a "mdn:lh" domain separator
-// before folding, so a tree built over plain leaf digests verifies against
-// nothing. The leaf here is already `persistentHash<ClaimLeaf>`, so the extra
-// hash would buy no separation and cost a constraint. Caught by
-// tests/claim-tree.test.mjs, which is the only reason it was caught at all.
 //
 // This is also why membership is proved with a path rather than a map lookup.
 // A `Map` lookup takes a public key, and every candidate key here is
@@ -43,35 +37,36 @@ import CompactStandardLibrary;
 // published — so a lookup would announce exactly which slot of which employer
 // the claim was for. The path is a witness; only the root and the period are
 // public.
+
+// Struct BenefitParams: the benefit rules a claim is computed under. Published
+// by the platform, versioned, and hashed into `paramsFor` so a claim can prove
+// which version produced its figure.
 struct BenefitParams {
   version: Uint<16>;
   validFrom: Uint<32>;
-  // The cap on the monthly gross the benefit is computed from. Real WW caps a
+  // The cap on the monthly gross the benefit is computed from. Dutch Unemployment Benefit (UB) caps a
   // daily wage; this caps its monthly equivalent, and the figure is a policy
   // input that must be sourced rather than chosen here.
   maxMonthlyGross: Uint<60>;
-  // Basis points of the capped gross. Real WW steps this down after the opening
+  // Basis points of the capped gross. Dutch UB steps this down after the opening
   // months, which this version does not model — see the honesty note on `claim`.
   rate: Uint<16>;
   // Months of employment required. Twelve, under the rules this models.
   minMonths: Uint<16>;
   // How many monthly windows one termination entitles her to.
   //
-  // ⚠️ Added because it was NOT here, and `claim` therefore never constrained
-  // `window` at all: it was an argument that appeared in the nullifier and in
-  // no assertion. The duration was a TypeScript constant the page displayed,
-  // so a claimant who called the circuit directly passed window 0, 1, 2, 3 …
-  // and drew a distinct nullifier — and a distinct payment — for each, until
-  // the fund was empty. Everything else about them was genuine; only the
-  // number of payments was decided by the caller.
+  // ⚠️ Added because it was missing, and `claim` therefore never constrained
+  // `window`: it appeared in the nullifier and in no assertion. The duration
+  // was a TypeScript constant the page displayed, so a claimant calling the
+  // circuit directly could pass window 0, 1, 2, 3 … and draw a distinct
+  // nullifier — and a distinct payment — for each, until the fund was empty.
   //
-  // In `BenefitParams` rather than as a constant in the circuit because it is
-  // a policy figure like every other one here: published, versioned, and
-  // changeable by publishing a new version rather than by redeploying.
+  // Here rather than as a circuit constant because it's a policy figure like
+  // the rest: published, versioned, changed by publishing a new version.
   durationMonths: Uint<16>;
 }
 
-// What a claimant proves membership of.
+// Struct ClaimLeaf: what a claimant proves membership of.
 //
 // One leaf per terminated employee, built by the relay from public payroll
 // state plus the employer's termination attestation. Every field is a witness
@@ -91,25 +86,35 @@ struct ClaimLeaf {
   // best month: the final period is named by the employer, and the commitment
   // in this leaf is that period's.
   finalPeriod: Uint<32>;
+  // Checked against `minMonths`. Comes from the employer's attestation and is
+  // not derived from the filed periods — nothing cross-checks the two.
   monthsWorked: Uint<16>;
   // The payroll instance, so a leaf cannot be replayed against another one.
   instance: Bytes<32>;
 }
 
-// Declared identically to payroll.compact's, and the reason is sharper here than
-// for the other copies: the claim proves `persistentHash<TaxParams>(taxParams)`
-// equals the `paramsHash` bound into her salary commitment. That hash was
-// produced by payroll's encoding of ITS struct, so a field reordered or retyped
-// here does not merely fail — it fails for every claimant, with an error that
-// points at the tax rules rather than at this declaration.
+
+// ── Three structs copied verbatim from payroll.compact ─────────────────────
 //
-// What that assertion buys is worth being precise about. The fund cannot read
-// the taxparams registry — no contract here can read another — so it has no
-// independent source for a tax schedule. It does not need one: the schedule is
-// pinned by a hash payroll already published and already bound into the
-// commitment the claimant must open. The benefit is therefore taxed under
-// provably the same rules her final salary was, without the fund ever reading
-// the registry or trusting the claimant.
+// Compact can't share a struct across contracts, and `persistentHash` encodes
+// a struct field by field in declaration order. Payroll produced these hashes;
+// the claim below recomputes them. So any difference — a field moved, a width
+// changed, a field added — makes every claim fail to open, with no compile
+// error and a message that reads like the claimant supplied wrong data.
+
+// Struct TaxParams: declared identically to payroll.compact's.
+//
+// A claim proves `persistentHash<TaxParams>(taxParams)` equals the `paramsHash`
+// bound into her salary commitment — a hash produced by payroll's encoding of
+// ITS struct. So a field reordered or retyped here breaks every claim, with an
+// error pointing at the tax rules rather than at this declaration.
+//
+// The fund cannot read the taxparams registry — no contract here can read
+// another — so it has no independent source for a tax schedule. It doesn't need
+// one: the schedule is pinned by a hash payroll already published and already
+// bound into the commitment the claimant must open. The benefit is therefore
+// taxed under provably the same rules her final salary was, without the fund
+// reading the registry or trusting the claimant.
 struct TaxParams {
   version: Uint<16>;
   validFrom: Uint<32>;
@@ -144,39 +149,37 @@ struct PayeeBinding {
   instance: Bytes<32>;
 }
 
-// The nullifier's preimage.
-//
-// ⚠️ Keyed on her WALLET, and this is a deliberate trade rather than the
-// oversight it looks like. It used to be keyed on a secret claim key, precisely
-// because hash(payee, window) is computable by anyone who has ever been given
-// her coin public key — an address she hands out to be paid — who could then
-// enumerate windows, test membership against the public `spent` set, and read
-// her benefit history off it.
-//
-// That property was paid for with a file. The claim key existed only in one
-// download, could not be sealed to her wallet (the DApp connector exposes no
-// decrypt operation) or derived from a signature (it signs
-// non-deterministically), and every claim therefore rested on a 32-byte file
-// nobody could reproduce — including the employer, who had to collect its hash
-// BEFORE a write-once attestation and could silently strand a claimant by
-// anchoring the wrong one.
-//
-// What is NOT given up: only she can claim. `payeeBinding` binds the claim to
-// `ownPublicKey()` independently, so the wallet is still the gate. What is
-// given up is unlinkability — anyone holding her payment address can tell THAT
-// she claimed, never how much or for how long.
-//
-// The construction that restores unlinkability without a file needs a secret
-// her wallet can reproduce on demand. WebAuthn PRF is that shape; nothing in
-// the connector is, today.
-// Identifies one author's publication of one root, so two authors publishing
-// for the same period cannot collide and neither can lock the other out.
+
+// Struct RootAuthorSlot: identifies one author's publication of one root.
+// Hashed to key `rootAuthor`, so two authors publishing for the same period
+// can't collide and neither can lock the other out.
 struct RootAuthorSlot {
   author: ZswapCoinPublicKey;
   period: Uint<32>;
   root: Field;
 }
 
+// Struct ClaimNullifier: marks one monthly window as claimed. Hashed, checked
+// against `spent`, then inserted — so each (person, window) pays out once, and
+// `fund` stops a nullifier being replayed against another deployment.
+//
+// ⚠️ Keyed on her WALLET, and this is a deliberate trade. It used to key on a
+// secret claim key, because hash(payee, window) is computable by anyone who has
+// ever been given her coin public key — they can enumerate windows, test the
+// public `spent` set, and read her benefit history off it.
+//
+// That property cost a file. The claim key lived in one download, couldn't be
+// sealed to her wallet (the connector exposes no decrypt) or derived from a
+// signature (non-deterministic), and the employer had to collect its hash
+// BEFORE a write-once attestation — so a wrong value stranded her permanently.
+//
+// What is NOT given up: only she can claim. `payeeBinding` binds the claim to
+// `ownPublicKey()` independently. What is given up is unlinkability — anyone
+// holding her payment address can tell THAT she claimed, never how much or for
+// how long.
+//
+// Restoring it without a file needs a secret her wallet can reproduce on
+// demand. WebAuthn PRF is that shape; nothing in the connector is, today.
 struct ClaimNullifier {
   payee: ZswapCoinPublicKey;
   window: Uint<32>;
@@ -185,31 +188,36 @@ struct ClaimNullifier {
 
 export ledger platform: ZswapCoinPublicKey;
 
-// Where withholding on a benefit goes, frozen at deploy and never settable
-// again — the same arrangement payroll uses, for the same reason: if the
-// destination were an argument, whoever triggered a remittance could redirect
-// it. Because it cannot be redirected, remitting is left open to anyone.
+// Where withholding on a benefit goes, frozen at deploy and never settable again.
+// Same arrangement payroll uses
 export ledger taxTreasury: ZswapCoinPublicKey;
 export ledger socialTreasury: ZswapCoinPublicKey;
 
-// version -> persistentHash(BenefitParams). Append-only, for the same reason
-// the tax registry is: a benefit computed under rules that can be rewritten
-// afterwards proves nothing about what anyone was entitled to.
+// paramsFor: version → persistentHash(BenefitParams). The hash only, not the
+// struct — a claim supplies the params and `claim` checks them against this,
+// the same way payroll uses `paramsHashFor`.
+//
+// Append-only, for the same reason the tax registry is: a benefit computed
+// under rules that can be rewritten afterwards proves nothing about what
+// anyone was entitled to.
 export ledger paramsFor: Map<Uint<16>, Bytes<32>>;
+
+// `latestVersion` is the pointer a client reads to find the current rules.
 export ledger latestVersion: Uint<16>;
 
-// period -> the root of that period's claim tree.
-//
-// A `Field` rather than `Bytes<32>` because that is what `merkleTreePathRoot`
-// returns, and converting at every comparison would be a chance to convert
-// inconsistently.
+// rootFor: period (YYYYMM) → the Merkle root of that period's claim tree.
+// One root per period over every accredited employer on the platform — that
+// breadth is the anonymity set. A claim proves membership in this tree and
+// discloses only which period, so the claimant is indistinguishable from
+// everyone terminated that month anywhere on the platform.
 export ledger rootFor: Map<Uint<32>, Field>;
-// Who published it. Publication is permissionless — a single privileged relay
-// could block a claim by simply declining to publish, which is indistinguishable
-// from an outage — and forgery is unprevented either way, so opening the write
-// costs nothing that was being protected. What it buys is that a refusal to
-// publish is no longer fatal. Recorded per period per author so nobody can
-// occupy a period's slot with garbage and lock others out.
+
+// rootAuthor: hash(author, period, root) → who published it.
+// Publication is permissionless: a single privileged relay could block a claim
+// by declining to publish, which looks the same as an outage. Forgery is
+// unprevented either way, so opening the write costs nothing.
+// Keyed per author so nobody can occupy a period's slot with garbage and lock
+// others out.
 export ledger rootAuthor: Map<Bytes<32>, ZswapCoinPublicKey>;
 
 // Spent nullifiers. Public, and safe to be: each is the image of a secret, so
@@ -219,17 +227,18 @@ export ledger spent: Set<Bytes<32>>;
 // Public totals. Coarse by design — how many claims, never who or how much each.
 export ledger claimsPaid: Counter;
 
-// Withheld from benefits and held here until remitted, then the running total
-// sent onward. Both are public.
+// Tax and social withheld from benefits paid out: held in the pools until
+// remitted, then accumulated in the remitted totals. All public.
 //
 // ⚠️ This LEAKS what the rest of the fund hides. Withholding is a deterministic
-// function of the benefit, which is a deterministic function of the gross, so a
+// function of the benefit, which is a deterministic function of the gross, so
 // public `taxPool + taxRemitted` discloses the fund's aggregate outflow — and
-// with `claimsPaid` alongside it, the average benefit. That was accepted
-// deliberately: withheld tax that is never remitted is not tax, and remitting
-// requires the contract to know how much it owes, which means public state. The
-// alternative — retaining it silently — would have been a smaller benefit
-// described as a tax.
+// with `claimsPaid` alongside it, the average benefit.
+//
+// Accepted deliberately: withheld tax that is never remitted is not tax, and
+// remitting needs the contract to know what it owes, which means public state.
+// The alternative — retaining it silently — is a smaller benefit described as
+// a tax.
 //
 // What is NOT leaked: any individual benefit, or which claim contributed what.
 export ledger taxPool: Uint<64>;
@@ -240,23 +249,23 @@ export ledger benefitToken: Bytes<32>;
 export ledger benefitTokenSet: Boolean;
 export ledger coinsReceived: Uint<32>;
 
-// What arrived as contributions, per period, and from where.
+// Contributions coming IN, per period and in total.
+//   contributedFor:         period (YYYYMM) → amount that arrived for it
+//   contributionSourceFor:  period → which payroll contract it was said to
+//                           come from (first depositor wins)
+//   contributedTotal, contributionCount: running totals
 //
-// Added to match `taxvault.compact`, and for the same reason: a contribution
-// that lands with nothing saying what it was FOR cannot be checked against
-// anything. With these, a verifier compares `contributedFor[p]` against the
-// payroll contract's `totalSocialFor[p]` for the same period and sees whether
-// the right amount arrived.
+// A contribution that lands with nothing saying what it was FOR can't be
+// checked against anything. With these, a verifier compares `contributedFor[p]`
+// against the payroll contract's `totalSocialFor[p]` and sees whether the right
+// amount arrived.
 //
-// Claimed, not proved. This contract cannot read a payroll ledger — the wall
-// this whole design is built around — so it records what a depositor states.
-// The mismatch is publicly checkable and not enforced here, which is the same
-// honesty the header applies to claims.
+// ⚠️ Claimed, not proved. This contract can't read a payroll ledger, so it
+// records what a depositor states. The mismatch is publicly checkable, not
+// enforced here.
 //
-// Deliberately separate from `taxPool` and the rest: those account for tax
-// withheld from BENEFITS PAID OUT, which is the opposite direction. Money in
-// and money out are different questions and sharing a counter would answer
-// neither.
+// Note the direction: these are money IN. `taxPool` and the rest are tax
+// withheld from benefits paid OUT — different question, separate counters.
 export ledger contributedFor: Map<Uint<32>, Uint<64>>;
 export ledger contributionSourceFor: Map<Uint<32>, Bytes<32>>;
 export ledger contributedTotal: Uint<64>;
@@ -267,6 +276,7 @@ export ledger contributionCount: Uint<32>;
 // know the value of, and useless to anyone who does not.
 export ledger poolOrdinal: Uint<32>;
 
+// Constructor
 constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
   platform = disclose(ownPublicKey());
   latestVersion = 0;
@@ -298,7 +308,16 @@ export circuit publishParams(params: BenefitParams): [] {
   }
 }
 
-// Publishes one period's claim tree. Open to anyone; see `rootAuthor`.
+// publishRoot: publishes one period's claim tree root.
+//
+// Open to anyone, but only the platform's root is the one `claim` checks
+// against. Third-party publications are recorded in `rootAuthor` and are
+// evidence, not an alternative: if the platform declines to publish, claims for
+// that period still can't be made. What anyone else can do is publish the
+// correct root and make the discrepancy visible.
+//
+// Widening this to accept another author is a policy change, not a contract
+// change — the roots are all here and attributable.
 export circuit publishRoot(period: Uint<32>, root: Field): [] {
   const p = disclose(period);
   assert(p >= 200001, "period must be YYYYMM");
@@ -319,22 +338,21 @@ export circuit publishRoot(period: Uint<32>, root: Field): [] {
   }
 }
 
-// Takes in money to pay benefits with, against the period it covers.
+// fundBenefits: takes in money to pay benefits with, against the period it
+// covers. Open to anyone.
 //
-// Contributions cannot arrive here automatically: a payroll contract cannot
-// call this one, so a remittance is a transfer to a key, and funding the fund
-// is a deliberate transaction by whoever holds it.
+// Contributions can't arrive automatically: a payroll contract can't call this
+// one, so a remittance lands at a key and funding the fund is a deliberate
+// transaction by whoever holds it.
 //
-// `period` and `source` were added so that deliberate transaction leaves a
-// record of what it was for. Without them a contribution is an unattributed
-// increase in a pool, indistinguishable from any other, and the question "did
-// September's contributions actually arrive" has no answer on chain. The tax
-// side records the same two fields for the same reason; see
-// `taxvault.compact`.
+// `period` and `source` are what make that transaction attributable. Without
+// them a contribution is an unattributed increase in a pool, and "did
+// September's contributions arrive" has no answer on chain. Same two fields as
+// `taxvault.compact`, same reason.
 //
 // `amount` is stated alongside the coin and pinned to it rather than read off
-// `coin.value`, because Compact has no narrowing from the coin's Uint<128> to
-// the Uint<64> these totals are kept in.
+// `coin.value`: coin values are Uint<128> and these totals are Uint<64>, and
+// Compact won't narrow between them.
 export circuit fundBenefits(
   period: Uint<32>,
   source: Bytes<32>,
@@ -373,39 +391,13 @@ export circuit fundBenefits(
   contributionCount = (contributionCount + 1) as Uint<32>;
 }
 
-// Claims a month's benefit.
+// CLAIM: claims one month's benefit.
 //
-// ⚠️ SIMPLIFICATION, stated rather than buried. Real WW computes a dagloon from
-// SV-loon across a reference year, precisely because one month can be distorted
-// by a bonus, overtime, or a partial month worked. Deriving from the final
-// month alone is more manipulable than that, and the mitigations not built here
-// are: capping the final gross against the accumulated average, or taking the
-// median of the last three. What IS built is the cap below, and the structural
-// deterrent noted on `ClaimLeaf.commitment` — inflating a final salary is
-// public in the employer's own totals and is assessed for tax and contribution,
-// so the attack is priced rather than free.
+// Discloses the period, the params version, the nullifier, and that a claim
+// happened. Not the employer, not the slot, not the salary, not the benefit.
 //
-// The rate is also flat here, where the real scheme steps it down after the
-// opening months. That belongs in `BenefitParams` as a schedule and is not
-// modelled.
-//
-// What is disclosed by calling this: the period, the params version, the
-// nullifier, and that a claim happened. Not the employer, not the slot, not the
-// salary, not the benefit paid.
-// ⚠️ TREE DEPTH IS 16, and it is written out in full at every use — here, at
-// the root check below, and in the `pathRoot` helper.
-//
-// That is 65,536 leaves, so a period may hold at most 65,536 terminations. Like
-// the roster size in `payroll.compact`, it is a compile-time constant: Compact
-// has no top-level constants and the depth is a type parameter, so changing it
-// means editing every site, recompiling, and REDEPLOYING — verifier keys are
-// fixed at deploy, so existing instances cannot be reused. Unlike the roster
-// size, exceeding it is not a build-time error but a runtime one: the relay
-// would be unable to build a path, and every claim for that period would fail
-// with nothing on chain to say why.
-//
-// Ample for the pilot and worth a note rather than a change, since a deeper
-// tree costs proving time in every claim whether or not the leaves are there.
+// The rate is flat here; the real UB scheme steps it down after the opening
+// months. That belongs in `BenefitParams` as a schedule and isn't modelled.
 export circuit claim(
   path: MerkleTreePath<16, Bytes<32>>,
   leaf: ClaimLeaf,
@@ -501,13 +493,7 @@ export circuit claim(
   assert(benefitQ > 0, "the benefit rounds to nothing");
 
   // ── Withholding on the benefit ──────────────────────────────────────────
-  //
-  // A benefit is taxable income, and treating it otherwise produced the
-  // artifact this exists to remove: an untaxed benefit computed from a taxed
-  // salary can exceed the take-home pay it replaces. The rate is applied to the
-  // benefit, not to the salary — the salary was already assessed in its own
-  // month, by payroll, and assessing it twice would be wrong in the other
-  // direction.
+  // A benefit is taxable income, so we apply the same tax schedule her final salary was taxed under.
   assert(
     persistentHash<TaxParams>(taxParams) == payrollParamsHash,
     "those are not the tax rules the final month was filed under"
@@ -587,19 +573,21 @@ export circuit claim(
 
   assert(benefitTokenSet, "the fund holds nothing yet");
   assert(benefitToken == disclose(coin.color), "wrong token for this fund");
-  // At least, not exactly — and the difference is what makes a private benefit
-  // payable at all.
+
+  // The coin must cover the benefit — at least, not exactly, unlike everywhere
+  // else in this codebase.
   //
-  // Payroll requires an exact coin and documents the remainder as stranded.
-  // That is true there and false here, because the two are spending under
-  // different rules: `sendShielded` itself splits. It derives the change coin's
-  // nonce from the input's, creates it as an output back to this contract, and
-  // claims the receive — so the remainder is owned, not lost. Requiring an
-  // exact coin would mean sizing it to the benefit, and the benefit derives
-  // from a private salary, so whoever prepared the coin would have to be told
-  // the figure this contract exists to keep secret.
-  // The NET is what leaves; the withheld part never moves, so the coin only has
-  // to cover what she is actually paid.
+  // Payroll requires an exact coin because a remainder there would be stranded.
+  // Here `sendShielded` splits: it derives the change coin's nonce from the
+  // input's and creates it as an output back to this contract, so the remainder
+  // stays the fund's.
+  //
+  // Exactness would also leak. Sizing a coin to the benefit means knowing the
+  // benefit, which derives from her private salary — so whoever prepared the
+  // coin would have to be told the figure this contract exists to hide.
+  //
+  // Only the NET leaves; the withheld tax stays in the change and backs the
+  // pools.
   assert(
     coin.value >= benefitNet as Uint<128>,
     "the pool coin cannot cover the benefit"
@@ -627,11 +615,6 @@ export circuit claim(
 }
 
 // Sends the withheld tax on to the treasury it was destined for at deploy.
-//
-// Open to anyone, and safe to be: the destination is not an argument. Whoever
-// calls this can only move money the contract already owes to an address fixed
-// when it was deployed. What that buys is the same thing permissionless
-// `publishRoot` buys — a platform that stops running cannot strand the money.
 export circuit remitBenefitTax(coin: QualifiedShieldedCoinInfo): [] {
   assert(taxPool > 0, "no withheld tax to remit");
   assert(benefitTokenSet, "the fund holds nothing yet");
@@ -730,32 +713,25 @@ export pure circuit taxParamsHash(params: TaxParams): Bytes<32> {
 }
 
 
-/**
- * The nullifier for one claim key in one window, exposed so a claimant can
- * check the public spent set for herself.
- *
- * `claim` builds the identical value and refuses a window already in `spent`.
- * Until this existed, a claimant had no way to ask "have I already claimed for
- * that month?" — the set is public, but every entry is an opaque image, and
- * finding her own means computing it. She could not, so the page told her it
- * was unanswerable.
- *
- * That was the wrong conclusion from the right premise. The premise is that
- * NOBODY ELSE may compute it, which is why the preimage is keyed on her secret
- * claim key rather than on her coin public key. Nothing about that stops HER
- * computing it — she is the one party who holds the key. Exposing it hands the
- * check to exactly the person the design intends to have it.
- *
- * `fund` is a parameter rather than `kernel.self()`, which a pure circuit
- * cannot call. The caller passes this contract's own address; passing another
- * yields a nullifier belonging to another fund's set, which is a wrong answer
- * rather than a leak — the value discloses nothing to anyone lacking the key.
- *
- * Checking is a LOCAL act, and it matters that it stays one. The spent set has
- * to be read whole and searched in the page: asking an indexer whether one
- * specific nullifier is present would hand that indexer the very linkage this
- * construction exists to deny it.
- */
+// claimNullifier: the nullifier for one wallet in one window, exposed so a
+// claimant can check the public `spent` set for herself.
+//
+// `claim` builds the identical value and refuses a window already in `spent`.
+// Without this a claimant had no way to ask "have I already claimed for that
+// month?" — the set is public, but every entry is an opaque image, and finding
+// her own means computing it.
+//
+// `fund` is a parameter rather than `kernel.self()`, which a pure circuit
+// cannot call. The caller passes this contract's address; passing another
+// yields a nullifier from a different fund's set — a wrong answer, not a leak.
+//
+// ⚠️ This is computable by anyone who has her coin public key, which is an
+// address she hands out to be paid. That is the trade recorded on
+// `ClaimNullifier`: the wallet key replaced a secret claim key, and
+// unlinkability went with it. Exposing the circuit doesn't widen the exposure —
+// the inputs were already public — but it does make it convenient, so checking
+// should still be a LOCAL act. Asking an indexer whether one nullifier is
+// present hands that indexer the linkage directly.
 export pure circuit claimNullifier(
   payee: ZswapCoinPublicKey,
   window: Uint<32>,
