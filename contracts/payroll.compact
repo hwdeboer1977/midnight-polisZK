@@ -5,36 +5,32 @@ pragma language_version >= 0.16;
 
 import CompactStandardLibrary;
 
-// Payroll for a single employer with a fixed roster of 2 employees.
-// (The size is a compile-time constant; see the note above `platform`.)
-//
-// One LIVE employer per contract instance. The platform operator deploys it and
-// names the employer; from then on only that employer can write payroll, and
-// the platform cannot — not even after revoking them.
-//
-// The seat is reassignable, not permanent. `revokeEmployer` vacates it and
-// `assignEmployer` fills it again, so a lapsed subscription can be ended and
-// later restored to the same contract. The cost is stated at `revokeEmployer`:
-// an employer's hold on their instance is a platform commitment, not something
-// the contract guarantees on its own.
-//
-// Privacy model: individual salaries are circuit inputs, so they never leave
-// the employer's machine — only the proof does. What the chain learns is the
-// headcount, the total, and one commitment per employee.
-//
-// The whole roster is set in ONE call on purpose. If salaries were written one
-// at a time, each call would move `totalPayroll` by exactly that person's
-// salary, and anyone watching blocks could read every individual amount off the
-// deltas. Setting the whole roster in one call means the public state only ever
-// moves by the aggregate.
+// Payroll for one employer with a fixed roster of 2 employees.
 
-// The rule set a period is computed under.
+// The platform operator deploys the contract for each employer and names the employer. 
+// From then on only that employer can write payroll — the platform cannot, not even after
+// revoking them.
 //
-// Declared here as well as in `taxparams` because contracts cannot read each
-// other — probed, not assumed. The two definitions MUST stay identical: the
-// registry publishes `persistentHash<TaxParams>(params)` and this contract
-// checks against it, so a reordered or retyped field would silently stop every
-// filing from matching a published version.
+// The employer seat can be vacated (`revokeEmployer`) and refilled
+// (`assignEmployer`), so a lapsed subscription can be ended and later restored
+// on the same contract.
+//
+// PRIVACY: individual salaries are circuit inputs — they never leave the
+// employer's machine, only the proof does. The chain sees the headcount, the
+// monthly totals, and one commitment per employee.
+//
+// The whole roster is filed in ONE call for that reason. One call per employee
+// would move the public total by exactly that person's salary, and anyone
+// watching blocks could read every individual amount off the deltas.
+
+// Employer files, funds and remits:
+// 1. File: setPayroll computes the figures and writes totalTaxFor[p], totalSocialFor[p]. Nothing moves. This is assessment only.
+// 2. Fund: fundWithholding is where money actually arrives. 
+// The employer sends two coins, and the circuit enforces taxCoin.value == totalTaxFor[p] and socialCoin.value == totalSocialFor[p] exactly. 
+// Then taxPool += totalTaxFor[p] and withheldFor[p] = true. So "collected" happens here, not at filing.
+// 3.Remit — remit(period, isTax, treasury, coin) sends one period's tax or social to its frozen treasury, one call each. It subtracts from the pool and adds to taxRemitted.
+
+// Struct TaxParams: holds tax parameters for payroll calculations.
 struct TaxParams {
   version: Uint<16>;
   validFrom: Uint<32>;
@@ -47,62 +43,64 @@ struct TaxParams {
   contribRate: Uint<16>;
 }
 
-// One commitment per employee, covering the whole line rather than a single
-// figure. Hashed so the employer can later prove to that employee what they
-// were paid without the amount being public; the nonce is what stops the
-// commitment being brute-forced, since without it hashing every plausible
-// salary would recover the amount. Committing to gross alone would leave the split unprovable: an
+
+// Struct PayrollCommitment: One commitment per employee
+// Hashed so the employer can later prove the amount paid without making it public.
+// Committing to gross salary alone would leave the split unprovable: an
 // employer could publish any tax total it liked and no commitment would
-// contradict it. Hashing all four together means the public column totals and
+// contradict it. Hashing all four together (gross, tax, social, net) means the public column totals and
 // the per-employee openings cannot disagree.
 struct PayrollCommitment {
   gross: Uint<60>;
   tax: Uint<60>;
   social: Uint<60>;
   net: Uint<60>;
-  // Weeks worked in the period. Recorded so a claim circuit can reason about
-  // partial months; deliberately NOT an input to the tax calculation, because
-  // no proration rule has been specified and inventing one here would put a
-  // number into everyone's payslip that nobody chose.
+  // Weeks: weeks worked in the period: employment history determines duration unemployment benefit
   weeks: Uint<8>;
-  // Bound inside the hash so an attestation cannot be replayed into another
-  // month or another employer's instance, and so a claim can prove WHICH rules
-  // produced it.
+  // Period: bound inside the hash so an attestation cannot be replayed into another month.
+  // Employer: same, so a commitment from one employer's instance cannot be presented as if it came from another.
   period: Uint<32>;
   employer: ZswapCoinPublicKey;
+  // ParamsHash: which published tax rules produced these figures, so a claim
+  // can check the arithmetic against the right version.
   paramsHash: Bytes<32>;
+  // Nonce: Random per employee per period. Without it the commitment is guessable:
+  // salaries fall in a narrow range, so anyone could hash candidate figures
+  // until one matched.
   nonce: Bytes<32>;
 }
 
-// What a termination attestation binds.
-//
-// Declared here only. `fund.compact` does NOT carry a matching struct — its
-// claim verifies a `ClaimLeaf` against a published merkle root, and nothing in
-// the fund reads `terminationFor`. This hash is a standalone employer
-// statement: fixed before anyone acts on it, auditable afterwards.
-//
-// ⚠️ `claimKeyHash` was here and is gone. It anchored a secret the employee had
-// to hand over BEFORE this write-once statement was signed — the coordination
-// step that could strand a claimant permanently if the employer anchored the
-// wrong value, and which existed only because a claim key could not be stored
-// anywhere but a file.
-//
-// Nothing about WHO may claim depended on it. That is `payeeFor`, which the
-// fund's leaf copies as `payeeBinding` and `claim` checks against
-// `ownPublicKey()` — so the employer still cannot spend what they attest to,
-// and no third party can either.
+// Struct Termination: the employer's statement that someone's employment ended.
+// Hashed into `terminationFor`, write-once: fixed before anyone acts on it,
+// auditable afterwards. Declared here only — `fund.compact` has no matching
+// struct and never reads `terminationFor`; its claim checks a `ClaimLeaf`
+// against a published merkle root instead.
 struct Termination {
+  // The last period worked — where the employment record ends.
   finalPeriod: Uint<32>;
+  // Total months of employment, which is what determines benefit duration.
   monthsWorked: Uint<16>;
+  // Random, so the hash can't be brute-forced: without it, the other two fields
+  // have few enough plausible values to enumerate.
   nonce: Bytes<32>;
 }
 
-// What `payeeFor` commits to: a recipient, bound to one slot of one contract.
+// Struct PayeeBinding: identifies who gets paid, without publishing their key.
 //
-// The period and the address are what stop the same person hashing to the same
-// value twice. Both are public, so an employee can still recompute their own
-// bindings and find their periods — which is the whole point of publishing a
-// hash rather than nothing.
+// `payeeFor` stores hash(payee, period, instance) instead of the payee's public
+// key. The period and contract address are included so the same person hashes
+// to a different value each month and on each contract — otherwise one binding
+// could be reused elsewhere.
+//
+// Note what this does and does not hide. The period and address are public, so
+// anyone who guesses a candidate key can hash it themselves and see if it
+// matches. It hides the payee from someone with no idea who it is; it does not
+// hide them from someone with a good guess.
+//
+// That is on purpose. The employee has to find their own entries: they know
+// their key, the month and the address, so they hash those and scan for a
+// match. Adding a random nonce would hide the payee properly — but then the
+// employer must send each employee a secret every period (less user experience)
 struct PayeeBinding {
   payee: ZswapCoinPublicKey;
   period: Uint<32>;
@@ -110,39 +108,34 @@ struct PayeeBinding {
   instance: Bytes<32>;
 }
 
-// ⚠️ ROSTER SIZE IS 2, and it is written out in full at every use below.
+
+
+// ⚠️ ROSTER SIZE IS 2, hard-coded throughout.
 //
 // Compact has no top-level constants and vector lengths are compile-time, so
-// the size appears in each `Vector<N, …>`, in the `0..N` loops, in the sum in
-// `setPayroll`, and in `employeeCountFor`. Changing it means editing all of
-// them, recompiling, and REDEPLOYING — verifier keys are fixed at deploy, so
-// existing instances cannot be reused.
+// the size appears in every `Vector<N, …>`, every `0..N` loop, and
+// `employeeCountFor`. The per-employee tax calculation in `setPayroll` is also
+// written out once per slot (`g0`/`net0`, `g1`/`net1`). Changing the size means
+// editing all of it and REDEPLOYING — verifier keys are fixed at deploy.
 //
-// Two rather than ten to keep the test cycle short: funding is one transaction
-// per employee, so a roster of ten costs eleven proofs to fund and pay.
+// It cannot be made dynamic. A proof is over a fixed-size circuit, and this
+// contract's privacy depends on every salary entering ONE circuit together —
+// filing per employee would leak each amount through the public total's delta.
+// Scaling properly means a merkle roster with per-employee inclusion proofs,
+// not a bigger vector: padding to a maximum would cost the full proving time
+// every month, and this contract already sits near the block limit.
 
-// Whoever deployed this instance, captured once in the constructor.
-//
-// Four powers, not one: `setParamsFor` records the rule set a period must be
-// filed under, `assignEmployer` fills a vacant seat, `revokeEmployer` vacates
-// it, and `remit` may be triggered by the platform as well as the employer.
-//
-// ⚠️ There is no `transferPlatform`. This key cannot be rotated, and
-// `setParamsFor` is the gate on every future filing — `setPayroll` refuses a
-// period with no recorded rule set. Losing this key therefore ends the
-// instance's useful life: already-filed periods can still be funded and paid,
-// and nothing new can ever be filed.
+
+
+// The operator who deployed this instance. Controls the employer seat and the
+// tax rule set, but can never write payroll — every payroll circuit is gated on
+// `employer`. Rotatable via `transferSeat(true, …)`.
 export ledger platform: ZswapCoinPublicKey;
 
-// Where withheld money goes, fixed when the contract is deployed and never
-// settable again.
-//
-// Fixed rather than assignable on purpose. Remitting is the one action that
-// moves money the employer has already parted with and the employee never
-// owned, so whoever can trigger it must not also be able to choose where it
-// lands. With the destinations frozen at deploy, a remit circuit is safe to
-// expose to either party: the worst either can do is pay the treasury early.
+
+// taxTreasury: receive withheld taxes
 export ledger taxTreasury: ZswapCoinPublicKey;
+// socialTreasury: receive social contributions
 export ledger socialTreasury: ZswapCoinPublicKey;
 
 // The employer this instance belongs to. Meaningless until `employerAssigned`.
@@ -151,48 +144,29 @@ export ledger employerAssigned: Boolean;
 
 // Who this contract belongs to, remembered ACROSS a revoke.
 //
-// `employer` cannot answer that question: `revokeEmployer` clears it, precisely
-// so the ledger stops stating an ownership that no longer holds. That left the
-// contract with no memory of who had filed its payroll, and `assignEmployer`
-// with nothing to check a new name against — so a vacated seat could be handed
-// to any key the platform chose, including a company unrelated to the payroll
-// already in the contract.
+// `revokeEmployer` clears `employer`, so the ledger stops claiming an ownership
+// that no longer holds but that leaves `assignEmployer` with nothing to check
+// a new name against, and a vacated seat could go to any key the platform
+// picked. That is a write-access problem: `endEmployment` is write-once per
+// slot, so a stranger in the seat could permanently burn a termination the real
+// employee still needs.
 //
-// Nothing in that was a disclosure. Every field here is `export ledger` and was
-// world-readable before the handover; the salaries stay behind commitments and
-// the sealed openings stay encrypted under the first employer's passphrase. The
-// harm was write access — `endEmployment` is write-once per slot, so a stranger
-// in the seat could permanently burn a termination the real employee still
-// needed — together with pools and running totals that would then mix two
-// companies' money in one contract.
-//
-// `everAssigned` is separate from `lastEmployer` rather than derived from it.
-// Comparing against `default<ZswapCoinPublicKey>` would conflate "never
-// assigned" with "assigned to the zero key", and the zero key is exactly what
-// `revokeEmployer` writes.
+// `everAssigned` is separate rather than derived: comparing `lastEmployer`
+// against the zero key would conflate "never assigned" with "assigned to the
+// zero key", and the zero key is what `revokeEmployer` writes.
 export ledger lastEmployer: ZswapCoinPublicKey;
 export ledger everAssigned: Boolean;
 
-// Payroll is recorded per period, not as a single current state.
-//
-// A commitment is only worth having if it can still be opened when someone
-// disputes it, and disputes are about past months. Keying by period is what
-// makes "prove what Anna was paid in March" answerable in June, rather than
-// being overwritten the moment April is submitted.
-//
-// The period is YYYYMM as a number — 202603. A plain counter would have done,
-// but then reading the chain tells you a run happened without telling you which
-// month it was for, and the mapping back would live off-chain where it can be
-// lost or disagreed with.
+// Every period filed on this contract, and the most recent one.
+// The period is YYYYMM as a number — 202603.
 export ledger periods: Set<Uint<32>>;
 export ledger latestPeriod: Uint<32>;
 
-// period -> aggregates for that period.
+// How many employees were on the roster for a period. period → count.
+// Always 2 in this build (see the roster note at the top).
 export ledger employeeCountFor: Map<Uint<32>, Uint<8>>;
 
-// The four column totals for a period. Gross is what employment cost; the other
-// three are where it went.
-//
+// The four column totals for a period. 
 // Public together on purpose: the identity gross = tax + social + net is
 // checked in-circuit per employee, so anyone can verify at the aggregate level
 // that the withholding adds up — across every employer — without a single
@@ -202,182 +176,143 @@ export ledger totalTaxFor: Map<Uint<32>, Uint<64>>;
 export ledger totalSocialFor: Map<Uint<32>, Uint<64>>;
 export ledger totalNetFor: Map<Uint<32>, Uint<64>>;
 
-// period -> the hash of the rule set that period must be computed under.
-//
-// Written by the platform before the employer files, because this contract
-// cannot read the registry to look it up — cross-contract reads do not exist.
-// That is a trusted step, and a visible one: anyone can check the recorded hash
-// against the published version. The alternative was letting the employer name
-// their own rule set, which hands them the cheapest one.
+// paramsHashFor: 
+// key = Uint<32> = the period, YYYYMM (202603)
+// value = Bytes<32> = the hash of the tax rule set for that period
 export ledger paramsHashFor: Map<Uint<32>, Bytes<32>>;
 
-// period -> employee index -> commitment to (salary, nonce). Public, but
-// reveals nothing about the amount.
+// commitmentsFor: period (YYYYMM) → employee slot (0 or 1) → commitment to that
+// employee's whole payslip line. The hash of a `PayrollCommitment`.
 export ledger commitmentsFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
 
-// period -> employee index -> the opening, encrypted to the employer's key.
+
+
+// sealedFor: period → employee slot → the commitment's opening, encrypted to
+// the employer's key. 100 bytes of AES-256-GCM (see `setPayroll`).
 //
-// A commitment nobody can open proves nothing, and the openings used to exist
-// in exactly one place: a JSON file on the employer's laptop. Losing it lost
-// the ability to demonstrate what anyone was ever paid — silently, and with no
-// way to reconstruct it.
-//
-// 100 bytes is AES-256-GCM: a 12-byte IV, 72 bytes of ciphertext, and a 16-byte
-// tag. The plaintext is the four amounts (8 bytes each), the weeks worked
-// (8 bytes, padded from Uint<8> to keep the layout aligned) and the 32-byte
-// nonce.
-//
-// Weeks has to be in here. Everything else the commitment binds is recoverable
-// from chain — the period, the employer and the rule-set hash are all public —
-// but weeks is private and appears nowhere else, so without it the employer
-// cannot reopen their own commitment. The contract treats it as opaque and cannot
-// check that it decrypts to the matching commitment. That is deliberate rather
-// than overlooked: verifying it would mean doing the decryption in-circuit, and
-// the only party who can be harmed by a bad blob is the employer who wrote it —
-// they alone hold the key, and they alone need the backup.
+// Backup, not enforcement. The contract stores the blob and never checks it.
+// A commitment nobody can open proves nothing, and the openings used to live
+// only in a JSON file on the employer's laptop.
 export ledger sealedFor: Map<Uint<32>, Map<Uint<8>, Bytes<100>>>;
 
-// period -> employee index -> a hash binding the recipient to this slot.
+// payeeFor: period → employee slot → hash binding the recipient to this slot.
+// The hash of a `PayeeBinding` — see the struct above for what it hides.
 //
-// A hash, not the key. A public map of the keys on this employer's payroll
-// would publish the employment relationships that everything else here exists
-// to hide, and the contract only ever needs to *check* a recipient, never to
-// name one — so the preimage can stay in the employer's spreadsheet.
+// A hash, not the key: a public map of the keys on this payroll would publish
+// the employment relationships everything else here exists to hide. The
+// contract only needs to CHECK a recipient, never name one.
 //
-// Hashing the key ALONE was not enough. A coin public key is handed out freely
-// — an employee gives it to their employer, and to anyone else who might pay
-// them — and H(key) is the same value in every period of every instance. One
-// hash therefore matched a person everywhere at once: their whole employment
-// history, across employers, readable by anyone who had ever been given their
-// key. Worse, no key was needed to see the shape of it, because equal hashes
-// across contracts announce "same person" on their own.
-//
-// Binding the hash to the period and to this contract's address makes every
-// slot a distinct value, so the correlation disappears. What it does not do is
-// hide a targeted lookup: someone who knows a specific key can still compute
-// the binding for a period they name and test it. The search space is small and
-// this is not zero-knowledge — it removes bulk linkage, not the ability to
-// check a guess.
+// ⚠️ Hashing the key alone was not enough. H(key) is the same value in every
+// period of every instance, so one hash matched a person across all their
+// employers at once — and equal hashes announce "same person" without anyone
+// needing the key at all.
 export ledger payeeFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
 
-// period -> employee index -> whether that slot has been funded.
+// fundedFor / paidFor: period → employee slot → whether that slot has been
+// funded, and whether it has been paid.
 //
-// Funding and paying are separate because payroll is: a month is filed and
-// funded when it is run, and paid on payday. Tracking it per slot is what lets
-// a dashboard say "1 of 2 funded" rather than only "some money arrived".
+// Two steps because payroll is: a month is filed and funded when it's run, paid
+// on payday. Per slot, so a dashboard can say "1 of 2 funded".
+//
+// `paidFor` is also the double-pay guard — without it a replayed call would
+// send a second coin against the same commitment.
 export ledger fundedFor: Map<Uint<32>, Map<Uint<8>, Boolean>>;
-
-// period -> employee index -> whether that slot has been paid.
-//
-// The flag is what makes paying twice impossible; without it a replayed call
-// would send a second coin for the same commitment. It reveals which slots are
-// settled but never for how much.
 export ledger paidFor: Map<Uint<32>, Map<Uint<8>, Boolean>>;
 
-// period -> employee index -> the employer's statement that employment ended.
+// terminationFor: period → employee slot → hash of the employer's statement
+// that employment ended. A `Termination`: see the struct above.
 //
-// A commitment, not the facts. What it binds is the final period, how many
-// months were worked, and a hash of the claimant's claim key — and every one of
-// those is kept out of public state deliberately. `monthsWorked` published per
-// slot would be a tenure record for a worker; a claim-key hash published per
-// slot would be a stable per-person handle, and a worker using one key at two
-// employers would appear as the same value in both, rebuilding exactly the
-// cross-employer linkage `payeeFor` gives up convenience to prevent.
+// A commitment, not the facts: `monthsWorked` published per slot would be a
+// public tenure record for that worker. The opening goes to the fund's relay
+// off chain, the same way a payslip goes to the employee.
 //
-// The opening goes to the fund's relay off chain, the same way a payslip goes
-// to the employee. What being on chain buys is that the employer cannot revise
-// the statement afterwards, and that a claim resting on it is auditable against
-// a value they signed at the time.
-//
-// The employer states a fact they cannot spend: claiming against this needs the
-// payee's own key, which `payeeFor` binds and this contract never holds.
+// The employer cannot revise the statement afterwards and cannot spend it either: claiming needs the payee's own key,
+// which `payeeFor` binds and this contract never holds.
 export ledger terminationFor: Map<Uint<32>, Map<Uint<8>, Bytes<32>>>;
 
-// period -> how many times that period has been filed.
+// fileRoundFor: period → how many times that period has been filed.
 //
-// Re-filing a month is legitimate — it is how a correction is made — but the
-// coin funding a slot has a nonce DERIVED from the passphrase, so a second
-// funding round for the same period would rebuild the identical coin: same
-// nonce, same value, same recipient, therefore the same commitment. Zswap
-// rejects that as a duplicate (`240 CommitmentAlreadyPresent`, surfacing as
-// the retired umbrella `103`).
+// Re-filing a month means a correction is being made. But coin
+// nonces are DERIVED from the employer's passphrase, so a second round for the
+// same period would rebuild an identical coin (same nonce, value and
+// recipient), and Zswap rejects the duplicate commitment as `240
+// CommitmentAlreadyPresent`.
 //
-// Including this counter in the derivation makes each round's coins distinct
+// Feeding this counter into the derivation makes each round's coins distinct
 // while keeping them reconstructible, which random nonces would not.
 export ledger fileRoundFor: Map<Uint<32>, Uint<32>>;
 
-// period -> the employer key its commitments were sealed with.
+// employerFor: period → the employer key that FILED it.
 //
 // `PayrollCommitment` binds `employer`, so reproducing a commitment needs the
-// key that FILED the period — and `employer` is not that key. It is the key
-// holding the seat right now, and it moves: `revokeEmployer` zeroes it and
-// `transferSeat` replaces it. Every circuit that recomputes a commitment
-// was reading the moving value, which made two ordinary acts destructive:
+// key that filed the period and the `employer` field is not that key. It's
+// whoever holds the seat right now, and it moves: `revokeEmployer` zeroes it,
+// `transferSeat` replaces it.
 //
-//   • A revoke zeroed it, so every payslip already issued stopped verifying —
-//     `checkPayslip` recomputes against the ledger and got the zero key, and
-//     reported the mismatch with the message that means fraud.
-//   • A key rotation replaced it, so any period still unpaid became unpayable:
-//     `payEmployee` could no longer reproduce the commitment it must open. The
-//     circuit that exists so a lost key cannot strand an instance was the thing
-//     that stranded it.
+// ⚠️ Circuits used to read the moving value, which made two ordinary acts
+// destructive: a revoke zeroed it and every issued payslip stopped verifying
+// (reported as a mismatch, the message that means fraud), and a key rotation
+// left unpaid periods unpayable because `payEmployee` could no longer reproduce
+// the commitment it must open.
 //
-// A period's employer is a fact about the period, exactly as its rule set is,
-// and both are now written once when it is filed. Re-filing a month overwrites
-// this along with the commitments, which is right: the round that stands is the
-// one whose figures stand.
+// A period's employer is a fact about the period, like its rule set. Re-filing
+// a month overwrites this along with the commitments, which is right: the round
+// that stands is the one whose figures stand.
 export ledger employerFor: Map<Uint<32>, ZswapCoinPublicKey>;
 
-// How many coins this contract has ever received.
-//
-// Coins land in the Zswap tree in the order they are created, so the n-th coin
-// this contract received is the n-th leaf it owns. Recording the ordinal per
-// slot lets a caller find exactly the coin it must spend.
+// coinsReceived: how many coins this contract has ever received. 
 export ledger coinsReceived: Uint<32>;
 
-// period -> employee index -> which of this contract's coins funds that slot.
+// coinOrdinalFor: period → employee slot → which coin funds that slot.
 //
-// Without it the caller has to guess, because `filter(address)` lists every
-// coin ever received — spent ones included, with no unspent view — so counting
-// positions from zero pays an earlier period's already-spent coins. Guessing
-// produced both `Public transcript input mismatch` and
-// `239 NullifierAlreadyPresent`.
+// A shielded coin has to be identified individually to be spent, so paying a
+// slot means knowing exactly which of this contract's coins funded it. Recorded
+// at funding time (the value of `coinsReceived` at that moment) and looked up
+// when paying.
 //
-// It reveals ordering, which the leaf list already makes public, and no value.
+// ⚠️ Do not try to find it by listing coins instead. `filter(address)` returns
+// every coin ever received, spent ones included, so counting positions picks an
+// already-spent coin from an earlier period, which fails as `239
+// NullifierAlreadyPresent` or `Public transcript input mismatch`.
 export ledger coinOrdinalFor: Map<Uint<32>, Map<Uint<8>, Uint<32>>>;
 
-// The token this instance pays in, fixed on the first payment.
-//
+// payToken: the token this instance pays in, fixed on the first payment.
 // Without it, anyone could fund a slot with a token they minted themselves and
-// the contract would happily treat it as salary. Recorded once and then
-// enforced, so every later period is denominated in the same thing.
+// the contract would treat it as salary.
 export ledger payToken: Bytes<32>;
 export ledger payTokenSet: Boolean;
 
-// Withheld money held by this contract, in minor units.
+// Withheld tax and social contributions, in minor units. Running totals for
+// this contract, not per period — the per-period figures are `totalTaxFor` and
+// `totalSocialFor`.
 //
-// The tax is collected here and kept here rather than forwarded per employee.
-// One remittance a month costs one transaction instead of N, and the money is
-// under the contract's own accounting the whole time — there is no window in
-// which it sits at an address nobody has committed to.
+// The pools are balances: `fundWithholding` adds, `remit` subtracts.
+// `taxRemitted` and `socialRemitted` only ever grow. So for every funded
+// period, sum(totalTaxFor) == taxPool + taxRemitted, which is what makes the
+// published figures checkable.
 //
-// Public, deliberately. What a period withheld is already public in
-// `totalTaxFor`; what is still held and what has left are the two figures that
-// make the first one checkable. Nothing individual is derivable from any of
-// them.
+// Tax is kept here rather than forwarded per employee: one remittance a month
+// instead of N, and the money stays under the contract's own accounting
+// throughout.
 export ledger taxPool: Uint<64>;
 export ledger socialPool: Uint<64>;
 export ledger taxRemitted: Uint<64>;
 export ledger socialRemitted: Uint<64>;
 
-// period -> whether this period's withholding has been funded into the pools.
+// withheldFor: period → whether this period's withholding has been funded into
+// the pools. Set by `fundWithholding`, and what `remit` checks before sending.
 export ledger withheldFor: Map<Uint<32>, Boolean>;
 
-// Which of this contract's coins holds a period's tax and social contribution.
+// taxCoinFor / socialCoinFor: period → which of this contract's coins holds
+// that period's tax, and which holds its social contribution.
 // Same reason as `coinOrdinalFor`: remitting has to find the coin, not guess.
 export ledger taxCoinFor: Map<Uint<32>, Uint<32>>;
 export ledger socialCoinFor: Map<Uint<32>, Uint<32>>;
 
+
+// Constructor: Deploys the instance. The deployer becomes the `platform` key, and the two
+// treasury addresses are frozen here — `remit` can never send anywhere else.
+// ⚠️ There is no `transferPlatform`. This key cannot be rotated!
 constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
   platform = disclose(ownPublicKey());
   employerAssigned = false;
@@ -394,31 +329,19 @@ constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
   socialRemitted = 0;
 }
 
-// Records which published rule set a period must be filed under.
+// setParamsFor: Records which published rule set a period must be filed under.
 //
-// Platform-only, and write-once per period: changing it after a filing would
-// retroactively alter what the employer already committed to, which is the
-// exact failure the append-only registry exists to prevent.
+// Platform-only, write-once per period: changing it after a filing would
+// retroactively alter what the employer already committed to.
 //
-// ── Why this takes a range rather than one period ──────────────────────────
+// Takes a month RANGE, not one month. A tax schedule is annual and every month
+// of a year carries the identical hash, so `(2026, 1, 12)` records the whole
+// year in one transaction instead of twelve. It's a range on this circuit
+// rather than a separate one because a thirteenth verifier key pushed the
+// deploy over the block limit.
 //
-// A tax schedule is annual. Every month of 2026 carries the identical hash,
-// because the hash is of the schedule and not of the month — so recording a
-// year meant twelve proofs and twelve transactions stating one fact twelve
-// times. This writes up to twelve at once, and `(year, 1, 12)` is a year.
-//
-// It is a range on THIS circuit rather than a second circuit beside it, and
-// that is not a stylistic choice. A deploy transaction carries every circuit's
-// verifier key, and this contract sits close enough to the block limit that
-// adding a thirteenth key put the deployment over it — the chain refused it
-// with "Transaction would exhaust the block limits". So the year had to arrive
-// as a wider argument list, not as another entry point.
-//
-// Months already recorded are skipped rather than rejected. A month's rules are
-// a fact about that month and outrank anything said later about the year around
-// it — that is what write-once means — and skipping is also what makes "open
-// the year" safe to run twice, which is the only way it is useful as an
-// operation.
+// Months already recorded are skipped, not rejected — that's what makes
+// re-running a year safe.
 export circuit setParamsFor(
   year: Uint<16>,
   fromMonth: Uint<8>,
@@ -455,33 +378,19 @@ export circuit setParamsFor(
   }
 }
 
-// Hands the instance to an employer. Platform only, and only while the seat is
-// vacant — which it is at deploy, and again after `revokeEmployer`.
+// assignEmployer: hands the instance to an employer. Platform only, and only
+// while the seat is vacant — at deploy, or after `revokeEmployer`.
 //
-// A revoked employer can be given the same instance back by naming their key
-// again, and that is the ONLY thing a re-assignment can do. A lapsed
-// subscription that is later paid should restore the employer to the contract
-// holding their own payroll history, not strand it and force a fresh deployment
-// they cannot migrate into — but restoring the employer and handing their
-// contract to somebody else are different acts, and this circuit used to be
-// unable to tell them apart.
+// A revoked employer can be given the same instance back, and that is the ONLY
+// thing a re-assignment can do: the assert against `lastEmployer` refuses any
+// other key. One contract, one employer, for the life of the contract.
 //
-// It could not tell them apart because nothing survived the revoke to compare
-// against. `lastEmployer` is that memory, and the assert below is the whole of
-// the rule: one contract, one employer, for the life of the contract.
+// A paid-up subscription should restore the employer to the contract holding
+// their own payroll history. Handing that contract to somebody else is a
+// different act, and this circuit can no longer be used for it.
 //
-// ── What this costs, stated plainly ────────────────────────────────────────
-//
-// A contract can no longer be recycled. `utils/onboarding.ts` used to fill this
-// seat on the single contract named by `payroll_address` — revoke-then-onboard
-// rather than deploy-another-contract — and that is now unbuildable by design:
-// the second employer to arrive is refused here. Onboarding deploys a contract
-// per employer instead, which is what the service needed anyway, since a
-// contract that has filed payroll is that employer's record and not a seat.
-//
-// The platform keeps exactly one power over a live employer, `revokeEmployer`,
-// and it is now strictly weaker than it was: it can end an employer's access to
-// their contract, and it can no longer give that contract to anyone else.
+// Cost: contracts can't be recycled. Onboarding deploys one per employer rather
+// than revoking and reassigning a shared instance.
 export circuit assignEmployer(newEmployer: ZswapCoinPublicKey): [] {
   assert(ownPublicKey() == platform, "only the platform may assign the employer");
   assert(!employerAssigned, "employer already assigned");
@@ -496,154 +405,80 @@ export circuit assignEmployer(newEmployer: ZswapCoinPublicKey): [] {
   everAssigned = true;
 }
 
-// Takes the seat back. Platform only.
+// revokeEmployer: takes the seat back. Platform only.
 //
-// ⚠️ This is a real reduction in what an employer is guaranteed, and it should
-// be read before it is relied on. Until this circuit existed, `assignEmployer`
-// fired once and the platform had no privileged circuit left — an employer
-// could verify from the contract alone that nobody could take it from them.
-// That is no longer true. The platform can vacate the seat at any time and the
-// employer cannot prevent it.
+// ⚠️ A real reduction in what an employer is guaranteed. Before this circuit
+// existed, `assignEmployer` fired once and the platform had no privileged
+// circuit left. Now the platform can vacate the seat at any time.
 //
-// What it can no longer do is hand the seat onward. `assignEmployer` refuses
-// any key but the one that held it, so a revoke ends an employer's access to
-// their contract without giving that contract to anybody else — the instance
-// and the payroll history in it stay theirs, and the only way back into the
-// seat is their own key.
+// What it cannot do is hand the seat onward — `assignEmployer` accepts only the
+// key that held it, so the instance and its payroll history stay theirs and the
+// only way back in is their own key.
 //
-// What it deliberately does NOT do:
+// It writes no payroll and erases no history. Every employer-gated circuit
+// asserts `employerAssigned`, which this clears, so a revoke locks those
+// circuits rather than opening them to the platform. Commitments, terminations,
+// pools and totals all stand.
 //
-//   • It writes no payroll and moves no money. The platform still cannot call
-//     `setPayroll`, `payEmployee` or anything else gated on `employer` — those
-//     assert `employerAssigned`, which this clears, so the platform's own
-//     revocation locks those circuits rather than opening them.
-//   • It erases no history. Commitments, sealed openings, terminations, the
-//     pools and the remitted totals all stand. Revocation decides who may write
-//     next, never what was already written — an employee's claim against a past
-//     period survives their employer losing the contract.
-//
-// ── Money in flight: frozen, not stranded ──────────────────────────────────
-//
-// Revoking a seat that has funded-but-unpaid slots leaves coins in the contract
-// that nothing can currently spend: `payEmployee` and `payPeriod` both assert
-// `employerAssigned` and `ownPublicKey() == employer`, and this clears the
-// first. It looks like a loss and is not one.
-//
-// `lastEmployer` survives the revoke, and `assignEmployer` accepts that key and
-// no other. Re-seating the same employer therefore restores the seat and makes
-// those coins payable again — the freeze lifts, and it lifts for exactly one
-// key. The withheld pools are less encumbered still: `remit` is callable by the
-// platform as well as the employer, so it can drain them to the frozen
-// treasuries with no seat filled at all.
-//
-// This circuit is deliberately NOT guarded on funded-and-unpaid slots. Such a
-// guard would hand the employer a veto over their own revocation: fund one slot,
-// never pay it, and the seat can never be vacated. Revocation exists for the
-// employer who has stopped paying for the service, which is precisely the
-// employer most able to leave a slot unsettled. A recoverable freeze is the
-// weaker power, and the right one.
-//
-// `employer` is cleared rather than left in place. `employerAssigned` already
-// gates every use, so the stale key would be inert — but it is a public ledger
-// field, and leaving the last employer's key readable there states an ownership
-// that no longer holds.
+// Money in flight is frozen, not lost: funded-but-unpaid slots become payable
+// again when the same employer is re-seated. The pools are less encumbered
+// still — `remit` is callable by the platform with no seat filled.
 export circuit revokeEmployer(): [] {
   assert(ownPublicKey() == platform, "only the platform may revoke the employer");
   assert(employerAssigned, "no employer assigned yet");
 
-  // Settle before vacating.
+// Settle the pools before vacating. This is a proxy for "no month is
+  // mid-flight", not an exact check: on the normal path `fundPeriod` funds net
+  // coins and withholding together, so a non-zero pool means a month is in
+  // progress. A period funded with `fundEmployee` alone slips through.
   //
-  // ── What this catches, and it is a proxy rather than the thing itself ────
-  //
-  // The money genuinely at risk in a revoke is the NET coins of a funded,
-  // unpaid slot: `payEmployee` and `payPeriod` both need the seat filled, so
-  // vacating it freezes them. The pools do not hold those coins — they are
-  // moved only by `fundWithholding` and `fundPeriod`'s withholding half, and
-  // net coins never touch them.
-  //
-  // This guard works because `fundPeriod` receives the net coins and the
-  // withholding in one circuit or receives nothing. On that path — the normal
-  // one — a period with unpaid net coins in it is also a period whose
-  // withholding is sitting in the pools, so a non-zero pool is a reliable
-  // signal that a month is mid-flight.
-  //
-  // It is NOT exact, and the gap is worth stating: a period funded with
-  // `fundEmployee` and never put through `fundWithholding` leaves net coins in
-  // the contract with both pools at zero, and this assert says nothing. That is
-  // the interrupted-run recovery path, and closing it needs a counter of
-  // funded-unpaid slots maintained across five circuits.
-  //
-  // ── Why a pool check and not that counter ────────────────────────────────
-  //
-  // Because of who can clear it. A non-zero pool is cleared by `remit`, which
-  // the platform may call itself with no employer seated — so this guard delays
-  // a revoke by one transaction the platform can always make, and never blocks
-  // it. A funded-unpaid counter would be cleared only by `payPeriod`, which is
-  // employer-only. That hands the employer a veto over their own revocation:
-  // fund one slot, never pay it, and the seat can never be vacated — by the
-  // employer who has stopped paying for the service, which is exactly who
-  // revocation exists for.
-  //
-  // So the exact guard is the one that can be held hostage and the proxy is the
-  // one that cannot. This takes the proxy, and leaves the residue to the
-  // recovery below.
+  // The proxy is deliberate. A non-zero pool is cleared by `remit`, which the
+  // platform can call itself — so this delays a revoke by one transaction the
+  // platform can always make. An exact funded-unpaid counter would be cleared
+  // only by `payPeriod`, which is employer-only, handing the employer a veto
+  // over their own revocation.
   assert(
     taxPool == 0 && socialPool == 0,
     "remit this contract's withheld tax and contribution before revoking"
   );
 
+  // Cleared rather than left stale: `employerAssigned` already gates everything,
+  // but this is a public field and shouldn't state an ownership that ended.
   employer = default<ZswapCoinPublicKey>;
   employerAssigned = false;
 }
 
-// Seat rotation: the current holder of a seat names its successor.
+// transferSeat: hands a seat to a new key. Only the current holder can do it.
 //
-// One circuit for both seats, selected by `isPlatform`, and merged for the same
-// reason `remitTax` and `remitSocial` were: the two were the same circuit twice.
+// Two seats, one circuit. `transferSeat(true, k)` moves the platform seat —
+// platform only. `transferSeat(false, k)` moves the employer seat — employer
+// only.
 //
-// A payroll deploy sits on the network's per-transaction ceiling, and what that
-// ceiling measures is ZKIR PLUS verifier keys — established by this very change
-// and written up in `docs/findings.md`. Verifier size tracks circuit COUNT
-// (~1,799 bytes each), so a thirteenth circuit for `transferPlatform` cost
-// 22,808 + 22,939 = 45,747. Merging costs 151 more ZKIR bytes — both branches
-// compile — and saves a whole verifier key, landing at 22,959 + 21,588 =
-// 44,547. That deployed on 2026-09-03; the refused build was 46,527. The ZKIR
-// line going UP while the total goes DOWN is the counter-intuitive part, and
-// the total is the one that decides.
+// Why: keys get lost. A lost employer key means nobody can file payroll here
+// again. A lost platform key is worse — only the platform can record a rule set
+// (`setParamsFor`), and no period can be filed without one.
 //
-// ── Why these two merge safely and the others do not ───────────────────────
+// Moving the platform seat does NOT grant payroll access: every payroll circuit
+// checks `employer`, which the platform branch never touches.
 //
-// `assignEmployer` and `revokeEmployer` are NOT folded in here, though they are
-// small and platform-gated. They are not the same statement: assignment carries
-// a vacancy check and the `lastEmployer` rule, revocation carries neither, and
-// putting three different guard sets behind one opcode is how a conditional
-// authorisation bug gets written. These two ARE the same statement — prove you
-// hold a seat, name the key that holds it next — differing only in which fields
-// they read and write, exactly the condition that made the `remit` merge safe.
+// ⚠️ The employer branch accepts ANY key, so an employer can also hand their
+// instance to a different party entirely. The platform cannot prevent it, only
+// revoke afterwards.
 //
-// ── What each half is for ──────────────────────────────────────────────────
+// This was first written as two circuits, `transferPlatform` and
+// `transferEmployer`. That deploy was refused: every circuit ships a verifier
+// key of ~1,800 bytes in the deploy transaction, the contract was already near
+// Midnight's per-transaction ceiling at twelve circuits, and a thirteenth went
+// over. Merging them costs ~150 bytes of extra logic and saves a whole verifier
+// key.
 //
-// The employer half is key rotation controlled by the employer rather than the
-// platform. Without it a lost employer key would strand the instance; with it
-// the platform still never gains write access to payroll.
-//
-// The platform half closes the sharper gap. `setParamsFor` is the gate on every
-// future filing — `setPayroll` refuses a period with no recorded rule set, and
-// only the platform can record one. Until this existed, losing the platform key
-// ended the instance's useful life: periods already filed stayed fundable and
-// payable, and no month could ever be filed again, with nothing to recover
-// from it.
-//
-// Neither half grants a new power; both move who holds an existing one, and
-// only the current holder can move it. In particular the platform half does not
-// give the platform write access to payroll — every circuit that writes a
-// period is gated on `employer`, which this does not touch when `isPlatform`.
+// `assignEmployer` and `revokeEmployer` are not folded in as well: they have
+// different access rules, and merging those is how authorisation bugs happen.
 export circuit transferSeat(isPlatform: Boolean, newHolder: ZswapCoinPublicKey): [] {
   const pf = disclose(isPlatform);
 
-  // Checked before the holder comparison below has any meaning: with no
-  // employer assigned, `employer` is the zero key, and this is what stops that
-  // being a seat anyone could claim to hold.
+  // Without this, an unassigned `employer` is the zero key and the comparison
+  // below would be a seat anyone could claim to hold.
   assert(pf || employerAssigned, "no employer assigned yet");
 
   const holder = pf ? platform : employer;
@@ -654,18 +489,17 @@ export circuit transferSeat(isPlatform: Boolean, newHolder: ZswapCoinPublicKey):
     platform = k;
   } else {
     employer = k;
-    // The memory follows the seat, or rotating a key would quietly cost the
-    // employer the right to be restored after a later revoke: `assignEmployer`
-    // would still be holding them to the key this call just replaced, and the
-    // circuit that exists to stop a lost key stranding the instance would be
-    // the thing that stranded it.
+    // The memory follows the seat. Otherwise `assignEmployer` would still be
+    // holding the employer to the key this call just replaced, and a rotation
+    // would quietly cost them the right to be restored after a revoke.
     lastEmployer = k;
   }
 }
 
-// Salaries are capped at Uint<60> rather than Uint<64> so that a whole roster
-// of them cannot overflow the Uint<64> total. 2^60 minor units is far above any
-// real payroll, and the compiler rejects the assignment otherwise.
+// FILE MONTH
+// The month's FILING STEP. The employer submits everyone's gross salary, 
+// the circuit computes what each person owes in tax and contributions, 
+// and it writes commitments plus public totals. No money moves.
 export circuit setPayroll(
   period: Uint<32>,
   gross: Vector<2, Uint<60>>,
@@ -704,7 +538,7 @@ export circuit setPayroll(
   const t2 = params.threshold2;
   const maxBase = params.maxContribBase;
 
-  // ── employee 0 ──────────────────────────────────────────────────────────
+  // Calculate employee 0's taxes and contributions 
   const g0 = gross[0];
   const a1 = g0 < t1 ? g0 : t1;
   const a2 = g0 <= t1 ? 0 : ((g0 < t2 ? g0 : t2) - t1) as Uint<60>;
@@ -724,7 +558,7 @@ export circuit setPayroll(
   assert(taxQ[0] + socialQ[0] <= g0, "tax and contribution exceed gross");
   const net0 = (g0 - taxQ[0] - socialQ[0]) as Uint<60>;
 
-  // ── employee 1 ──────────────────────────────────────────────────────────
+  // Calculate employee 1's taxes and contributions 
   const g1 = gross[1];
   const c1 = g1 < t1 ? g1 : t1;
   const c2 = g1 <= t1 ? 0 : ((g1 < t2 ? g1 : t2) - t1) as Uint<60>;
@@ -746,9 +580,8 @@ export circuit setPayroll(
 
   // Each public total is the SUM OF THE PER-EMPLOYEE FIGURES, never a rate
   // reapplied to the gross total. Floor division does not distribute, and the
-  // brackets are progressive, so taxing the sum gives a materially different —
-  // and wrong — number. The commitments hold the per-employee amounts, so
-  // these totals are what the pools must match.
+  // brackets are progressive, so taxing the sum gives a materially different number. 
+  // The commitments hold the per-employee amounts, so these totals are what the pools must match.
   const grossTotal = g0 + g1;
   const taxTotal = taxQ[0] + taxQ[1];
   const socialTotal = socialQ[0] + socialQ[1];
@@ -756,43 +589,23 @@ export circuit setPayroll(
   // Back into vectors so the loop below stays a loop.
   const net = [net0, net1];
 
-  // A period may be re-submitted — a correction to a month already filed is a
-  // real thing that happens. It overwrites that period alone and leaves every
-  // other month standing, which is the whole point of keying by period.
+  // A period can be re-filed — corrections happen — but not once money is
+  // sitting against it.
   //
-  // But not while money is sitting against it. Re-filing resets `fundedFor` to
-  // false, and a coin already received stays in the contract with no way back
-  // out: nothing can mark that slot funded again except funding it a second
-  // time, which receives ANOTHER coin and overwrites `coinOrdinalFor`. The
-  // first one is then unreachable by any circuit here — not merely
-  // unaccounted, unspendable. `fileRoundFor` makes each round's coins distinct;
-  // it does not rescue the coins of the round before.
+  // Re-filing resets `fundedFor` to false while the coin stays in the contract.
+  // Funding again receives a SECOND coin and overwrites `coinOrdinalFor`, so
+  // the first becomes unreachable by any circuit here: not just unaccounted,
+  // unspendable. Hence slots must be paid (or never funded) first.
   //
-  // So every slot must be paid or never funded before the month can be
-  // rewritten. A slot that is funded and unpaid has a coin waiting for it, and
-  // `payEmployee` settles slots one at a time, so there is always a way through.
+  // The withholding has no way through at all, so it's refused outright.
+  // `withheldFor` is never reset, and re-filing moves `totalTaxFor`:
+  //   • before remitting — `taxCoinFor` names a coin holding the OLD amount and
+  //     `remit` asserts against the NEW total, so it can never pass. Re-funding
+  //     is blocked too, since `withheldFor` is already true.
+  //   • after remitting — the corrected month's withholding can never be
+  //     funded, and the chain shows tax that was never collected.
   //
-  // The withholding is the harder half, and it has no way through at all — so
-  // it is refused outright rather than sequenced around.
-  //
-  // `withheldFor` is written true by `fundWithholding` and `fundPeriod` and is
-  // never reset. Re-filing moves `totalTaxFor` and `totalSocialFor`, and both
-  // of the states that leaves are unrecoverable:
-  //
-  //   • Re-filed BEFORE remitting: `taxCoinFor` still names a coin holding the
-  //     OLD amount, while `remit` computes `owed` from the NEW total and asserts
-  //     `coin.value == owed`. That assert can never pass again, so the coin is
-  //     not merely unaccounted — it is unspendable, and `taxPool` overstates the
-  //     contract's holdings for good. Re-funding is refused too, because
-  //     `withheldFor` is already true.
-  //   • Re-filed AFTER remitting: `taxCoinFor` is gone but `withheldFor` is
-  //     still true, so the corrected month's withholding can never be funded.
-  //     The chain then shows a tax total larger than anything ever collected,
-  //     with nothing marking the gap.
-  //
-  // Since `fundPeriod` takes the net coins and the withholding coins together
-  // or takes nothing, the practical rule this states is the simple one: a month
-  // can be corrected until money moves against it, and not after.
+  // The rule: a month can be corrected until money moves against it, not after.
   assert(
     !withheldFor.member(p) || !withheldFor.lookup(p),
     "this period's withholding is funded — a funded month cannot be re-filed"
@@ -812,6 +625,9 @@ export circuit setPayroll(
     }
   }
 
+  // These six are Map<period, Map<slot, …>>. The loop below writes into the
+  // inner map, so it has to exist first, created on a first filing, and the
+  // `if` makes each a no-op on a re-file.
   if (!commitmentsFor.member(p)) {
     commitmentsFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
   }
@@ -831,33 +647,22 @@ export circuit setPayroll(
     coinOrdinalFor.insert(p, default<Map<Uint<8>, Uint<32>>>);
   }
 
-  // Terminations are cleared, not preserved — the ONE map here that a re-file
-  // resets rather than initialises.
+  // Cleared, not preserved — the ONE map a re-file resets.
   //
-  // A slot is an index, not a person. `payeeFor` is rewritten in the loop
-  // below, so slot 0 after a re-file need not be slot 0 before it. A
-  // termination left in place would stay attached to the index and therefore
-  // silently transfer to whoever now occupies it — an attestation that
-  // employment ended, made about someone the employer never said it about.
+  // A slot is an index, not a person. `payeeFor` is rewritten below, so slot 0
+  // after a re-file need not be the same employee as before. A termination left
+  // in place would follow the index and silently attach to whoever now occupies
+  // it: an attestation the employer never made about that person.
   //
-  // The window this opens in write-once is narrow, and worth pinning down
-  // exactly, because two other guards bound it from either side.
+  // This is a hole in write-once, but a narrow one. `endEmployment` needs the
+  // slot PAID, and the guard above refuses to re-file a month whose withholding
+  // is funded. `fundPeriod` funds withholding with the nets. So on the
+  // normal path a month carrying a termination can't be re-filed at all.
   //
-  // `endEmployment` requires the slot to have been PAID, so a termination only
-  // ever exists on a month where money reached the employee. The guard above
-  // refuses to re-file any month whose WITHHOLDING is funded, and `fundPeriod`
-  // funds the withholding with the nets — so on that path, the normal one, a
-  // month carrying a termination can never be re-filed and the attestation is
-  // final.
-  //
-  // What is left is one path: a period funded slot by slot with `fundEmployee`
-  // and never put through `fundWithholding`, so `withheldFor` stays false. Paid,
-  // attested, and then re-filed. That is the interrupted-run recovery route, it
-  // is the only way a slot's occupant can still change after a termination
-  // exists, and it is the case this line is here for. Note that the re-file also
-  // clears `paidFor`, so the corrected month must be funded and paid again
-  // before it can be attested afresh — the new statement rests on new money,
-  // not on the money the superseded one rested on.
+  // The one route through is a period funded with `fundEmployee` alone, never
+  // put through `fundWithholding`: the interrupted-run recovery path. Even then
+  // the re-file clears `paidFor`, so the month must be funded and paid again
+  // before it can be attested afresh.
   terminationFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
 
   // Every filing starts a new round, so a re-filed month funds fresh coins.
@@ -914,11 +719,16 @@ export circuit setPayroll(
   }
 }
 
-// Moves one employee's salary into the contract, ahead of payday.
+
+// FUND EMPLOYEE: Moves one employee's salary into the contract, ahead of payday.
+// fundEmployee funds one slot's net pay. 
+// fundPeriod below funds the whole month, so both employees' in one transaction.
+// fundPeriod is the normal path, and the reason is atomicity
+// fundEmployee is the recovery path: a run that broke partway, or funding one slot at a time for a reason.
 //
 // The amount is checked against the commitment on the way in, not just on the
 // way out. Funding a slot with the wrong figure would otherwise sit undetected
-// until `payEmployee` refused it — after a proof per slot and a month of
+// until `payEmployee` refused it, after a proof per slot and a month of
 // assuming the payroll was covered.
 //
 // One coin per slot rather than one pot for the period. Two reasons, neither of
@@ -971,43 +781,31 @@ PayrollCommitment {
   receiveShielded(disclose(coin));
   fundedFor.lookup(p).insert(i, true);
 
-  // Which leaf this coin will be. Recorded so paying does not have to guess.
+  // Which receipt number this coin is, so paying doesn't have to guess. NOT a
+  // leaf position — see the `coinOrdinalFor` declaration.
   coinOrdinalFor.lookup(p).insert(i, coinsReceived);
   coinsReceived = (coinsReceived + 1) as Uint<32>;
 }
 
-// Funds a whole period in one transaction: every employee's net, plus the tax
-// and the contribution.
+// FUND PERIOD: funds the whole month in one transaction, soboth employees' net
+// pay, plus the tax and social contribution.
 //
-// ── Why this exists, and it is not the transaction count ───────────────────
+// The normal path. Run separately, `fundEmployee` and `fundWithholding` leave a
+// window where employees are funded and the withholding isn't (`fundedFor`
+// true, `withheldFor` false): a state in which the employer is holding money
+// that isn't theirs. Here it can't occur: one circuit receives every coin or
+// none. Skipping the tax stops being something to notice and chase, and becomes
+// something that can't be built.
 //
-// Run separately, `fundEmployee` and `fundWithholding` leave a window in which
-// the employees have been funded and the withholding has not — `fundedFor` true,
-// `withheldFor` false. That state is visible on chain, which is the good part,
-// and it is a state in which the employer is holding money that is not theirs.
-// Here it cannot occur: one circuit receives the net coins and the withholding
-// coins or receives nothing. Skipping the tax stops being something to notice
-// and chase, and becomes something that cannot be built — the same class of
-// guarantee `fundWithholding` already gives on the AMOUNT.
+// One circuit, not several calls in one transaction. A call's transcript is
+// computed against the state BEFORE the transaction, so two calls can't see
+// each other's writes — `coinsReceived` is incremented by every receipt here
+// and `payToken` is set by the first coin and read by the rest. Both would be
+// wrong across separate calls and the ledger would reject the replay.
 //
-// ── Why one circuit rather than several calls in one transaction ───────────
-//
-// A call's transcript is computed against the state as it stands BEFORE the
-// transaction, so two calls in one transaction cannot see each other's writes.
-// `coinsReceived` is incremented by every receipt here, and `payToken` is set by
-// the first coin and read by the ones after it — both would be wrong across
-// separate calls, and the ledger would reject the replay. A circuit sees its own
-// writes, so the sequence is safe inside one call in a way it is not across two.
-//
-// ── What it deliberately does NOT do ───────────────────────────────────────
-//
-// It does not pay anyone. Funding puts coins into this contract; paying spends
-// them, and spending needs each coin's `mt_index` — its position in the Zswap
-// tree, which does not exist until the coin has been committed. Receive and
-// spend therefore cannot share a transaction, and `payPeriod` stays separate.
-//
-// ⚠️ ROSTER SIZE IS 2 and is written out in full, exactly as `setPayroll` and
-// `payPeriod` do. See the note on `platform` for why.
+// It does not pay anyone. Spending a coin needs its position in the Zswap tree,
+// which doesn't exist until the coin has been committed — so receiving and
+// spending can't share a transaction, and `payPeriod` stays separate.
 export circuit fundPeriod(
   period: Uint<32>,
   gross: Vector<2, Uint<60>>,
@@ -1100,7 +898,7 @@ export circuit fundPeriod(
 // This is the circuit the whole design exists for. The commitment already on
 // chain is the payment authorisation: the caller must produce a (salary, nonce)
 // that hashes to it, and the coin that moves is required to carry exactly that
-// salary. Nobody — including the employer — can pay an employee an amount that
+// salary. Nobody, including the employer, can pay an employee an amount that
 // differs from what was committed for them, and no observer learns what any of
 // those amounts are.
 //
@@ -1178,7 +976,7 @@ PayrollCommitment {
   paidFor.lookup(p).insert(i, true);
 }
 
-// Records that an employee's employment ended, as of a filed period.
+// endEmployment: Records that an employee's employment ended, as of a filed period.
 //
 // Write-once per slot: a termination that could be reissued would let an
 // employer restate the final month after seeing what it entitled someone to,
@@ -1186,7 +984,7 @@ PayrollCommitment {
 // before anyone acts on it.
 //
 // The one release is a re-file, which clears this period's terminations along
-// with its commitments — see the note at that line in `setPayroll` for why it
+// with its commitments, see the note at that line in `setPayroll` for why it
 // must (a slot is an index, and a re-file can change who occupies it). That is
 // not a way around write-once: `setPayroll` refuses to re-file any period whose
 // withholding is funded, so a termination attached to a month that has seen
@@ -1205,27 +1003,20 @@ export circuit endEmployment(
   assert(commitmentsFor.member(p), "no payroll filed for that period");
   assert(commitmentsFor.lookup(p).member(i), "no such employee in that period");
 
-  // The final month must have been PAID, not merely filed.
+  // The final month must have been PAID, not merely filed. A month can sit
+  // filed and never funded, and a termination naming such a month attests that
+  // employment ended in a period where no money moved. So anything built on it
+  // downstream rests on figures the employer published and never honoured.
   //
-  // Filing a period writes commitments and nothing else; a month can sit filed
-  // and never funded. A termination naming such a month is an attestation that
-  // employment ended as of a period in which no money moved, and anything
-  // resting on it downstream — a benefit claim built from these attestations —
-  // would then rest on figures the employer published and never honoured.
+  // `paidFor.lookup(p)` is safe unguarded: `setPayroll` writes a flag for every
+  // index in the same circuit that writes the commitment checked above.
   //
-  // `paidFor.lookup(p)` is safe to read unguarded: `setPayroll` writes a flag
-  // for every index in the same circuit that writes the commitment checked
-  // above, so the two cannot exist apart.
-  //
-  // ⚠️ The cost, and it falls on the employee rather than the employer. An
-  // employer who never pays the final month can no longer attest its
-  // termination — which is the same as saying a worker whose employer stopped
-  // paying cannot get the on-chain statement a claim is built from, in exactly
-  // the circumstance they most need one. The contract cannot tell a delinquent
-  // employer from a slow one, so it refuses both. If that trade turns out to be
-  // the wrong way round, the softer form is `fundedFor` in place of `paidFor`:
-  // it requires the money to have reached the contract without requiring it to
-  // have reached the employee.
+  // ⚠️ The cost falls on the EMPLOYEE. An employer who never pays the final
+  // month can't attest its termination. So a worker whose employer stopped
+  // paying can't get the statement a claim is built from, exactly when they
+  // most need it. The contract can't tell a delinquent employer from a slow
+  // one. The softer form is `fundedFor` instead of `paidFor`: money reached the
+  // contract, without requiring it reached the employee.
   assert(
     paidFor.lookup(p).lookup(i),
     "that slot has not been paid — a termination must name a settled period"
@@ -1241,13 +1032,13 @@ export circuit endEmployment(
   terminationFor.lookup(p).insert(i, disclose(attestation));
 }
 
-// Moves a period's withheld tax and contribution into the contract's pools.
+// Fundwithholding: the employer sends two coins (tax and social) into the contract. 
+// The circuit checks each equals the period's assessed total, receives them, adds to taxPool/socialPool, 
+// and sets withheldFor[p] = true. Money is now held by the contract.
 //
 // One call for the period rather than one per employee: tax is owed to a
 // treasury, not to N people, and the amounts are already the SUM of the
-// committed per-employee figures — `totalTaxFor` and `totalSocialFor` were
-// accumulated that way in `setPayroll`, never recomputed from the gross total.
-// Checking against those totals is therefore checking against the commitments.
+// committed per-employee figures.
 //
 // The money stays here afterwards. Forwarding it per period would cost a
 // transaction each time and put it at an address before anyone has committed to
@@ -1291,65 +1082,23 @@ export circuit fundWithholding(
   withheldFor.insert(p, true);
 }
 
-// Sends one period's withheld tax to the treasury, monthly.
+// REMIT: sends one period's withheld tax OR social contribution out to its
+// treasury. `isTax` picks which, so a fully remitted month takes two calls.
 //
-// The destination is not an argument. It was fixed when this contract was
-// deployed, so triggering a remittance cannot redirect one — which is what
-// makes it safe to let either the employer or the platform call this.
-// The treasury is taken as an ARGUMENT and checked against the ledger, rather
-// than read from the ledger and sent to directly.
+// One circuit for both because they were the same circuit twice — identical
+// guards, checks and send, differing only in six paired fields. A payroll
+// deploy sits on the network's per-transaction ceiling and thirteen circuits
+// was one too many. Numbers in `docs/findings.md`.
 //
-// It changes nothing about where the money goes — the assert below pins it to
-// the same frozen value, so a caller naming any other treasury is refused. What
-// it changes is how the recipient reaches `sendShielded`: as a disclosed
-// argument, exactly as `payPeriod` passes `disclose(payees[i])`.
+// ⚠️ There is exactly ONE `sendShielded`, and `treasury` reaches it as a
+// disclosed ARGUMENT. Reading the recipient from the ledger and sending to it
+// directly got every remittance refused by the node with a bare 103; passing it
+// as an argument — the way `payPeriod` passes `disclose(payees[i])` — fixed it.
+// Do not move the send inside the branch, and do not read `taxTreasury`
+// directly: both put that fix back at risk.
 //
-// That difference WAS the cause, and this is no longer a hypothesis. Reading the
-// recipient from the ledger got every remittance refused by the node with the
-// retired catch-all 103, while `payPeriod` — the same contract-owned-coin to
-// wallet-key send, differing only in that it sends to `disclose(payees[i])`, an
-// argument — succeeded throughout. Passing the treasury the same way fixed it:
-// contract 0fa90dd3…, period 202609, tax and social both remitted 2026-08-28
-// after a full cycle on a fresh deployment.
-//
-// Keys, providers, delegated proving, duplicate commitments and stale merkle
-// roots were each ruled out by evidence first; the recipient's provenance was
-// what remained. Worth knowing the next time a bare 103 appears with no other
-// signal — compare how the failing circuit obtains its recipient.
-//
-// The assert is what keeps the guarantee: naming any other treasury is refused,
-// so taking it as an argument changes how the value reaches `sendShielded` and
-// nothing about where the money can go.
-// Sends one period's withheld tax OR social contribution to its treasury.
-//
-// One circuit for both, selected by `isTax`. They were two, and the two were
-// the same circuit twice: identical guards, identical token and amount checks,
-// identical send, differing only in which of six paired fields they touched.
-//
-// ── Why they were merged, which is not a tidiness argument ─────────────────
-//
-// A payroll deploy sits on the network's per-transaction ceiling. The contract
-// deployed on 2026-08-28 with 22,276 bytes of ZKIR across 13 circuits; adding
-// `employerFor` and the seat rule took it to 22,820 and the node began refusing
-// the deploy outright with `1010: Transaction would exhaust the block limits`,
-// on an otherwise empty chain. The pre-change source still deployed, so the
-// margin was under 544 bytes. Thirteen circuits was already one too many, and
-// this pair was the only true duplicate among them.
-//
-// ── What must NOT move, and why ────────────────────────────────────────────
-//
-// There is exactly ONE `sendShielded`, and `treasury` reaches it as a disclosed
-// ARGUMENT. That is not incidental: `docs/findings.md` records that reading the
-// recipient from the ledger and sending to it directly got every remittance
-// refused by the node with the retired catch-all 103, while passing it as an
-// argument — the way `payPeriod` passes `disclose(payees[i])` — fixed it. The
-// destination is still the one frozen at deploy; naming it as an argument does
-// not let a caller choose it, because the assert below pins it to the frozen
-// value and refuses any other. Putting the send inside the branch would give
-// this circuit two of them and put that fix back at risk for nothing.
-//
-// The branch is therefore only what it has to be: the six paired fields. The
-// reads are selected before the send, the writes after it.
+// Taking the treasury as an argument does not let a caller choose it. The
+// assert below pins it to the value frozen at deploy and refuses any other.
 export circuit remit(
   period: Uint<32>,
   isTax: Boolean,
@@ -1357,13 +1106,10 @@ export circuit remit(
   coin: QualifiedShieldedCoinInfo
 ): [] {
   assert(employerAssigned, "no employer assigned yet");
-  // Two callers, and the reason that is safe is NOT in this assert — it is the
-  // `treasury` assert below. Read together: the platform can trigger a spend
-  // from the employer's contract, and the worst it can do with that is pay the
-  // employer's own frozen treasury early, because the destination was fixed at
-  // deploy and this circuit refuses any other. Widening the caller set is only
-  // sound while that assert stands; if the destination ever becomes choosable,
-  // this line must narrow to the employer in the same change.
+  // Safe to allow two callers only because of the `treasury` assert below: the
+  // platform can trigger a spend, and the worst it can do is pay the employer's
+  // own frozen treasury early. If the destination ever becomes choosable, this
+  // must narrow to the employer in the same change.
   assert(
     ownPublicKey() == employer || ownPublicKey() == platform,
     "only the employer or the platform may remit"
@@ -1401,21 +1147,23 @@ export circuit remit(
   }
 }
 
-// Pays the whole period in one transaction.
+// PAY PERIOD: pays every slot in one transaction. `payEmployee` pays one — use
+// that for a run that broke partway.
+// NOTE AGAIN: payPeriod pays both slots in one transaction; payEmployee pays one 
 //
-// Ten separate payments fail partway through with node error 170,
+// Separate payments fail partway through with node error 170,
 // `InvalidDustSpendProof` — the FEE proof going stale across rapid
 // transactions, not anything about the contract's own coins. One transaction
-// needs one dust spend proof instead of ten, which fixes it: verified paying ten
-// employees in a single transaction, 90 seconds of proving.
+// needs one dust spend proof instead of N, which fixes it (verified at ten
+// employees, 90 seconds of proving).
 //
 // Batching also removes a leak, independently of the bug, and the same one that
 // makes `setPayroll` a single call: one payment per slot publishes one event
 // per slot, showing which settled when. One transaction settles the month with
-// no per-employee signal at all.
+// no per-employee signal.
 //
-// All-or-nothing is a feature here. A half-paid month is a worse state to be in
-// than a month that failed cleanly and can be retried.
+// All-or-nothing is a feature: a half-paid month is a worse state than a month
+// that failed cleanly and can be retried.
 export circuit payPeriod(
   period: Uint<32>,
   gross: Vector<2, Uint<60>>,
@@ -1476,7 +1224,7 @@ export circuit payPeriod(
 // this arithmetic can be tested against the real one.
 //
 // There are necessarily two implementations: Compact has no division, so
-// `setPayroll` cannot derive the tax itself — the caller computes it and the
+// `setPayroll` cannot derive the tax itself. The caller computes it and the
 // circuit pins the quotient. That makes the TypeScript version load-bearing
 // rather than decorative, and two implementations of one calculation that must
 // agree exactly is the kind of thing that passes every demo and fails on the
