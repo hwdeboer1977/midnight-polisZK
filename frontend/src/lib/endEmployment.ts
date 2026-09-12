@@ -156,6 +156,17 @@ export async function surveyEmployment(options: {
           "with them — a corrected month has to be funded and paid again.)"
       );
     }
+    // And its withholding funded. The circuit refuses a termination for a month
+    // whose tax and contribution never reached the contract — otherwise the
+    // month could still be re-filed, wiping the attestation.
+    const withheld =
+      ledger.withheldFor?.member(BigInt(period)) && ledger.withheldFor.lookup(BigInt(period));
+    if (!withheld) {
+      throw new Error(
+        `The withholding for ${period} has not been funded. A termination must name a ` +
+          "settled period, tax included, so fund the month's withholding before ending employment."
+      );
+    }
   }
 
   if (!options.allowEnded && ledger.terminationFor?.member(BigInt(period))) {

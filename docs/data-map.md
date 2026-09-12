@@ -8,7 +8,9 @@ how well that holds — including five places where it does not.
 
 Compiled from `contracts/*.compact`, `src/utils/registry.ts`, `src/utils/data-dir.ts`
 and `frontend/src/lib/` on 2026-09-02, against the `preview` deployment. Field names
-and exposure levels are read from source, not inferred.
+and exposure levels are read from source, not inferred. The `payroll` and `fund`
+tables were updated on 2026-09-11 for the contracts deployed that day; where the
+previous instances differ, the row says so.
 
 | Level | Meaning |
 | --- | --- |
@@ -25,9 +27,9 @@ and exposure levels are read from source, not inferred.
 
 Everything below is world-readable and cannot be deleted. The privacy work is in
 *what was chosen not to go here* — but note how much is still in the clear.
-**Every monetary total is public; only the per-person split is not.**
+**Every payroll monetary total is public; only the per-person split is not.**
 
-### payroll.compact — `649f60e4…4485f`
+### payroll.compact — `2747020d…4024d`
 
 | Ledger field | Exposure | What it actually reveals |
 | --- | --- | --- |
@@ -38,22 +40,32 @@ Everything below is world-readable and cannot be deleted. The privacy work is in
 | `totalPayrollFor`, `totalTaxFor`, `totalSocialFor`, `totalNetFor` | Public | **The month's four money totals, exact, in minor units.** With headcount this gives average pay — see finding 04. |
 | `taxPool`, `socialPool`, `taxRemitted`, `socialRemitted` | Public | Withholding held and forwarded, running totals. |
 | `withheldFor`, `fundedFor`, `paidFor` | Public | Booleans per period and per slot. Who has been paid — by slot, not by name. |
-| `paramsHashFor`, `employerFor`, `fileRoundFor`, `payToken` | Public | Which rule set, which employer key, which filing round each month was pinned to. |
-| `coinsReceived`, `coinOrdinalFor`, `taxCoinFor`, `socialCoinFor` | Public | Zswap leaf ordinals, so a coin can be rebuilt. Values are not stored — an ordinal alone spends nothing. |
+| `paramsHashFor`, `employerFor`, `fileRoundFor`, `payToken` | Public | Which rule set, which employer key, which filing round each month was pinned to, and the token it pays in — frozen at deploy to pEUR `7ec1d9ec…`. Previous instances fixed it on the first coin funded. |
+| `coinsReceived`, `coinOrdinalFor`, `taxCoinFor`, `socialCoinFor` | Public | Receipt ordinals, so a coin can be found again. Values are not stored — an ordinal alone spends nothing, and it is not a leaf position. |
 | `payeeFor` | Hashed | `payeeHash(coinKey, period, contract)`. Bound to the month *and* the instance, so the same worker is a different value every month and at every employer. Bulk linkage is gone; a targeted guess still works. |
 | `commitmentsFor` | Hashed | The payslip commitment. Binds gross, tax, social, net, weeks, employer, period and a nonce — reveals none of them. |
 | `terminationFor` | Hashed | Presence = employment ended, publicly. The contents — final period and months worked — are inside one hash with a derived nonce, so neither is readable or testable. |
 | `sealedFor` | Sealed | 100 bytes: IV + AES-256-GCM of the four amounts, weeks worked and the nonce. Encrypted to **the employer's** passphrase key — the employer's own backup. *The employee cannot open it.* |
 
-### fund.compact — the benefit pool
+### fund.compact — `ae30b288…a31a1`
 
 | Ledger field | Exposure | What it actually reveals |
 | --- | --- | --- |
+| `platform`, `taxTreasury`, `socialTreasury`, `benefitToken` | Public | The operator, the two treasuries a claim's withholding is sent to, and the token — all frozen at deploy. |
+| `paramsFor`, `latestVersion` | Hashed | Each published benefit rule set, as a hash. The figures live in `benefit-params.ts`. |
+| `paramsHashFor` | Hashed | Per final period, the hash of the rule set a termination in that month is claimed under. Platform-recorded, write-once. |
 | `rootFor` | Hashed | Merkle root of each period's claim tree. Leaves stay off chain. |
 | `rootAuthor` | Public | Which coin key published each root. Publication is permissionless by design, so a relay cannot block a claim by staying silent — but it does put the publisher's key on the record. |
-| `spent` | Hashed | Nullifiers. Each is the image of a secret, so the set links to nobody. Safe to be public, and it is what stops a double claim. |
+| `spent` | Hashed | Nullifiers, `hash(wallet, month, fund)`. What stops a month being claimed twice. **Testable by anyone holding a claimant's payment address**, who learns that she claimed and for which months. |
 | `claimsPaid`, `contributedTotal`, `contributionCount` | Public | Coarse counters — how many claims, never who or how much each. |
 | `contributedFor`, `contributionSourceFor` | Public | Per period: the amount contributed and **the payroll contract address it came from**. A public edge from employer to fund. |
+| `coinsReceived`, `poolOrdinal` | Public | Receipt ordinals for the fund's own coins. No nonce, no value. |
+
+> **No withholding figure is on the fund.** Tax and contribution withheld from a
+> benefit leave inside the claim, as shielded coins to the treasuries. ⚠️ The
+> previous fund `eb40dcad…` still has public `taxPool`, `socialPool`,
+> `taxRemitted` and `socialRemitted`, and the one claim made against it moved them
+> by its own withholding — which discloses that claim's benefit and final gross.
 
 ### taxvault · taxparams · peur
 
@@ -61,15 +73,15 @@ Everything below is world-readable and cannot be deleted. The privacy work is in
 | --- | --- | --- |
 | `taxvault.receivedFor`, `taxvault.sourceFor` | Public | Per period: how much tax arrived, and which payroll contract *claimed* to send it. The vault cannot verify the named contract really assessed that figure. |
 | `taxvault` totals & counts | Public | `heldTotal` is the current balance; `receivedTotal` and `withdrawnTotal` only ever rise, so a balance back at zero still shows what passed through. |
-| `fund.paramsFor` | Public | The benefit rules, including `durationMonths` — how many monthly windows *anyone* gets. A rule, not a fact about a person. |
+| `fund` benefit rules (off chain) | Public | The figures behind `paramsFor`, including `durationMonths` — how many calendar months *anyone* may claim. A rule, not a fact about a person. |
 | `taxparams.paramsFor` | Public | The tax rules themselves — brackets, rates, contribution base — in the clear, versioned. These *should* be public: they are law. |
 | `peur.issuer`, `tokenId` | Public | Who DEPLOYED the payment token, and its token type. `issuer` gates nothing — minting is open to anyone. |
 | `peur.totalSupply`, `mintCounter` | Public | How much pEUR exists, and how many mints produced it — so also the average mint size, which is a usage signal on a faucet. |
 
 > **Not on chain anywhere:** any person's name, any home address, any individual
-> salary, any wallet identity beyond a coin public key, and — until a termination
-> is filed — any trace of a benefit claim key. The chain stores no employee
-> registry at all: a worker exists only as a slot index inside a filed month.
+> salary, and any wallet identity beyond a coin public key. The chain stores no
+> employee registry at all: a worker exists only as a slot index inside a filed
+> month.
 
 ---
 
@@ -77,9 +89,8 @@ Everything below is world-readable and cannot be deleted. The privacy work is in
 
 *Postgres · Render Frankfurt · `midnight_poliszk`*
 
-Three tables, reached through the Render service at `midnight-poliszk.onrender.com`.
-Two of them hold plaintext. **This is where the identity map the chain refuses to
-publish actually lives.**
+Reached through the Render service at `midnight-poliszk.onrender.com`.
+**This is where the identity map the chain refuses to publish actually lives.**
 
 | Table | Exposure | Columns, and who can read them |
 | --- | --- | --- |
@@ -109,9 +120,9 @@ been told, not what is true."*
 | `polisZK/platform-token` | Operator | **The `PLATFORM_API_TOKEN` bearer credential, in plaintext.** See finding 03. |
 | `polisZK/wallet-session` | — | Dead. Wallet auth was removed; `lib/walletAuth.ts` is no longer imported by anything. |
 
-> **Never in browser storage, in any role:** the payroll passphrase, the benefit
-> claim key, any wallet seed, any salary. The passphrase is typed each session and
-> used to derive keys in memory; the claim key exists only in a downloaded file.
+> **Never in browser storage, in any role:** the payroll passphrase, any wallet
+> seed, any salary. The passphrase is typed each session and used to derive keys
+> in memory.
 
 ---
 
@@ -125,8 +136,8 @@ Postgres. **None of these files is backed up by anything.**
 | File | Whose | Exposure | Contents |
 | --- | --- | --- | --- |
 | the payroll workbook (`.xlsx`/`.csv`) | Employer | Secret | Six columns: *Full name · Address · Monthly gross salary · Weeks worked · Coin public key · Encryption public key.* **The single most sensitive artifact in the system** — and the only place a home address exists at all. The sealed roster carries a subset of this, never the salary or the address. |
-| `payslip-<period>-slot-N.json` | Employer → Employee | Plaintext | Gross, tax, social, net, weeks and the nonce, in the clear. Handed over out of band; `checkPayslip` lets the employee verify it against the on-chain commitment. Plaintext is correct here — they are the employee's own figures. |
-| `termination-opening-….json` | Employer | Secret | The opening of the write-once termination commitment. Without it the claim bundle cannot be rebuilt, and the commitment cannot be revised to compensate. |
+| `payslip-<period>-slot-N.json` | Employer → Employee | Plaintext | Gross, tax, social, net, weeks and the nonce, in the clear. Handed over out of band; `checkPayslip` lets the employee verify it against the on-chain commitment. Plaintext is correct here — they are the employee's own figures. It is the one file a claim needs. |
+| `termination-opening-….json` | Employer | Secret | The opening of the write-once termination commitment, as input for the CLI relay. Rebuildable from the payroll passphrase and the chain, so losing it costs nothing. |
 | `claim-bundle-….json` | Relay / Employee | Secret | Merkle path plus the fund coin. **No longer handed over** — the claimant's browser assembles its own from `/api/claim-tree` and `/api/pool-coin`. Kept as a fallback for a browser that cannot reach the service. |
 
 ---
@@ -158,7 +169,7 @@ the public chain and the public API.
 | Fact | Employee | Employer | Platform | Stranger |
 | --- | --- | --- | --- | --- |
 | Their own salary | yes | yes | — | — |
-| A colleague's salary | — | yes | — | — |
+| A colleague's salary | from the total, at two employees | yes | — | — |
 | The month's total payroll | yes | yes | yes | **yes** |
 | Headcount per month | yes | yes | yes | **yes** |
 | Average pay per employee | yes | yes | yes | **yes** |
@@ -170,8 +181,9 @@ the public chain and the public API.
 | That a given slot was terminated | yes | yes | yes | **yes** |
 | Which person a slot is | self only | yes | — | guess only |
 | ~~Someone's claim-key hash~~ | *removed from the protocol* | | | |
-| **That someone claimed a benefit** | own | **yes** | yes | **anyone with their payment address** |
+| **That someone claimed a benefit, and for which months** | own | **yes** | yes | **anyone with their payment address** |
 | How much they claimed | own | — | — | — |
+| What was withheld from one claim | own | — | the treasuries | — ⚠️ *yes for the one claim on the previous fund* |
 
 ---
 
@@ -194,9 +206,9 @@ made moot on 2026-09-02 when the claim key left the protocol. The table, the
 routes and the courier step are gone.
 
 ⚠️ **A new exposure replaced them, and it is not smaller.** The nullifier is now
-`hash(ownPublicKey, window, fund)`, so anyone holding a claimant's payment
-address can test the public `spent` set and learn *that* she claimed. See
-[privacy.md](privacy.md#wave-2-hardening) item 1.
+`hash(ownPublicKey, month, fund)`, so anyone holding a claimant's payment
+address can test the public `spent` set and learn *that* she claimed, and for
+which months. See [privacy.md](privacy.md#wave-2-hardening) item 1.
 
 ### 03 — The platform token sits in localStorage in plaintext
 
@@ -219,3 +231,11 @@ totals at small headcount — it eases as the roster grows, and it does not go a
 reconstructs, unencrypted and in the platform's own database, the company-to-contract
 map the rest of the design works to avoid. The sealing pattern that protects
 `sealed_rosters` already exists two tables away; it was simply never applied backwards.
+
+### 06 — The previous fund's withholding pools disclosed each claim
+
+Closed by the fund deployed on 2026-09-11, which sends withholding to the treasuries
+inside the claim. Still true of the previous fund `eb40dcad…`: every claim was its own
+transaction and moved the public `taxPool` / `socialPool` by exactly its own
+withholding, which with the published rates inverts to the claim's benefit and, below
+the cap, the final gross. See [benefit.md](benefit.md#where-the-withheld-money-goes).

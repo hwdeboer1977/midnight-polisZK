@@ -24,25 +24,34 @@ npm run proof:up      # standalone proof server on :6300
 npm run compile       # compiles every contracts/*.compact
 npm run check-balance # sanity check: wallet syncs, has tNIGHT/tDUST
 
+npm run deploy:peur   # deploy pEUR and mint the initial supply — first, the others freeze its token
+npm run peur          # token status, mint more
+
 INSTANCE=acme npm run deploy:tax       # registry + v1 rules + payroll
 YEARS=2026 npm run deploy:tax          # open a calendar year for filing
 INSTANCE=acme npm run payroll          # assign employer, set salaries
 
-npm run deploy:peur   # deploy pEUR and mint the initial supply
-npm run peur          # token status, mint more
-
-npm run deploy:fund   # the unemployment fund (needs TAX_TREASURY_KEY + SOCIAL_TREASURY_KEY)
-npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1
-npm run fund -- deposit --amount 200   # the FIRST deposit fixes the benefit token forever
+npm run deploy:fund   # the unemployment fund (needs TAX_TREASURY_KEY, SOCIAL_TREASURY_KEY, peur_token_id)
+npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1 --duration-months 3
+npm run fund -- rules --version 1 --year 2026          # apply v1 to final periods in 2026
+npm run fund -- deposit --period 202609 --amount 200
 npm run fund status
 ```
 
-Use `deploy:tax` rather than `deploy:payroll` for the payroll contract. The
-generic `deploy.js` passes no constructor arguments, and `payroll`'s constructor
-now takes both treasury keys; `deploy:tax` and `npm run onboard` supply them
-from `TAX_TREASURY_KEY` / `SOCIAL_TREASURY_KEY`. It also records the rule-set
-hash for a window of periods, without which a freshly deployed instance can file
-nothing — see **taxparams**.
+**pEUR comes first.** The fund and every payroll contract freeze their token in
+the constructor, read from `peur_token_id` in `.env`, which `npm run deploy:peur`
+writes. Deploying either before pEUR exists is refused rather than producing a
+contract that pays in the wrong thing.
+
+Use `deploy:tax` rather than `deploy:payroll` for the payroll contract. Both
+supply the constructor arguments — the two treasury keys from
+`TAX_TREASURY_KEY` / `SOCIAL_TREASURY_KEY` and the token — but `deploy:tax` also
+records the rule-set hash for a window of periods, without which a freshly
+deployed instance can file nothing — see **taxparams**.
+
+A benefit rule set does nothing until `fund rules` records it for the final
+periods it covers: `claim` checks the rules against what is recorded for the
+claimant's final period.
 
 `MIDNIGHT_NETWORK=local` needs no wallet secret: the devnet's `dev` genesis
 preset pre-funds a well-known account, and the app falls back to it when neither
@@ -118,7 +127,6 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 | `npm run deploy:tax`     | registry, v1, payroll, employer, `YEARS=`/`PERIODS=` — in the one order that works |
 | `npm run registry`       | inspect `taxparams`: versions, rates, `paramsHash` |
 | `npm run payee`          | generate a keypair — used for the treasury keys   |
-| `npm run test:bands`     | differential test: TypeScript bracket arithmetic vs the circuit's |
 | `npm run payroll`        | assign employer, set payroll, verify, recover openings |
 | `npm run deploy:peur`    | deploy pEUR, then mint the initial supply         |
 | `npm run peur`           | pEUR status, mint, send to an employer            |
@@ -131,13 +139,17 @@ find node_modules -path '*onchain-runtime-v3/package.json'
 | `npm run frontend:config`| copy contract module, ZK assets and addresses into `frontend/` — also available from inside `frontend/` as `npm run config` |
 | `npm run validate`       | typecheck + compile                               |
 | `npm run deploy:fund`    | deploy the unemployment fund                      |
-| `npm run fund`           | fund status, params, deposit, pool, reconcile, remit — **flags need `--`** |
-| `npm run test:benefit-tax`| the fund's band arithmetic against payroll's, and the schedule hash against the chain |
+| `npm run fund`           | fund status, params, rules, deposit, pool, reconcile — **flags need `--`** |
 | `npm run terminate`      | end an employee's employment from the CLI         |
 | `npm run relay`          | build a period's claim tree, optionally publish the root |
+| `npm run test`           | every test below, plus wallet-auth and routes     |
+| `npm run test:bands`     | differential test: TypeScript bracket arithmetic vs the circuit's |
 | `npm run test:payslip`   | payslip encode/decode and commitment round-trip   |
 | `npm run test:tree`      | claim-tree paths fold to the root, and tampering does not |
-| `npm run test`           | bands + payslip + tree                            |
+| `npm run test:benefit-tax`| the fund's band arithmetic against payroll's, and the schedule hash against the chain |
+| `npm run test:nullifier` | the claim nullifier, entitlement months, and `monthStart` against `Date.UTC` |
+| `npm run test:fund-claim`| a claim driven through the compiled fund: three coins out, months, rules per period, token |
+| `npm run test:payroll-token`| payroll's frozen token, and a termination that needs its withholding funded |
 
-`npm run deploy` is the generic form the two deploy scripts wrap; it takes
+`npm run deploy` is the generic form the deploy scripts wrap; it takes
 `CONTRACT_NAME` and `INSTANCE` from the environment.

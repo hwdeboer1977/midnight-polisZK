@@ -3,27 +3,23 @@
 
 import "dotenv/config";
 import chalk from "chalk";
-import {
-  ContractState,
-  ShieldedCoinInfoDescriptor,
-  ShieldedCoinRecipientDescriptor,
-  runtimeCoinCommitment,
-} from "@midnight-ntwrk/compact-runtime";
+import { ContractState } from "@midnight-ntwrk/compact-runtime";
 import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 import { indexerPublicDataProvider } from "@midnight-ntwrk/midnight-js-indexer-public-data-provider";
-import { findDeployedContract, submitCallTx } from "@midnight-ntwrk/midnight-js-contracts";
+import { findDeployedContract } from "@midnight-ntwrk/midnight-js-contracts";
 import * as fundContract from "../contracts/managed/fund/contract/index.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { getDeployment } from "./utils/deployments.js";
 import { buildWallet, currentState, makeWalletProviders, waitForSync } from "./utils/wallet.js";
 import { MidnightProviders } from "./providers/midnight-providers.js";
-import { connect, contractLeaves, loadCompiledContract, managedPath } from "./utils/contract.js";
+import { connect, loadCompiledContract, managedPath } from "./utils/contract.js";
 import { PEUR_DECIMALS, PEUR_SCALE, formatPeur } from "./utils/constructor-args.js";
-import { PUBLISHED } from "./utils/benefit-params.js";
-import { treasuryEncryptionKeys } from "./utils/treasury.js";
+import { PUBLISHED, recordedParams, toCircuitParams } from "./utils/benefit-params.js";
 import {
+  claimChangeNonce,
   confirmDeposit,
-  evolveChangeNonce,
+  contractCoinLeaves,
+  findCoinLeaf,
   freshNonce,
   listDeposits,
   markSpent,
@@ -37,8 +33,10 @@ import path from "path";
  * The fund's operator commands.
  *
  *   npm run fund status
- *   npm run fund -- params --version 1 --cap <EUR/month> --rate <bp> --min-months 12
- *   npm run fund -- deposit --amount <EUR>
+ *   npm run fund -- params --version 1 --cap <EUR/month> --rate <bp> --min-months 12 --duration-months 3
+ *   npm run fund -- rules --version 1 --year 2026 [--from 1 --months 12]
+ *   npm run fund -- deposit --period 202609 --amount <EUR>
+ *   npm run fund -- reconcile --value <EUR>
  *   npm run fund pool [-- --full]
  *
  * The `--` is not decoration. Without it npm reads `--amount 10` as its own
@@ -51,17 +49,25 @@ import path from "path";
  * under rules that can be rewritten afterwards proves nothing about what
  * anyone was entitled to.
  *
- * None of the three figures has a default, deliberately. The cap is a policy
+ * `rules` records which published version terminations in a range of final
+ * periods are claimed under. Write-once per month, and the step a claim cannot
+ * do without: `claim` checks the rules against what is recorded for the final
+ * period, so a claimant cannot pick a more generous published version.
+ *
+ * None of the policy figures has a default, deliberately. The cap is a policy
  * number from the scheme being modelled — real WW caps a daily wage, and the
  * monthly equivalent has to be derived from a published figure rather than
- * picked here. A plausible-looking constant in this file would be indis-
- * tinguishable from a sourced one the moment it was committed.
+ * picked here.
  *
  * `deposit` puts money in. Contributions cannot arrive here on their own: a
  * payroll contract cannot call this one, so remitting to the fund is a transfer
  * to a key and then a deliberate transaction by whoever holds it. This is that
  * transaction. `pool` reports what it left behind, which is the only record of
  * the fund's coins that exists anywhere — see `utils/fund-pool.ts`.
+ *
+ * There is no `remit`. Withholding on a benefit leaves inside the claim, sent
+ * straight to the two treasuries, because a public pool moved by every claim
+ * published each claim's benefit.
  */
 
 const CONTRACT_STATE_QUERY = `
@@ -151,14 +157,21 @@ async function readLedger(indexer: string, address: string): Promise<any | null>
   return state ? (fundContract as any).ledger(state) : null;
 }
 
+/** The version of a published rule set, found by the hash the fund recorded. */
+function versionForHash(recorded: Uint8Array): number | null {
+  return (
+    recordedParams(recorded, (p) => (fundContract as any).pureCircuits.benefitParamsHash(p))
+      ?.version ?? null
+  );
+}
+
 /**
  * The token benefits are paid in, read off the deployed pEUR contract rather
  * than out of `.env`.
  *
- * The first `fundBenefits` call fixes this colour on the fund forever, so a
- * stale copy in a config file would not cause a failed transaction — it would
- * cause a successful one that pins the wrong token, and the only fix after that
- * is a new fund.
+ * The fund freezes its token at deploy, so this is checked against the fund
+ * before anything is proved: a mismatch means the wrong pEUR is recorded here,
+ * or the fund was deployed against another one.
  */
 async function benefitTokenColour(network: {
   networkId: string;
@@ -191,7 +204,7 @@ async function main(): Promise<void> {
   if (!record) {
     throw new Error(
       `No fund deployed on ${network.networkId}. Deploy one first:\n` +
-        "   CONTRACT_NAME=fund npm run deploy"
+        "   npm run deploy:fund"
     );
   }
 
@@ -206,10 +219,7 @@ async function main(): Promise<void> {
 
     console.log(chalk.cyan("rule sets published: ") + String(ledger.latestVersion));
     console.log(chalk.cyan("claims paid         : ") + String(ledger.claimsPaid));
-    console.log(
-      chalk.cyan("benefit token       : ") +
-        (ledger.benefitTokenSet ? hex(ledger.benefitToken) : chalk.gray("not funded yet"))
-    );
+    console.log(chalk.cyan("benefit token       : ") + hex(ledger.benefitToken));
     // The chain holds only `persistentHash<BenefitParams>`, so these figures come
     // from utils/benefit-params.ts. A version on chain that is missing there is
     // worth shouting about: no claim under it can be built.
@@ -219,10 +229,37 @@ async function main(): Promise<void> {
         chalk.gray(`   v${v}  `) +
           (known
             ? `cap €${formatPeur(known.maxMonthlyGross)}/mo · ${known.rate / 100}% · ` +
-              `${known.minMonths} month(s) · from ${known.validFrom}`
+              `${known.minMonths} month(s) · ${known.durationMonths} month(s) paid · from ${known.validFrom}`
             : chalk.red("figures not recorded locally — no claim under it can be built"))
       );
     }
+
+    // Which version each final period is claimed under, as runs of months.
+    const recorded = [...ledger.paramsHashFor]
+      .map(([p, h]: [bigint, Uint8Array]) => ({ period: Number(p), version: versionForHash(h) }))
+      .sort((a, b) => a.period - b.period);
+    console.log(
+      chalk.cyan("rules recorded      : ") +
+        (recorded.length === 0
+          ? chalk.yellow("none — no claim can be made until `fund rules` has run")
+          : `${recorded.length} month(s)`)
+    );
+    let run: { from: number; to: number; version: number | null } | null = null;
+    const flush = () => {
+      if (!run) return;
+      console.log(
+        chalk.gray(`   ${run.from}–${run.to}  `) +
+          (run.version === null ? chalk.red("unknown version") : `v${run.version}`)
+      );
+    };
+    for (const entry of recorded) {
+      if (run && run.version === entry.version) run.to = entry.period;
+      else {
+        flush();
+        run = { from: entry.period, to: entry.period, version: entry.version };
+      }
+    }
+    flush();
 
     const periods = [...ledger.rootFor].map(([p]: [bigint, unknown]) => Number(p));
     console.log(
@@ -230,14 +267,8 @@ async function main(): Promise<void> {
         (periods.length ? periods.sort().join(", ") : chalk.gray("none published"))
     );
     console.log(
-      chalk.cyan("tax withheld        : ") +
-        `€${formatPeur(ledger.taxPool)} held` +
-        chalk.gray(`, €${formatPeur(ledger.taxRemitted)} remitted`)
-    );
-    console.log(
-      chalk.cyan("contribution        : ") +
-        `€${formatPeur(ledger.socialPool)} held` +
-        chalk.gray(`, €${formatPeur(ledger.socialRemitted)} remitted`)
+      chalk.cyan("withholding         : ") +
+        chalk.gray("sent to the treasuries inside each claim — no public total, by design")
     );
     console.log(
       chalk.cyan("coins received      : ") +
@@ -258,22 +289,13 @@ async function main(): Promise<void> {
         requireFlag(
           args,
           "value",
-          "what the change coin is worth, in EUR. The benefit a claim paid is " +
-            "private, so nothing on this machine knows it — the figure has to come " +
-            "from the claimant or from your own accounting. It is CHECKED here, " +
-            "not trusted: a wrong one reproduces no commitment and is refused"
+          "what the change coin is worth, in EUR — the pool coin less the whole benefit " +
+            "the claim paid, withholding included. That benefit is private, so nothing on " +
+            "this machine knows it. It is CHECKED here, not trusted: a wrong one " +
+            "reproduces no commitment and is refused"
         )
       )
     );
-    return;
-  }
-
-  if (command === "remit") {
-    const what = requireFlag(args, "what", 'which pool to remit: "tax" or "social"');
-    if (what !== "tax" && what !== "social") {
-      throw new Error(`--what must be "tax" or "social", not "${what}"`);
-    }
-    await remit(network, record.contractAddress, what);
     return;
   }
 
@@ -316,9 +338,21 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "rules") {
+    await recordRules(network, record.contractAddress, args);
+    return;
+  }
+
+  if (command === "remit") {
+    throw new Error(
+      "There is no remit any more. Withholding on a benefit is sent to the tax and " +
+        "social treasuries inside each claim, so the fund holds none of it."
+    );
+  }
+
   if (command !== "params") {
     throw new Error(
-      `Unknown command "${command}". Use: status | params | deposit | pool | reconcile | remit`
+      `Unknown command "${command}". Use: status | params | rules | deposit | pool | reconcile`
     );
   }
 
@@ -336,15 +370,20 @@ async function main(): Promise<void> {
     requireFlag(args, "min-months", "months of employment required to claim")
   );
   // Part of the struct, so it is part of the hash, so it has to be published
-  // with the rest. `claim` asserts `window < durationMonths` — this figure is
-  // what makes the number of monthly payments a rule rather than a convention.
+  // with the rest. `claim` admits exactly this many calendar months after the
+  // final period — the figure makes the number of payments a rule.
   const durationMonths = Number(
-    requireFlag(args, "duration-months", "monthly windows one termination entitles a claimant to")
+    requireFlag(
+      args,
+      "duration-months",
+      "how many calendar months after the final period a claimant may claim"
+    )
   );
   const validFrom = Number(flag(args, "valid-from") ?? "200001");
 
   const cap = parseEur(capEur);
   if (rate > 10000) throw new Error("rate cannot exceed 10000 basis points");
+  if (!(durationMonths > 0)) throw new Error("--duration-months must be at least 1");
 
   // A version already recorded locally must match, or one of the two is wrong
   // about what was published — and the chain cannot settle it, since it keeps
@@ -361,7 +400,7 @@ async function main(): Promise<void> {
     throw new Error(
       `utils/benefit-params.ts already records v${version} with different figures ` +
         `(cap €${formatPeur(recorded.maxMonthlyGross)}, ${recorded.rate}bp, ` +
-        `${recorded.minMonths} month(s), ${recorded.durationMonths} window(s), ` +
+        `${recorded.minMonths} month(s), ${recorded.durationMonths} month(s) paid, ` +
         `from ${recorded.validFrom}). The registry is ` +
         "append-only: publish a new version rather than restating this one."
     );
@@ -371,6 +410,7 @@ async function main(): Promise<void> {
   console.log(chalk.gray(`   cap        €${formatPeur(cap)} per month`));
   console.log(chalk.gray(`   rate       ${rate / 100}% of the capped gross`));
   console.log(chalk.gray(`   eligible   ${minMonths} months`));
+  console.log(chalk.gray(`   paid for   ${durationMonths} months after the final period`));
   console.log(chalk.gray(`   valid from ${validFrom}`));
   console.log();
 
@@ -416,8 +456,99 @@ async function main(): Promise<void> {
         )
       );
     }
+    console.log();
+    console.log(
+      chalk.cyan("   Published, not yet applied. Record it for the months it covers:\n") +
+        chalk.yellow.bold(`   npm run fund -- rules --version ${version} --year <YYYY>`)
+    );
   } finally {
     await wallet.facade.stop();
+  }
+  console.log();
+}
+
+/**
+ * Records which published rule set applies to a range of final periods.
+ *
+ * `setParamsFor` is write-once per month and skips months already recorded, so
+ * re-running a year is safe and a recorded month can never be changed. Shown
+ * before proving, because a month that is skipped keeps whatever it had.
+ */
+async function recordRules(
+  network: ReturnType<typeof EnvironmentManager.getNetworkConfig>,
+  contractAddress: string,
+  args: string[]
+): Promise<void> {
+  const version = Number(requireFlag(args, "version", "which published rule set to record"));
+  const year = Number(
+    requireFlag(args, "year", "the calendar year of the final periods it applies to, e.g. 2026")
+  );
+  const from = Number(flag(args, "from") ?? "1");
+  const months = Number(flag(args, "months") ?? String(13 - from));
+
+  if (!Number.isInteger(year) || year < 2000 || year > 2999) {
+    throw new Error(`--year must be YYYY, e.g. 2026 — got "${year}"`);
+  }
+  if (!Number.isInteger(from) || from < 1 || from > 12) {
+    throw new Error(`--from must be a month, 1-12 — got "${from}"`);
+  }
+  if (!Number.isInteger(months) || months < 1 || from + months > 13) {
+    throw new Error(`--months must be at least 1 and must not run past December`);
+  }
+
+  const params = PUBLISHED.find((p) => p.version === version);
+  if (!params) {
+    throw new Error(
+      `v${version} is not recorded in utils/benefit-params.ts, so its figures cannot ` +
+        "be supplied to the contract. Add them first."
+    );
+  }
+
+  const ledger = await readLedger(network.indexer, contractAddress);
+  if (!ledger) throw new Error("No state on chain");
+  if (!ledger.paramsFor.member(BigInt(version))) {
+    throw new Error(
+      `v${version} is not published on this fund yet. Publish it first:\n` +
+        `   npm run fund -- params --version ${version} …`
+    );
+  }
+  const firstPeriod = year * 100 + from;
+  if (params.validFrom > firstPeriod) {
+    throw new Error(
+      `v${version} applies from ${params.validFrom}, after ${firstPeriod}. The contract refuses it.`
+    );
+  }
+
+  console.log(chalk.yellow.bold(`Recording rule set v${version} for final periods`));
+  for (let i = 0; i < months; i += 1) {
+    const period = firstPeriod + i;
+    const key = BigInt(period);
+    const existing = ledger.paramsHashFor.member(key)
+      ? versionForHash(ledger.paramsHashFor.lookup(key))
+      : undefined;
+    console.log(
+      chalk.gray(`   ${period}  `) +
+        (existing === undefined
+          ? `v${version}`
+          : chalk.yellow(
+              `already v${existing ?? "?"} — skipped; a recorded month cannot be changed`
+            ))
+    );
+  }
+  console.log();
+
+  const conn = await connect("fund", null);
+  try {
+    console.log(chalk.blue("Proving (a minute or two)…"));
+    const tx: any = await conn.deployed.callTx.setParamsFor(
+      BigInt(year),
+      BigInt(from),
+      BigInt(months),
+      toCircuitParams(params)
+    );
+    console.log(chalk.green(`   ✅ ${tx.public?.txHash ?? ""}`));
+  } finally {
+    await conn.wallet.facade.stop();
   }
   console.log();
 }
@@ -442,27 +573,14 @@ async function deposit(
   const before = await readLedger(network.indexer, contractAddress);
   if (!before) throw new Error("No state on chain");
 
-  if (before.benefitTokenSet) {
-    const fixed = hex(before.benefitToken);
-    if (fixed !== colourHex) {
-      throw new Error(
-        `This fund pays in token ${fixed}, but the pEUR deployed on ` +
-          `${network.networkId} is ${colourHex}. The fund's token was fixed by its ` +
-          "first deposit and cannot be changed — either the wrong pEUR is recorded " +
-          "in deployment.json, or this fund belongs to an earlier one."
-      );
-    }
-  } else {
-    console.log(
-      chalk.yellow.bold("⚠️  This is the first deposit, and it fixes the fund's token.")
+  const fixed = hex(before.benefitToken);
+  if (fixed !== colourHex) {
+    throw new Error(
+      `This fund pays in token ${fixed}, but the pEUR deployed on ` +
+        `${network.networkId} is ${colourHex}. The fund's token was frozen at deploy ` +
+        "and cannot be changed — either the wrong pEUR is recorded in " +
+        "deployment.json, or this fund was deployed against an earlier one."
     );
-    console.log(
-      chalk.yellow(
-        `   Every benefit this contract ever pays will be in ${colourHex.slice(0, 16)}… ` +
-          "(pEUR).\n   The contract has no way to change it afterwards."
-      )
-    );
-    console.log();
   }
 
   console.log(chalk.yellow.bold(`Depositing €${formatPeur(amount)}`));
@@ -537,122 +655,20 @@ async function deposit(
 }
 
 /**
- * Sends withheld tax or contribution on to the treasury it was destined for.
- *
- * Permissionless in the contract, because the destination is frozen at deploy
- * and cannot be redirected by whoever triggers it — so a platform that stops
- * running cannot strand the money. This runs it with the platform's wallet
- * simply because that is the wallet the CLI has.
- *
- * It spends the pool coin, so the pool moves afterwards and the change has to be
- * reconciled exactly as it does after a claim.
- */
-async function remit(
-  network: ReturnType<typeof EnvironmentManager.getNetworkConfig>,
-  contractAddress: string,
-  what: "tax" | "social"
-): Promise<void> {
-  const ledger = await readLedger(network.indexer, contractAddress);
-  if (!ledger) throw new Error("No state on chain");
-
-  const owed: bigint = what === "tax" ? ledger.taxPool : ledger.socialPool;
-  if (owed <= 0n) {
-    console.log(chalk.gray(`Nothing withheld to remit for ${what}.`));
-    console.log();
-    return;
-  }
-
-  const poolOrdinal = Number(ledger.poolOrdinal);
-  const coinRecord = listDeposits(network.networkId, contractAddress).find(
-    (d) => d.ordinal === poolOrdinal && d.status === "confirmed"
-  );
-  if (!coinRecord) {
-    throw new Error(
-      `The pool is coin #${poolOrdinal}, which is not recorded in ${poolFile()}. ` +
-        "Run `npm run fund -- reconcile --value <EUR>` first — without its nonce " +
-        "the coin cannot be described to the circuit."
-    );
-  }
-  if (BigInt(coinRecord.value) < owed) {
-    throw new Error(
-      `The pool coin holds €${formatPeur(BigInt(coinRecord.value))}, less than the ` +
-        `€${formatPeur(owed)} withheld. Remit after a deposit, or reconcile first.`
-    );
-  }
-
-  const provider = indexerPublicDataProvider(network.indexer, network.indexerWS);
-  const leaves = await contractLeaves(provider as any, contractAddress);
-  const mtIndex = leaves[poolOrdinal];
-  if (mtIndex === undefined) {
-    throw new Error(`Coin #${poolOrdinal} has no visible leaf — the indexer may be behind.`);
-  }
-
-  console.log(
-    chalk.yellow.bold(`Remitting €${formatPeur(owed)} of withheld ${what}`)
-  );
-  console.log(
-    chalk.gray(
-      `   to ${what === "tax" ? hex(ledger.taxTreasury.bytes) : hex(ledger.socialTreasury.bytes)}`
-    )
-  );
-  console.log(chalk.gray("   encrypted to the treasury's own key, or it could never find the coin"));
-  console.log(chalk.gray("   frozen at deploy — this cannot be redirected"));
-  console.log();
-
-  // The treasury's ENCRYPTION key, not just its coin key. A shielded coin can
-  // only be found by someone whose encryption key the transaction was built
-  // with, and the `callTx` shorthand cannot carry that mapping — the same
-  // reason `payPeriod` goes through `submitCallTx`. Without it the balancer
-  // refuses with "Unable to resolve encryption public key for recipient".
-  const encryption = treasuryEncryptionKeys(network.networkId);
-  const recipient = what === "tax" ? hex(ledger.taxTreasury.bytes) : hex(ledger.socialTreasury.bytes);
-  const encryptionKey = what === "tax" ? encryption.tax : encryption.social;
-
-  const conn = await connect("fund", null);
-  try {
-    console.log(chalk.blue("Proving (a minute or two)…"));
-    const circuit = what === "tax" ? "remitBenefitTax" : "remitBenefitSocial";
-    const tx: any = await submitCallTx(conn.providers as any, {
-      compiledContract: conn.compiledContract,
-      contractAddress: conn.contractAddress,
-      circuitId: circuit,
-      args: [
-        {
-          nonce: fromHexBytes(coinRecord.nonce),
-          color: fromHexBytes(coinRecord.color),
-          value: BigInt(coinRecord.value),
-          mt_index: BigInt(mtIndex),
-        },
-      ],
-      additionalCoinEncPublicKeyMappings: new Map([[recipient, encryptionKey]]),
-    } as any);
-    console.log(chalk.green(`   ✅ ${tx.public?.txHash ?? ""}`));
-    console.log();
-    console.log(
-      chalk.yellow(
-        "   The pool coin was spent, so the pool has moved to its change. Recover it:\n" +
-          `   npm run fund -- reconcile --value ${formatPeur(BigInt(coinRecord.value) - owed)}`
-      )
-    );
-    console.log();
-  } finally {
-    await conn.wallet.facade.stop();
-  }
-}
-
-/**
  * Recovers the change coin a claim left behind.
  *
- * `sendShielded` splits the coin it spends: the benefit goes to the claimant and
- * the remainder comes back to the contract as a NEW coin, whose nonce is derived
- * from the spent one and published nowhere. So after a claim the pool is a coin
- * this machine has no record of, and the money is unreachable until the nonce is
- * rebuilt.
+ * A claim makes three sends chained through their change — net, tax,
+ * contribution — and the last change comes back to the contract as a NEW coin
+ * whose nonce is derived from the spent pool coin's and published nowhere. So
+ * after a claim the pool is a coin this machine has no record of, and the money
+ * is unreachable until the nonce is rebuilt (`claimChangeNonce`).
  *
  * The derivation is checked rather than believed. The coin's commitment is
- * public — it sits in the fund's zswap leaves — so a candidate coin can be
- * hashed and compared. Nothing is recorded unless that comparison passes, which
- * turns "probably the right nonce" into "provably the coin at leaf N".
+ * public — it sits among the fund's zswap leaves — so a candidate coin can be
+ * hashed and searched for. Nothing is recorded unless one matches, which turns
+ * "probably the right nonce" into "provably the coin at leaf N". Searched by
+ * commitment, never by indexing the leaves with the receipt ordinal: a claim
+ * creates change coins it spends straight away, and the two orders disagree.
  */
 async function reconcile(
   network: ReturnType<typeof EnvironmentManager.getNetworkConfig>,
@@ -671,71 +687,44 @@ async function reconcile(
   }
 
   const provider = indexerPublicDataProvider(network.indexer, network.indexerWS);
-  const result = await provider.queryZSwapAndContractState(contractAddress);
-  if (!result) throw new Error("The indexer returned no zswap state for this contract");
-  const [zswap] = result as any;
-  const commitments = [
-    ...String(zswap.filter(contractAddress).toString(true)).matchAll(
-      /(\d+): \(([0-9a-f]{64}), Some\(ContractAddress/g
-    ),
-  ].map((m) => ({ leaf: Number(m[1]), commitment: m[2]! }));
-
-  const target = commitments[poolOrdinal];
-  if (!target) {
-    throw new Error(
-      `The contract records coin #${poolOrdinal} as the pool, but only ` +
-        `${commitments.length} coin(s) are visible — the indexer may be behind.`
-    );
+  const leaves = await contractCoinLeaves(provider as any, contractAddress);
+  if (leaves.length === 0) {
+    throw new Error("The indexer shows no coins for this contract — it may be behind.");
   }
 
-  console.log(chalk.yellow(`Recovering coin #${poolOrdinal} at leaf ${target.leaf}`));
+  console.log(chalk.yellow(`Recovering coin #${poolOrdinal}`));
   console.log(chalk.gray(`   assuming it is worth €${formatPeur(changeValue)}`));
   console.log();
 
   // Every coin this machine knows of is a candidate parent: the change descends
   // from whichever one the claim spent, and nothing public says which.
   for (const parent of known) {
-    const nonce = evolveChangeNonce(fromHexBytes(parent.nonce));
-    const coin = { nonce, color: fromHexBytes(parent.color), value: changeValue };
-    const commitment = hex(
-      runtimeCoinCommitment(
-        {
-          value: ShieldedCoinInfoDescriptor.toValue(coin),
-          alignment: ShieldedCoinInfoDescriptor.alignment(),
-        } as any,
-        {
-          value: ShieldedCoinRecipientDescriptor.toValue({
-            is_left: false,
-            left: { bytes: new Uint8Array(32) },
-            right: { bytes: fromHexBytes(contractAddress) },
-          }),
-          alignment: ShieldedCoinRecipientDescriptor.alignment(),
-        } as any
-      ).value[0] as Uint8Array
-    );
+    const coin = {
+      nonce: claimChangeNonce(fromHexBytes(parent.nonce)),
+      color: fromHexBytes(parent.color),
+      value: changeValue,
+    };
+    const leaf = findCoinLeaf(leaves, coin, contractAddress);
+    if (leaf === undefined) continue;
 
-    if (commitment === target.commitment) {
-      recordDerived(network.networkId, contractAddress, {
-        ...coin,
-        ordinal: poolOrdinal,
-      });
-      // The coin this change came from is gone. Recording only the change left
-      // the spent parent looking spendable — and it is usually the LARGEST
-      // record, so every consumer that picks by value picked it first.
-      markSpent(network.networkId, contractAddress, Number(parent.ordinal));
-      console.log(
-        chalk.green("   ✅ Verified — its commitment matches the one on chain.")
-      );
-      console.log(
-        chalk.gray(
-          `   change of coin #${parent.ordinal} (€${formatPeur(BigInt(parent.value))}), ` +
-            `so that claim paid €${formatPeur(BigInt(parent.value) - changeValue)}`
-        )
-      );
-      console.log(chalk.gray(`   recorded in ${poolFile()}`));
-      console.log();
-      return;
-    }
+    recordDerived(network.networkId, contractAddress, { ...coin, ordinal: poolOrdinal });
+    // The coin this change came from is gone. Recording only the change left
+    // the spent parent looking spendable — and it is usually the LARGEST
+    // record, so every consumer that picks by value picked it first.
+    markSpent(network.networkId, contractAddress, Number(parent.ordinal));
+    console.log(
+      chalk.green(`   ✅ Verified — its commitment matches the one on chain, at leaf ${leaf}.`)
+    );
+    console.log(
+      chalk.gray(
+        `   change of coin #${parent.ordinal} (€${formatPeur(BigInt(parent.value))}), ` +
+          `so that claim paid out €${formatPeur(BigInt(parent.value) - changeValue)} in total — ` +
+          "the net to the claimant and the withholding to the two treasuries"
+      )
+    );
+    console.log(chalk.gray(`   recorded in ${poolFile()}`));
+    console.log();
+    return;
   }
 
   throw new Error(
@@ -769,7 +758,7 @@ async function showPool(
 
   const deposits = listDeposits(network.networkId, contractAddress);
   const provider = indexerPublicDataProvider(network.indexer, network.indexerWS);
-  const leaves = await contractLeaves(provider as any, contractAddress);
+  const leaves = await contractCoinLeaves(provider as any, contractAddress);
 
   console.log(chalk.cyan("coins received : ") + String(ledger.coinsReceived));
   console.log(
@@ -793,17 +782,17 @@ async function showPool(
     return;
   }
 
-  // A coin is spent when another recorded coin is its change: `sendShielded`
-  // derives the change nonce from the input's, so the parent-child link is
-  // computable here and does not have to be tracked. Without this the totals
-  // would count a spent coin and its own remainder as two.
+  // A coin is spent when another recorded coin is its claim change: the change
+  // nonce is derived from the input's, so the parent-child link is computable
+  // here and does not have to be tracked. Without this the totals would count a
+  // spent coin and its own remainder as two.
   const byNonce = new Set(deposits.map((d) => d.nonce));
   const spent = new Set(
     deposits
-      .filter((d) =>
-        byNonce.has(
-          Buffer.from(evolveChangeNonce(fromHexBytes(d.nonce))).toString("hex")
-        )
+      .filter(
+        (d) =>
+          d.status === "spent" ||
+          byNonce.has(Buffer.from(claimChangeNonce(fromHexBytes(d.nonce))).toString("hex"))
       )
       .map((d) => d.nonce)
   );
@@ -818,7 +807,11 @@ async function showPool(
     if (d.status === "confirmed" && d.txHash) deposited += value;
     if (d.status === "confirmed" && !spent.has(d.nonce)) spendable += value;
 
-    const leaf = d.ordinal !== null ? leaves[d.ordinal] : undefined;
+    const leaf = findCoinLeaf(
+      leaves,
+      { nonce: fromHexBytes(d.nonce), color: fromHexBytes(d.color), value },
+      contractAddress
+    );
     const isPool = d.ordinal !== null && BigInt(d.ordinal) === ledger.poolOrdinal;
 
     console.log(
@@ -857,11 +850,10 @@ async function showPool(
     );
     console.log(
       chalk.yellow(
-        "   That is what a claim leaves behind: `sendShielded` splits the coin it\n" +
-          "   spends and returns the change to the contract as a new coin, whose nonce\n" +
-          "   is derived from the spent one rather than published. Deriving it is\n" +
-          "   `evolveChangeNonce` in utils/fund-pool.ts, which no claim has yet\n" +
-          "   exercised — this is the case it exists for."
+        "   That is what a claim leaves behind: its three sends return the change to\n" +
+          "   the contract as a new coin, whose nonce is derived from the spent one\n" +
+          "   rather than published. Recover it with:\n" +
+          "   npm run fund -- reconcile --value <pool coin less the benefit, in EUR>"
       )
     );
   }

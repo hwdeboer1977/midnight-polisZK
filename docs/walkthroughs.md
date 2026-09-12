@@ -130,7 +130,7 @@ for a true instruction, and it collapses the moment somebody reads the contract.
 
 ⚠️ **What a claim now reveals about you.** The nullifier is derived from your
 wallet rather than a secret file, so anyone holding your payment address can
-test the public `spent` set and learn *that* you claimed, and for how many
+test the public `spent` set and learn *that* you claimed, and for which
 months. Never how much, never your salary, never which employer. That is the
 price of not needing a file nobody could reissue.
 
@@ -292,15 +292,17 @@ than an error.
 
 ### 4. End employment, and claim
 
-Once a period is filed, the benefit half runs without the period being funded or
-paid at all — `claim` opens `commitmentsFor` and `payeeFor` and checks the
-termination; it never looks at `fundedFor` or `paidFor`.
+A termination needs its final month **settled**: the slot paid and, since the
+2026-09-11 deploy, the month's withholding funded. `endEmployment` refuses
+otherwise, and both termination routes say so before proving. `claim` itself then
+opens `commitmentsFor` and `payeeFor` and checks the termination.
 
 ```bash
 # platform, once per fund
 npm run deploy:fund
 npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1 --duration-months 3
-npm run fund -- deposit --amount 200
+npm run fund -- rules --version 1 --year 2026   # the rules final periods in 2026 are claimed under
+npm run fund -- deposit --period 202609 --amount 200
 ```
 
 Then, in order and each by the party that must do it:
@@ -315,9 +317,12 @@ Then, in order and each by the party that must do it:
    Make sure it is from the payroll contract currently in use: after a redeploy,
    payslips issued by the previous instance name it and are refused by name.
 4. **Employee** — `/employee/benefit` → her payslip → **Claim my benefit**. The
-   bundle assembles itself; there is nothing to fetch.
-5. **Operator** — `npm run fund -- reconcile --value <EUR>` to recover the change
-   coin the claim left behind, so the pool stays spendable.
+   bundle assembles itself; there is nothing to fetch. The page claims the
+   earliest month after her final period that has started and is not yet
+   claimed; each later month is a separate claim, from its first day.
+5. **Operator** — `npm run fund -- reconcile --value <EUR>`, the coin claimed
+   against less the whole benefit, to recover the change coin the claim left
+   behind, so the pool stays spendable.
 
 Step 5 is not optional bookkeeping. Until it runs, the fund's remaining balance
 is a coin whose nonce exists nowhere.

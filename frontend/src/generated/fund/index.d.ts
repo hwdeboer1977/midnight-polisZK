@@ -12,6 +12,17 @@ export type ImpureCircuits<PS> = {
                             minMonths: bigint,
                             durationMonths: bigint
                           }): __compactRuntime.CircuitResults<PS, []>;
+  setParamsFor(context: __compactRuntime.CircuitContext<PS>,
+               year_0: bigint,
+               fromMonth_0: bigint,
+               months_0: bigint,
+               params_0: { version: bigint,
+                           validFrom: bigint,
+                           maxMonthlyGross: bigint,
+                           rate: bigint,
+                           minMonths: bigint,
+                           durationMonths: bigint
+                         }): __compactRuntime.CircuitResults<PS, []>;
   publishRoot(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
               root_0: bigint): __compactRuntime.CircuitResults<PS, []>;
@@ -38,7 +49,14 @@ export type ImpureCircuits<PS> = {
         employer_0: { bytes: Uint8Array },
         payrollParamsHash_0: Uint8Array,
         nonce_0: Uint8Array,
-        window_0: bigint,
+        calendar_0: { finalYear: bigint,
+                      finalMonth: bigint,
+                      year: bigint,
+                      month: bigint,
+                      q4: bigint,
+                      q100: bigint,
+                      q400: bigint
+                    },
         params_0: { version: bigint,
                     validFrom: bigint,
                     maxMonthlyGross: bigint,
@@ -64,18 +82,6 @@ export type ImpureCircuits<PS> = {
                   value: bigint,
                   mt_index: bigint
                 }): __compactRuntime.CircuitResults<PS, []>;
-  remitBenefitTax(context: __compactRuntime.CircuitContext<PS>,
-                  coin_0: { nonce: Uint8Array,
-                            color: Uint8Array,
-                            value: bigint,
-                            mt_index: bigint
-                          }): __compactRuntime.CircuitResults<PS, []>;
-  remitBenefitSocial(context: __compactRuntime.CircuitContext<PS>,
-                     coin_0: { nonce: Uint8Array,
-                               color: Uint8Array,
-                               value: bigint,
-                               mt_index: bigint
-                             }): __compactRuntime.CircuitResults<PS, []>;
 }
 
 export type ProvableCircuits<PS> = {
@@ -87,6 +93,17 @@ export type ProvableCircuits<PS> = {
                             minMonths: bigint,
                             durationMonths: bigint
                           }): __compactRuntime.CircuitResults<PS, []>;
+  setParamsFor(context: __compactRuntime.CircuitContext<PS>,
+               year_0: bigint,
+               fromMonth_0: bigint,
+               months_0: bigint,
+               params_0: { version: bigint,
+                           validFrom: bigint,
+                           maxMonthlyGross: bigint,
+                           rate: bigint,
+                           minMonths: bigint,
+                           durationMonths: bigint
+                         }): __compactRuntime.CircuitResults<PS, []>;
   publishRoot(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
               root_0: bigint): __compactRuntime.CircuitResults<PS, []>;
@@ -113,7 +130,14 @@ export type ProvableCircuits<PS> = {
         employer_0: { bytes: Uint8Array },
         payrollParamsHash_0: Uint8Array,
         nonce_0: Uint8Array,
-        window_0: bigint,
+        calendar_0: { finalYear: bigint,
+                      finalMonth: bigint,
+                      year: bigint,
+                      month: bigint,
+                      q4: bigint,
+                      q100: bigint,
+                      q400: bigint
+                    },
         params_0: { version: bigint,
                     validFrom: bigint,
                     maxMonthlyGross: bigint,
@@ -139,18 +163,6 @@ export type ProvableCircuits<PS> = {
                   value: bigint,
                   mt_index: bigint
                 }): __compactRuntime.CircuitResults<PS, []>;
-  remitBenefitTax(context: __compactRuntime.CircuitContext<PS>,
-                  coin_0: { nonce: Uint8Array,
-                            color: Uint8Array,
-                            value: bigint,
-                            mt_index: bigint
-                          }): __compactRuntime.CircuitResults<PS, []>;
-  remitBenefitSocial(context: __compactRuntime.CircuitContext<PS>,
-                     coin_0: { nonce: Uint8Array,
-                               color: Uint8Array,
-                               value: bigint,
-                               mt_index: bigint
-                             }): __compactRuntime.CircuitResults<PS, []>;
 }
 
 export type PureCircuits = {
@@ -175,8 +187,20 @@ export type PureCircuits = {
                             maxContribBase: bigint,
                             contribRate: bigint
                           }): Uint8Array;
+  benefitParamsHash(params_0: { version: bigint,
+                                validFrom: bigint,
+                                maxMonthlyGross: bigint,
+                                rate: bigint,
+                                minMonths: bigint,
+                                durationMonths: bigint
+                              }): Uint8Array;
+  monthStart(year_0: bigint,
+             month_0: bigint,
+             q4_0: bigint,
+             q100_0: bigint,
+             q400_0: bigint): bigint;
   claimNullifier(payee_0: { bytes: Uint8Array },
-                 window_0: bigint,
+                 month_0: bigint,
                  fund_0: Uint8Array): Uint8Array;
 }
 
@@ -189,6 +213,17 @@ export type Circuits<PS> = {
                             minMonths: bigint,
                             durationMonths: bigint
                           }): __compactRuntime.CircuitResults<PS, []>;
+  setParamsFor(context: __compactRuntime.CircuitContext<PS>,
+               year_0: bigint,
+               fromMonth_0: bigint,
+               months_0: bigint,
+               params_0: { version: bigint,
+                           validFrom: bigint,
+                           maxMonthlyGross: bigint,
+                           rate: bigint,
+                           minMonths: bigint,
+                           durationMonths: bigint
+                         }): __compactRuntime.CircuitResults<PS, []>;
   publishRoot(context: __compactRuntime.CircuitContext<PS>,
               period_0: bigint,
               root_0: bigint): __compactRuntime.CircuitResults<PS, []>;
@@ -215,7 +250,14 @@ export type Circuits<PS> = {
         employer_0: { bytes: Uint8Array },
         payrollParamsHash_0: Uint8Array,
         nonce_0: Uint8Array,
-        window_0: bigint,
+        calendar_0: { finalYear: bigint,
+                      finalMonth: bigint,
+                      year: bigint,
+                      month: bigint,
+                      q4: bigint,
+                      q100: bigint,
+                      q400: bigint
+                    },
         params_0: { version: bigint,
                     validFrom: bigint,
                     maxMonthlyGross: bigint,
@@ -241,18 +283,6 @@ export type Circuits<PS> = {
                   value: bigint,
                   mt_index: bigint
                 }): __compactRuntime.CircuitResults<PS, []>;
-  remitBenefitTax(context: __compactRuntime.CircuitContext<PS>,
-                  coin_0: { nonce: Uint8Array,
-                            color: Uint8Array,
-                            value: bigint,
-                            mt_index: bigint
-                          }): __compactRuntime.CircuitResults<PS, []>;
-  remitBenefitSocial(context: __compactRuntime.CircuitContext<PS>,
-                     coin_0: { nonce: Uint8Array,
-                               color: Uint8Array,
-                               value: bigint,
-                               mt_index: bigint
-                             }): __compactRuntime.CircuitResults<PS, []>;
   leafDigest(context: __compactRuntime.CircuitContext<PS>,
              leaf_0: { commitment: Uint8Array,
                        payeeBinding: Uint8Array,
@@ -279,9 +309,23 @@ export type Circuits<PS> = {
                             maxContribBase: bigint,
                             contribRate: bigint
                           }): __compactRuntime.CircuitResults<PS, Uint8Array>;
+  benefitParamsHash(context: __compactRuntime.CircuitContext<PS>,
+                    params_0: { version: bigint,
+                                validFrom: bigint,
+                                maxMonthlyGross: bigint,
+                                rate: bigint,
+                                minMonths: bigint,
+                                durationMonths: bigint
+                              }): __compactRuntime.CircuitResults<PS, Uint8Array>;
+  monthStart(context: __compactRuntime.CircuitContext<PS>,
+             year_0: bigint,
+             month_0: bigint,
+             q4_0: bigint,
+             q100_0: bigint,
+             q400_0: bigint): __compactRuntime.CircuitResults<PS, bigint>;
   claimNullifier(context: __compactRuntime.CircuitContext<PS>,
                  payee_0: { bytes: Uint8Array },
-                 window_0: bigint,
+                 month_0: bigint,
                  fund_0: Uint8Array): __compactRuntime.CircuitResults<PS, Uint8Array>;
 }
 
@@ -297,6 +341,13 @@ export type Ledger = {
     [Symbol.iterator](): Iterator<[bigint, Uint8Array]>
   };
   readonly latestVersion: bigint;
+  paramsHashFor: {
+    isEmpty(): boolean;
+    size(): bigint;
+    member(key_0: bigint): boolean;
+    lookup(key_0: bigint): Uint8Array;
+    [Symbol.iterator](): Iterator<[bigint, Uint8Array]>
+  };
   rootFor: {
     isEmpty(): boolean;
     size(): bigint;
@@ -318,12 +369,7 @@ export type Ledger = {
     [Symbol.iterator](): Iterator<Uint8Array>
   };
   readonly claimsPaid: bigint;
-  readonly taxPool: bigint;
-  readonly socialPool: bigint;
-  readonly taxRemitted: bigint;
-  readonly socialRemitted: bigint;
   readonly benefitToken: Uint8Array;
-  readonly benefitTokenSet: boolean;
   readonly coinsReceived: bigint;
   contributedFor: {
     isEmpty(): boolean;
@@ -356,7 +402,8 @@ export declare class Contract<PS = any, W extends Witnesses<PS> = Witnesses<PS>>
   constructor(witnesses: W);
   initialState(context: __compactRuntime.ConstructorContext<PS>,
                taxTo_0: { bytes: Uint8Array },
-               socialTo_0: { bytes: Uint8Array }): __compactRuntime.ConstructorResult<PS>;
+               socialTo_0: { bytes: Uint8Array },
+               holds_0: Uint8Array): __compactRuntime.ConstructorResult<PS>;
 }
 
 export declare function ledger(state: __compactRuntime.StateValue | __compactRuntime.ChargedState): Ledger;

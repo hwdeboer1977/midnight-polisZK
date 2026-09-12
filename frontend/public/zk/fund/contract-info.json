@@ -67,6 +67,90 @@
       }
     },
     {
+      "name": "setParamsFor",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "year",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 65535
+          }
+        },
+        {
+          "name": "fromMonth",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 255
+          }
+        },
+        {
+          "name": "months",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 255
+          }
+        },
+        {
+          "name": "params",
+          "type": {
+            "type-name": "Struct",
+            "name": "BenefitParams",
+            "elements": [
+              {
+                "name": "version",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "validFrom",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 4294967295
+                }
+              },
+              {
+                "name": "maxMonthlyGross",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 1152921504606846975
+                }
+              },
+              {
+                "name": "rate",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "minMonths",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "durationMonths",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Tuple",
+        "types": [
+        ]
+      }
+    },
+    {
       "name": "publishRoot",
       "pure": false,
       "proof": true,
@@ -319,10 +403,61 @@
           }
         },
         {
-          "name": "window",
+          "name": "calendar",
           "type": {
-            "type-name": "Uint",
-            "maxval": 4294967295
+            "type-name": "Struct",
+            "name": "ClaimMonth",
+            "elements": [
+              {
+                "name": "finalYear",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "finalMonth",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 255
+                }
+              },
+              {
+                "name": "year",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "month",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 255
+                }
+              },
+              {
+                "name": "q4",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "q100",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "q400",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              }
+            ]
           }
         },
         {
@@ -469,104 +604,6 @@
             "maxval": 1152921504606846975
           }
         },
-        {
-          "name": "coin",
-          "type": {
-            "type-name": "Struct",
-            "name": "QualifiedShieldedCoinInfo",
-            "elements": [
-              {
-                "name": "nonce",
-                "type": {
-                  "type-name": "Bytes",
-                  "length": 32
-                }
-              },
-              {
-                "name": "color",
-                "type": {
-                  "type-name": "Bytes",
-                  "length": 32
-                }
-              },
-              {
-                "name": "value",
-                "type": {
-                  "type-name": "Uint",
-                  "maxval": 340282366920938463463374607431768211455
-                }
-              },
-              {
-                "name": "mt_index",
-                "type": {
-                  "type-name": "Uint",
-                  "maxval": 18446744073709551615
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "result-type": {
-        "type-name": "Tuple",
-        "types": [
-        ]
-      }
-    },
-    {
-      "name": "remitBenefitTax",
-      "pure": false,
-      "proof": true,
-      "arguments": [
-        {
-          "name": "coin",
-          "type": {
-            "type-name": "Struct",
-            "name": "QualifiedShieldedCoinInfo",
-            "elements": [
-              {
-                "name": "nonce",
-                "type": {
-                  "type-name": "Bytes",
-                  "length": 32
-                }
-              },
-              {
-                "name": "color",
-                "type": {
-                  "type-name": "Bytes",
-                  "length": 32
-                }
-              },
-              {
-                "name": "value",
-                "type": {
-                  "type-name": "Uint",
-                  "maxval": 340282366920938463463374607431768211455
-                }
-              },
-              {
-                "name": "mt_index",
-                "type": {
-                  "type-name": "Uint",
-                  "maxval": 18446744073709551615
-                }
-              }
-            ]
-          }
-        }
-      ],
-      "result-type": {
-        "type-name": "Tuple",
-        "types": [
-        ]
-      }
-    },
-    {
-      "name": "remitBenefitSocial",
-      "pure": false,
-      "proof": true,
-      "arguments": [
         {
           "name": "coin",
           "type": {
@@ -849,6 +886,114 @@
       }
     },
     {
+      "name": "benefitParamsHash",
+      "pure": true,
+      "proof": false,
+      "arguments": [
+        {
+          "name": "params",
+          "type": {
+            "type-name": "Struct",
+            "name": "BenefitParams",
+            "elements": [
+              {
+                "name": "version",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "validFrom",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 4294967295
+                }
+              },
+              {
+                "name": "maxMonthlyGross",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 1152921504606846975
+                }
+              },
+              {
+                "name": "rate",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "minMonths",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              },
+              {
+                "name": "durationMonths",
+                "type": {
+                  "type-name": "Uint",
+                  "maxval": 65535
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "monthStart",
+      "pure": true,
+      "proof": false,
+      "arguments": [
+        {
+          "name": "year",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 65535
+          }
+        },
+        {
+          "name": "month",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 255
+          }
+        },
+        {
+          "name": "q4",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 65535
+          }
+        },
+        {
+          "name": "q100",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 65535
+          }
+        },
+        {
+          "name": "q400",
+          "type": {
+            "type-name": "Uint",
+            "maxval": 65535
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Uint",
+        "maxval": 18446744073709551615
+      }
+    },
+    {
       "name": "claimNullifier",
       "pure": true,
       "proof": false,
@@ -870,7 +1015,7 @@
           }
         },
         {
-          "name": "window",
+          "name": "month",
           "type": {
             "type-name": "Uint",
             "maxval": 4294967295
@@ -942,8 +1087,8 @@
     {
       "name": "socialTreasury",
       "index": [
-        0,
-        2
+        1,
+        0
       ],
       "exported": true,
       "storage": "Cell",
@@ -964,8 +1109,8 @@
     {
       "name": "paramsFor",
       "index": [
-        0,
-        3
+        1,
+        1
       ],
       "exported": true,
       "storage": "Map",
@@ -981,8 +1126,8 @@
     {
       "name": "latestVersion",
       "index": [
-        0,
-        4
+        1,
+        2
       ],
       "exported": true,
       "storage": "Cell",
@@ -992,10 +1137,27 @@
       }
     },
     {
+      "name": "paramsHashFor",
+      "index": [
+        1,
+        3
+      ],
+      "exported": true,
+      "storage": "Map",
+      "key": {
+        "type-name": "Uint",
+        "maxval": 4294967295
+      },
+      "value": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
       "name": "rootFor",
       "index": [
-        0,
-        5
+        1,
+        4
       ],
       "exported": true,
       "storage": "Map",
@@ -1011,7 +1173,7 @@
       "name": "rootAuthor",
       "index": [
         1,
-        0
+        5
       ],
       "exported": true,
       "storage": "Map",
@@ -1037,7 +1199,7 @@
       "name": "spent",
       "index": [
         1,
-        1
+        6
       ],
       "exported": true,
       "storage": "Set",
@@ -1050,78 +1212,13 @@
       "name": "claimsPaid",
       "index": [
         1,
-        2
+        7
       ],
       "exported": true,
       "storage": "Counter"
     },
     {
-      "name": "taxPool",
-      "index": [
-        1,
-        3
-      ],
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Uint",
-        "maxval": 18446744073709551615
-      }
-    },
-    {
-      "name": "socialPool",
-      "index": [
-        1,
-        4
-      ],
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Uint",
-        "maxval": 18446744073709551615
-      }
-    },
-    {
-      "name": "taxRemitted",
-      "index": [
-        1,
-        5
-      ],
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Uint",
-        "maxval": 18446744073709551615
-      }
-    },
-    {
-      "name": "socialRemitted",
-      "index": [
-        1,
-        6
-      ],
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Uint",
-        "maxval": 18446744073709551615
-      }
-    },
-    {
       "name": "benefitToken",
-      "index": [
-        1,
-        7
-      ],
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Bytes",
-        "length": 32
-      }
-    },
-    {
-      "name": "benefitTokenSet",
       "index": [
         1,
         8
@@ -1129,7 +1226,8 @@
       "exported": true,
       "storage": "Cell",
       "type": {
-        "type-name": "Boolean"
+        "type-name": "Bytes",
+        "length": 32
       }
     },
     {

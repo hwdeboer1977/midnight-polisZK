@@ -77,22 +77,7 @@ export function NationalTotals({
               <ul className="contract-lines">
                 <li>{plural(fund.contributionCount, "deposit")}</li>
                 <li>{plural(fund.claimsPaid, "claim")} settled</li>
-                <li
-                  title={exact(
-                    fund.taxHeldMinor +
-                      fund.taxRemittedMinor +
-                      fund.socialHeldMinor +
-                      fund.socialRemittedMinor
-                  )}
-                >
-                  {money(
-                    fund.taxHeldMinor +
-                      fund.taxRemittedMinor +
-                      fund.socialHeldMinor +
-                      fund.socialRemittedMinor
-                  )}{" "}
-                  withheld from benefits
-                </li>
+                <li>Withholding sent to the treasuries inside each claim</li>
               </ul>
               <p className="contract-caveat">
                 A shielded coin, so no balance is published — publishing one
@@ -164,10 +149,10 @@ export function NationalTotals({
           withdrawn is genuinely what is there.
         </p>
         <p className="note">
-          The fund's own withholding runs the other way from everything else on
-          this page: it is tax and contributions taken <em>from benefits paid
-          out</em>, not contributions arriving. Public by necessity — a contract
-          that owes tax has to know how much.
+          Withholding on benefits is not shown for the fund because it is not
+          published: each claim sends the tax and contribution straight to the
+          two treasuries as shielded coins. A public total moved by every claim
+          would give each claimant's benefit away.
         </p>
         <button type="button" className="ghost" disabled={reading} onClick={onReRead}>
           {reading ? "Reading…" : "Re-read the contracts"}

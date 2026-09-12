@@ -6,8 +6,11 @@ import fs from "fs";
 import {
   CompactTypeField,
   CompactTypeVector,
+  ShieldedCoinInfoDescriptor,
+  ShieldedCoinRecipientDescriptor,
   convertBytesToField,
   degradeToTransient,
+  runtimeCoinCommitment,
   transientHash,
   upgradeFromTransient,
 } from "@midnight-ntwrk/compact-runtime";
@@ -51,6 +54,9 @@ export interface DepositRecord {
    * Which of the contract's receipts this coin is, read back from `poolOrdinal`
    * after the call. `null` while pending — the ordinal only exists once the
    * transaction has landed.
+   *
+   * A receipt number, never a position in the Zswap tree. Find a coin's leaf
+   * with `findCoinLeaf`, which rebuilds its commitment.
    */
   ordinal: number | null;
   txHash: string | null;
@@ -63,12 +69,12 @@ export interface DepositRecord {
    * Where this coin is.
    *
    * ⚠️ `spent` was missing, and its absence cost a claim. A claim consumes a
-   * pool coin and `sendShielded` returns the remainder as a NEW coin —
-   * `reconcile` records that change and, until now, left the coin it came from
-   * marked `confirmed`. The relay hands out coins largest first, so a spent
-   * €400 outranked its own €305 change and was offered to the next claimant,
-   * whose transaction was refused by the node as `103` — a catch-all that will
-   * not say "already spent".
+   * pool coin and returns the remainder as a NEW coin — `reconcile` records
+   * that change and, until now, left the coin it came from marked `confirmed`.
+   * The relay hands out coins largest first, so a spent €400 outranked its own
+   * €305 change and was offered to the next claimant, whose transaction was
+   * refused by the node as `103` — a catch-all that will not say "already
+   * spent".
    *
    * A record is never deleted: the ordinal and nonce are the only description
    * of a coin that ever existed, and a spent coin still has to be recognisable
@@ -152,7 +158,6 @@ export function recordPending(
   write(all);
 }
 
-/** Fills in what only exists after the transaction landed. */
 /**
  * Marks the coin a claim consumed, so nothing offers it again.
  *
@@ -173,6 +178,7 @@ export function markSpent(
   write(all);
 }
 
+/** Fills in what only exists after the transaction landed. */
 export function confirmDeposit(
   networkId: string,
   contractAddress: string,
@@ -262,15 +268,100 @@ export function evolveSentNonce(nonce: Uint8Array): Uint8Array {
 }
 
 /**
- * The nonce of the change coin that comes back to the contract — the pool's
- * next nonce after a claim, and the reason a deposit record does not go stale
- * the moment somebody is paid.
+ * The nonce of the change coin one `sendShielded` returns to the contract.
  *
- * ⚠️ Derived from the compiled circuit and never yet exercised against a real
- * claim, because none has been made. The first claim is what confirms it: if
- * `fund pool` then reports a change coin whose commitment the indexer does not
- * show, this derivation is where to look before anything else.
+ * Verified against a real claim on 2026-08-25: the derived nonce reproduced the
+ * change coin's on-chain commitment exactly (`docs/findings.md`).
  */
 export function evolveChangeNonce(nonce: Uint8Array): Uint8Array {
   return evolve(nonce, "midnight:kernel:nonce_evolve/2");
+}
+
+/**
+ * The nonce of the coin a CLAIM leaves in the fund: the pool coin's nonce,
+ * evolved three times.
+ *
+ * `claim` makes three sends chained through their change — the net to the
+ * claimant, then the tax, then the contribution — and each send derives its
+ * change nonce from its input's. `sendImmediateShielded` is `sendShielded` on a
+ * coin created earlier in the same transaction (the compiled circuit shows it
+ * upcasting the coin and calling `sendShielded`), so the same derivation applies
+ * at every step. The surviving coin's value is the pool coin's less the whole
+ * benefit, withholding included.
+ *
+ * ⚠️ The single step is verified on chain; the chain of three has run only in
+ * the local runtime so far. If the first reconcile after a claim finds no
+ * matching leaf, suspect this before the value.
+ */
+export function claimChangeNonce(nonce: Uint8Array): Uint8Array {
+  return evolveChangeNonce(evolveChangeNonce(evolveChangeNonce(nonce)));
+}
+
+// ── Finding a fund coin in the Zswap tree ────────────────────────────────────
+
+/** One coin the contract owns in the Zswap tree: its leaf and its commitment. */
+export interface CoinLeaf {
+  leaf: number;
+  commitment: string;
+}
+
+/**
+ * Every commitment the contract owns, with its leaf, lowest leaf first.
+ *
+ * Spent coins are included — the tree only grows — so this is a list to search
+ * by commitment, never one to index by a receipt ordinal. The ordinal and the
+ * leaf order disagree whenever one transaction creates more than one coin, and
+ * a claim creates change coins it spends straight away.
+ */
+export async function contractCoinLeaves(
+  publicDataProvider: { queryZSwapAndContractState: (address: string) => Promise<unknown> },
+  contractAddress: string
+): Promise<CoinLeaf[]> {
+  const result = await publicDataProvider.queryZSwapAndContractState(contractAddress);
+  if (!result) return [];
+  const [zswap] = result as any;
+  const text = String(zswap.filter(contractAddress).toString(true));
+  return [...text.matchAll(/(\d+): \(([0-9a-f]{64}), Some\(ContractAddress/g)]
+    .map((m) => ({ leaf: Number(m[1]), commitment: m[2]! }))
+    .sort((a, b) => a.leaf - b.leaf);
+}
+
+/**
+ * The commitment of a coin owned by `contractAddress`, hex.
+ *
+ * Both branches of the recipient Either are supplied even though only the
+ * contract branch is used — omitting one fails inside WASM as
+ * "Reflect.get called on non-object", which names nothing.
+ */
+export function coinCommitment(
+  coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
+  contractAddress: string
+): string {
+  const address = Uint8Array.from(Buffer.from(contractAddress.replace(/^0x/, ""), "hex"));
+  return Buffer.from(
+    runtimeCoinCommitment(
+      {
+        value: ShieldedCoinInfoDescriptor.toValue(coin),
+        alignment: ShieldedCoinInfoDescriptor.alignment(),
+      } as any,
+      {
+        value: ShieldedCoinRecipientDescriptor.toValue({
+          is_left: false,
+          left: { bytes: new Uint8Array(32) },
+          right: { bytes: address },
+        }),
+        alignment: ShieldedCoinRecipientDescriptor.alignment(),
+      } as any
+    ).value[0] as Uint8Array
+  ).toString("hex");
+}
+
+/** The leaf holding exactly this coin, or undefined if the contract owns none. */
+export function findCoinLeaf(
+  leaves: CoinLeaf[],
+  coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
+  contractAddress: string
+): number | undefined {
+  const target = coinCommitment(coin, contractAddress);
+  return leaves.find((entry) => entry.commitment === target)?.leaf;
 }

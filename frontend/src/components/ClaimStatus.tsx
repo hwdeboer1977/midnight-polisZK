@@ -4,35 +4,27 @@
 import { useState, useEffect } from "react";
 import { forNetwork, loadDeployments } from "../lib/deployments";
 import { periodName } from "../generated/roster";
-import { readClaimHistory, type ClaimHistory } from "../lib/claimStatus";
+import { openingDate, readClaimHistory, type ClaimHistory } from "../lib/claimStatus";
 import { useWallet } from "../wallet/WalletContext";
 
 /**
- * "Have I already claimed?" — answered, where it used to say it could not be.
+ * "Which months have I claimed, and which can I claim now?"
  *
- * The old copy told her no: checking would mean deriving her claim key, and
- * nothing on the page held her passphrase. The premise was right and the
- * conclusion was not. Her nullifiers are unguessable to everyone ELSE, which is
- * the property `fund.compact` gives up a public-key-derived nullifier to buy —
- * but she is the one person who holds the key, and the spent set is public. All
- * that was missing was a pure circuit to compute the hash with.
- *
- * It asks for her claim-key file rather than working from the connected wallet,
- * and that is not a shortcut we failed to take. If the wallet alone could
- * answer this, so could anyone holding her coin public key — which is an
- * address she hands out to be paid, so it would be every employer she ever had.
- * The file is the point.
+ * Runs on its own from the connected wallet: the nullifier is
+ * `hash(ownPublicKey, month, fund)`, so there is nothing else to ask for. The
+ * trade that makes that possible is stated on the page — anyone holding her
+ * payment address can run the same check.
  *
  * Nothing is uploaded and nothing is asked of an indexer. The whole spent set
  * is read and searched in the page: querying for one nullifier would disclose
- * the very link this construction denies, even though the answer is public.
+ * the very link it answers, even though the answer is public.
  */
 export function ClaimStatus({
   networkId,
   finalPeriod,
 }: {
   networkId: string;
-  /** The month her employer attested as final. Where the scan starts. */
+  /** The month her employer attested as final. The entitlement starts after it. */
   finalPeriod: number;
 }) {
   const { account } = useWallet();
@@ -40,19 +32,6 @@ export function ClaimStatus({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Runs on its own, because there is nothing left to ask for.
-   *
-   * ⚠️ This used to want the claim-key FILE. The nullifier was keyed on that
-   * secret, so the one question a claimant most wants answered — how many
-   * months do I have left — was gated behind a download she might not have to
-   * hand. The nullifier is `hash(ownPublicKey, window, fund)` now, so the
-   * connected wallet is the whole input and the answer is simply shown.
-   *
-   * The trade is stated plainly on the page: what she gains in convenience,
-   * she loses in exclusivity — anyone holding her payment address can run the
-   * same check.
-   */
   useEffect(() => {
     if (!account) return;
     let cancelled = false;
@@ -84,31 +63,17 @@ export function ClaimStatus({
   }, [account, networkId, finalPeriod]);
 
   return (
-    /* A section rather than a disclosure.
-       
-       It began as a <details>, inheriting the shape of the note it replaced —
-       which said the question could not be answered. That was the right shape
-       for an explanation of a limit and the wrong one for a control that now
-       answers it: collapsed, it is indistinguishable from the apology it
-       replaced. "How many months do I have left" is a first-order question for
-       someone who has just lost their job, so it renders open. */
-    // A utility, not a result. It wore the same lavender as the eligibility
-    // outcome above it, which gave "have you already claimed?" the same weight
-    // as "you are eligible" — one is the answer someone came for, the other is
-    // a lookup they may never need.
+    // A utility, not a result: "have you already claimed?" is a lookup, and it
+    // should not wear the same weight as "you are eligible" above it.
     <section className="card utility">
       <h2>Have you already claimed?</h2>
 
-      {/* Honest about what changed. The old copy said "nobody else can",
-          which was true of a nullifier keyed on a secret file and is not true
-          of one keyed on a payment address. Saying so here is cheaper than
-          letting a claimant assume the stronger property. */}
       <p className="note" style={{ marginTop: 0 }}>
-        Each claim is recorded as a nullifier built from your wallet, and the
-        fund's list of them is public. Yours is computed here from the wallet
-        you have connected — no file needed. Anyone you have given your payment
-        address to could run the same check, which is the cost of not needing
-        one.
+        Each claim is recorded as a nullifier built from your wallet and the
+        month it pays, and the fund's list of them is public. Yours are computed
+        here from the wallet you have connected — no file needed. Anyone you
+        have given your payment address to could run the same check, which is
+        the cost of not needing one.
       </p>
 
       {busy ? <p className="status">Reading the fund…</p> : null}
@@ -116,8 +81,15 @@ export function ClaimStatus({
 
       {history ? (
         <>
-          {/* The three numbers, before the detail. Someone opening this wants
-              "how many left", and a table of months makes them count. */}
+          {!history.rulesKnown ? (
+            <p className="problems">
+              No benefit rules this page recognises are recorded on the fund for{" "}
+              {periodName(finalPeriod)} yet. The months below assume the pilot's{" "}
+              {history.entitlementMonths}, and a claim cannot be made until the
+              platform records the rules for that month.
+            </p>
+          ) : null}
+
           <div className="row">
             <div className="k">Months claimed</div>
             <div className="v">
@@ -143,14 +115,16 @@ export function ClaimStatus({
               </tr>
             </thead>
             <tbody>
-              {history.windows.map((entry) => (
-                <tr key={entry.window}>
-                  <td>{periodName(entry.window)}</td>
+              {history.months.map((entry) => (
+                <tr key={entry.period}>
+                  <td>{periodName(entry.period)}</td>
                   <td>
                     {entry.claimed ? (
                       <span className="ok-line">✓ Claimed</span>
+                    ) : entry.started ? (
+                      <strong>Claimable now</strong>
                     ) : (
-                      <span className="muted">Not claimed</span>
+                      <span className="muted">Opens {openingDate(entry.opensAt)}</span>
                     )}
                   </td>
                 </tr>
@@ -158,38 +132,21 @@ export function ClaimStatus({
             </tbody>
           </table>
 
-          {/* Surfaced rather than assumed impossible. Nothing in `claim`
-              constrains `window`, so a claim outside the entitlement is
-              something the chain permits — and a panel that only ever looked at
-              three months would be the last place it showed up. */}
-          {history.outside.length > 0 ? (
-            <p className="problems">
-              <strong>
-                {history.outside.length} claim
-                {history.outside.length === 1 ? "" : "s"} outside your{" "}
-                {history.entitlementMonths} months
-              </strong>{" "}
-              — {history.outside.map((entry) => periodName(entry.window)).join(", ")}.
-              That should not be possible under the scheme and the contract does
-              not currently prevent it. Report this.
-            </p>
-          ) : null}
-
-          {/* The pilot figure named as one. It is app policy, not contract
-              policy, and a claimant reading "3" deserves to know which. */}
+          {/* The pilot figure named as one — and, now, as the contract's rule
+              too: `claim` refuses a month outside these, or one not yet begun. */}
           <p className="note warn">
-            <strong>Three months is a pilot simplification.</strong> Everyone
-            gets the same, whatever their employment history — the real scheme
-            works it out from how long you worked. It is also what this page
-            applies, not what the fund enforces: the contract does not yet limit
-            how many months can be claimed.
+            <strong>{history.entitlementMonths} months is a pilot simplification.</strong>{" "}
+            Everyone gets the same, whatever their employment history — the real
+            scheme works it out from how long you worked. The fund enforces it:
+            a month outside these, or one that has not started yet, is refused on
+            chain.
           </p>
 
           <p className="note">
             Checked against the {history.claimsOnFund} claim
             {history.claimsOnFund === 1 ? "" : "s"} the fund has paid in total,
-            to everyone. Which of them were yours is exactly what nobody without
-            your claim key can work out — including this page, a moment ago.
+            to everyone. Which of them were yours can be worked out only from
+            your payment address.
           </p>
         </>
       ) : null}

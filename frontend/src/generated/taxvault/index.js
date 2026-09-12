@@ -201,35 +201,35 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('deposit',
                                      'argument 1 (as invoked from Typescript)',
-                                     'taxvault.compact line 135 char 1',
+                                     'taxvault.compact line 91 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(period_0) === 'bigint' && period_0 >= 0n && period_0 <= 4294967295n)) {
           __compactRuntime.typeError('deposit',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'taxvault.compact line 135 char 1',
+                                     'taxvault.compact line 91 char 1',
                                      'Uint<0..4294967296>',
                                      period_0)
         }
         if (!(source_0.buffer instanceof ArrayBuffer && source_0.BYTES_PER_ELEMENT === 1 && source_0.length === 32)) {
           __compactRuntime.typeError('deposit',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'taxvault.compact line 135 char 1',
+                                     'taxvault.compact line 91 char 1',
                                      'Bytes<32>',
                                      source_0)
         }
         if (!(typeof(amount_0) === 'bigint' && amount_0 >= 0n && amount_0 <= 18446744073709551615n)) {
           __compactRuntime.typeError('deposit',
                                      'argument 3 (argument 4 as invoked from Typescript)',
-                                     'taxvault.compact line 135 char 1',
+                                     'taxvault.compact line 91 char 1',
                                      'Uint<0..18446744073709551616>',
                                      amount_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n)) {
           __compactRuntime.typeError('deposit',
                                      'argument 4 (argument 5 as invoked from Typescript)',
-                                     'taxvault.compact line 135 char 1',
+                                     'taxvault.compact line 91 char 1',
                                      'struct ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>>',
                                      coin_0)
         }
@@ -261,14 +261,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('transferAuthority',
                                      'argument 1 (as invoked from Typescript)',
-                                     'taxvault.compact line 189 char 1',
+                                     'taxvault.compact line 129 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(newAuthority_0) === 'object' && newAuthority_0.bytes.buffer instanceof ArrayBuffer && newAuthority_0.bytes.BYTES_PER_ELEMENT === 1 && newAuthority_0.bytes.length === 32)) {
           __compactRuntime.typeError('transferAuthority',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'taxvault.compact line 189 char 1',
+                                     'taxvault.compact line 129 char 1',
                                      'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                      newAuthority_0)
         }
@@ -298,21 +298,21 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('withdraw',
                                      'argument 1 (as invoked from Typescript)',
-                                     'taxvault.compact line 206 char 1',
+                                     'taxvault.compact line 153 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(amount_0) === 'bigint' && amount_0 >= 0n && amount_0 <= 18446744073709551615n)) {
           __compactRuntime.typeError('withdraw',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'taxvault.compact line 206 char 1',
+                                     'taxvault.compact line 153 char 1',
                                      'Uint<0..18446744073709551616>',
                                      amount_0)
         }
         if (!(typeof(coin_0) === 'object' && coin_0.nonce.buffer instanceof ArrayBuffer && coin_0.nonce.BYTES_PER_ELEMENT === 1 && coin_0.nonce.length === 32 && coin_0.color.buffer instanceof ArrayBuffer && coin_0.color.BYTES_PER_ELEMENT === 1 && coin_0.color.length === 32 && typeof(coin_0.value) === 'bigint' && coin_0.value >= 0n && coin_0.value <= 340282366920938463463374607431768211455n && typeof(coin_0.mt_index) === 'bigint' && coin_0.mt_index >= 0n && coin_0.mt_index <= 18446744073709551615n)) {
           __compactRuntime.typeError('withdraw',
                                      'argument 2 (argument 3 as invoked from Typescript)',
-                                     'taxvault.compact line 206 char 1',
+                                     'taxvault.compact line 153 char 1',
                                      'struct QualifiedShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<0..340282366920938463463374607431768211456>, mt_index: Uint<0..18446744073709551616>>',
                                      coin_0)
         }
@@ -364,14 +364,14 @@ export class Contract {
     if (!(typeof(withdrawTo_0) === 'object' && withdrawTo_0.bytes.buffer instanceof ArrayBuffer && withdrawTo_0.bytes.BYTES_PER_ELEMENT === 1 && withdrawTo_0.bytes.length === 32)) {
       __compactRuntime.typeError('Contract state constructor',
                                  'argument 1 (argument 2 as invoked from Typescript)',
-                                 'taxvault.compact line 118 char 1',
+                                 'taxvault.compact line 71 char 1',
                                  'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                  withdrawTo_0)
     }
     if (!(holds_0.buffer instanceof ArrayBuffer && holds_0.BYTES_PER_ELEMENT === 1 && holds_0.length === 32)) {
       __compactRuntime.typeError('Contract state constructor',
                                  'argument 2 (argument 3 as invoked from Typescript)',
-                                 'taxvault.compact line 118 char 1',
+                                 'taxvault.compact line 71 char 1',
                                  'Bytes<32>',
                                  holds_0)
     }
@@ -867,7 +867,7 @@ export class Contract {
     this._receiveShielded_0(context, partialProofData, coin_0);
     const tmp_0 = ((t1) => {
                     if (t1 > 4294967295n) {
-                      throw new __compactRuntime.CompactError('taxvault.compact line 153 char 19: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
+                      throw new __compactRuntime.CompactError('taxvault.compact line 108 char 19: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
                     }
                     return t1;
                   })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -933,7 +933,7 @@ export class Contract {
                       0n;
     const tmp_1 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('taxvault.compact line 160 char 25: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('taxvault.compact line 113 char 25: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(already_0 + amount_0);
@@ -991,7 +991,7 @@ export class Contract {
     }
     const tmp_2 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('taxvault.compact line 170 char 15: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('taxvault.compact line 121 char 15: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
@@ -1020,7 +1020,7 @@ export class Contract {
                                        { ins: { cached: false, n: 1 } }]);
     const tmp_3 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('taxvault.compact line 171 char 19: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('taxvault.compact line 122 char 19: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
@@ -1049,7 +1049,7 @@ export class Contract {
                                        { ins: { cached: false, n: 1 } }]);
     const tmp_4 = ((t1) => {
                     if (t1 > 4294967295n) {
-                      throw new __compactRuntime.CompactError('taxvault.compact line 172 char 18: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
+                      throw new __compactRuntime.CompactError('taxvault.compact line 123 char 18: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
                     }
                     return t1;
                   })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -1200,7 +1200,7 @@ export class Contract {
                                        { ins: { cached: false, n: 1 } }]);
     const tmp_1 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('taxvault.compact line 219 char 20: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('taxvault.compact line 166 char 20: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
@@ -1229,7 +1229,7 @@ export class Contract {
                                        { ins: { cached: false, n: 1 } }]);
     const tmp_2 = ((t1) => {
                     if (t1 > 4294967295n) {
-                      throw new __compactRuntime.CompactError('taxvault.compact line 220 char 21: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
+                      throw new __compactRuntime.CompactError('taxvault.compact line 167 char 21: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 4294967295');
                     }
                     return t1;
                   })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -1390,7 +1390,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'taxvault.compact line 84 char 1',
+                                     'taxvault.compact line 48 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -1419,7 +1419,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'taxvault.compact line 84 char 1',
+                                     'taxvault.compact line 48 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -1499,7 +1499,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'taxvault.compact line 97 char 1',
+                                     'taxvault.compact line 56 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }
@@ -1528,7 +1528,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 4294967295n)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'taxvault.compact line 97 char 1',
+                                     'taxvault.compact line 56 char 1',
                                      'Uint<0..4294967296>',
                                      key_0)
         }

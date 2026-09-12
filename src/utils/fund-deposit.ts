@@ -209,23 +209,16 @@ export async function depositToFund(options: {
 
   // Named differently on the two contracts and meaning the same thing:
   // `fund.compact` calls it `benefitToken` because that is what benefits are
-  // paid in, `taxvault.compact` simply `token`. Reading only the fund's name
-  // made this check silently pass on the vault — the branch that says "this
-  // deposit fixes the token permanently" would fire on every vault deposit,
-  // including the ones after the first.
-  const tokenSet = beforeLedger.benefitTokenSet ?? beforeLedger.tokenSet;
+  // paid in, `taxvault.compact` simply `token`. Both are frozen at deploy, so no
+  // deposit fixes anything — there is only a mismatch to refuse before proving.
   const tokenHeld = beforeLedger.benefitToken ?? beforeLedger.token;
-  if (tokenSet) {
-    const fixed = hex(tokenHeld);
-    if (fixed !== colourHex) {
-      throw new Error(
-        `This ${target} holds token ${fixed}, but the pEUR deployed on ` +
-          `${network.networkId} is ${colourHex}. Its token was fixed by its ` +
-          "first deposit and cannot be changed."
-      );
-    }
-  } else {
-    log(`⚠️  This is the first deposit, and it fixes the ${target}'s token permanently.`);
+  const fixed = hex(tokenHeld);
+  if (fixed !== colourHex) {
+    throw new Error(
+      `This ${target} holds token ${fixed}, but the pEUR deployed on ` +
+        `${network.networkId} is ${colourHex}. Its token was frozen at deploy ` +
+        "and cannot be changed."
+    );
   }
 
   log(`Depositing €${formatPeur(amountMinor)} from the ${from} wallet…`);

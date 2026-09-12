@@ -178,8 +178,14 @@ Both change coins along the way were recovered with `fund reconcile`, each
 verified against its on-chain commitment before being recorded. The command also
 reports what the spend paid — €94.325, then €55.055, then €4.62 — derived from
 the parent coin's value rather than supplied. Worth noticing that with a single
-claimant the aggregate *is* the individual; with a handful of claims that
-inference disappears.
+claimant the aggregate *is* the individual.
+
+⚠️ **Corrected 2026-09-11.** This originally went on to say that with a handful
+of claims the inference disappears. It does not: every claim is its own
+transaction, so the public pools moved by exactly one claim's withholding each
+time, and that delta inverts to the claim's benefit and final gross however many
+claims there are. The withholding now leaves inside the claim — see
+[The 2026-09-11 review](#the-2026-09-11-review).
 
 ### Remitting needed the recipient's encryption key — twice over
 
@@ -362,8 +368,8 @@ const benefitNet = (benefitQ - benefitTaxQ - benefitSocialQ) as Uint<60>;
 looks like an underflow guard and is not one — Compact catches that case either
 way. What the STRICT comparison uniquely rejects is withholding exactly EQUAL to
 the benefit, which the subtraction accepts as a net of zero. That rejection is
-the point: a zero-net claim would burn the window's nullifier and pay nothing,
-spending the claimant's one shot at that window for no money.
+the point: a zero-net claim would burn that month's nullifier and pay nothing,
+spending the claimant's one claim for that month for no money.
 
 It is also unreachable. Both quotients are floor divisions, so withholding is at
 most `benefitQ x (rate + contribRate) / 10000`, and equality needs those rates
@@ -526,8 +532,9 @@ It is not exact, and the gap is the interrupted-run path: funded with
 contract with both pools at zero. Closing that needs a funded-unpaid counter
 maintained across five circuits — and that counter is the wrong guard anyway,
 because of WHO CLEARS IT. A non-zero pool is cleared by `remit`, which the
-platform may call with no employer seated, so this delays a revoke by one
-transaction the platform can always make. A funded-unpaid counter is cleared
+platform may call as well as the employer, so this delays a revoke by one
+transaction the platform can always make. (`remit` does need a seated employer —
+which, before the revoke, there still is.) A funded-unpaid counter is cleared
 only by `payPeriod`, which is employer-only — handing the employer a veto over
 their own revocation by funding a slot and never paying it, exercised by exactly
 the employer revocation exists for. The exact guard can be held hostage; the
@@ -537,6 +544,12 @@ platform remits and then revokes, with no employer involved.
 **`endEmployment` requires the slot to have been paid.** A month can sit filed
 and never funded, and a termination naming one attests that employment ended in
 a period where no money moved.
+
+Since the 2026-09-11 source it also requires the month's **withholding funded**.
+Paid alone left a route through: nets settled with `fundEmployee` +
+`payEmployee`, withholding never funded, a termination attested — and because
+only funded withholding blocks a re-file, the month could then be re-filed and the
+termination wiped and restated.
 
 ⚠️ The cost falls on the EMPLOYEE, not the employer. An employer who never pays
 the final month can no longer attest its termination — so a worker whose
@@ -610,6 +623,101 @@ if (derived !== k) console.log("COLLAPSES:", k, "->", derived);
 Records written by a deploy are fine — `deploy.ts` passes `instance` — so this
 only bites hand-written archive entries, which is exactly what retiring an
 address produces.
+
+## The 2026-09-11 review
+
+A line-by-line review of the five contracts, after the pass that finalised their
+comments. The comment-only commits changed no code: with comments stripped, every
+file matched its state before `ad4a65f`, and all five recompiled to verifier keys
+and zkir byte-identical to `contracts/managed`.
+
+The review found six faults in code. All are fixed in source and were deployed
+the same day — see [Deployed 2026-09-11](#deployed-2026-09-11).
+
+| # | Contract | Fault | Fix |
+| --- | --- | --- | --- |
+| 1 | fund | Each claim moved the public withholding pools by exactly its own withholding | withholding sent to the treasuries inside the claim |
+| 2 | fund | Any published rule set that had taken effect by the final period qualified, so a claimant could pick the most generous | `setParamsFor` pins one rule set per final period |
+| 3 | fund | Every window claimable at once, and a nullifier of (wallet, window) capped a person at `durationMonths` windows for the fund's lifetime | a calendar month per claim, not before it starts, nullifier per month |
+| 4 | fund, payroll | The token was fixed by the first coin received — and anyone may deposit into the fund | token frozen at deploy |
+| 5 | payroll | `endEmployment` needed the slot paid but not the withholding funded, so a termination could name a month whose tax never arrived, then be wiped by a re-file | requires the withholding funded |
+| 6 | fund | The pool coin was checked against the net benefit only | checked against the whole benefit |
+
+### The pool leak, worked
+
+The note under *Withholding, remitted and received* expected a handful of claims
+to hide individual benefits. They cannot, because a claim is its own transaction.
+Take the recorded run: the contribution pool rose by €4.62. At the published 3%
+that is a benefit of €154.00, and at 70% a final gross of €220.00 — below the cap,
+so exact. The tax pool's €55.055 confirms it. Every later claim moves the pools
+the same way, alone.
+
+### What verified the fixes
+
+- **Compiler probes** (compactc 0.31.1). `blockTimeLt`, `blockTimeLte`,
+  `blockTimeGt` and `blockTimeGte` exist and take `Uint<64>` seconds since 1970;
+  `blockTimeLessThan` and `blockTimeGreaterThan` are unbound. A `sendShielded`
+  followed by `sendImmediateShielded` on its change compiles, and the compiled
+  `sendImmediateShielded` upcasts the coin with `mt_index: 0` and calls
+  `sendShielded` — so every send in a chain derives its change nonce the same way.
+- **`monthStart`** matched JavaScript's `Date.UTC` for all 12,360 months from 1970
+  to 2999, and refused a wrong leap-year quotient and months 0 and 13.
+- **Circuits run locally** against the compiled contracts.
+  `tests/fund-claim.test.mjs` (28 checks) and `tests/payroll-token.test.mjs` (13)
+  are new; all 13 test files pass, 193 checks. The €220 claim produced exactly the
+  expected coins: €94.325 to the claimant, €55.055 to the tax treasury, €4.62 to
+  the social treasury, and €146.00 back to the fund from a €300.00 coin.
+- **Size.** Summing `.bzkir` and `.verifier` bytes, payroll went from 48,293 to
+  47,543 (−750) and the fund from 21,490 over six circuits to 22,200 over five.
+  That measure does not reproduce the ZKIR column in *The deploy ceiling*, so only
+  the difference is comparable — and payroll got smaller, not larger.
+
+### Not yet verified on chain
+
+- spending a change coin inside the same transaction, which every new claim does
+  twice;
+- a zero-value send, which a zero tax or contribution rate would produce;
+- `claimChangeNonce`, three evolves, against a real claim's change commitment;
+- the treasuries seeing the coins a claim sends them.
+
+### The 103 explanation is not settled
+
+`remitBenefitTax` sent to `taxTreasury` read from the fund's ledger, and it landed
+(`43f90e25…`). The explanation recorded for payroll's refused remits — a recipient
+read from the ledger rather than passed as an argument — does not account for
+that. `payroll.remit` keeps the argument form because it is proven there; the new
+`claim` sends to ledger-read treasuries, as `remitBenefitTax` did; and
+`taxvault.withdraw`, which also sends to a ledger read, has never been called.
+
+### Deployed 2026-09-11
+
+All five contracts were redeployed on preview the same day, from the reviewed
+source. pEUR too, so the token is new and every balance in the previous one is
+unusable with these contracts. Each was read back from chain afterwards with the
+current build.
+
+| Contract | Address | Transactions |
+| --- | --- | --- |
+| pEUR | `763fd7a5f8237249a549c591b7b320abe83c7c621ea0846e1af44e1559b017e3` | deploy `817e4747…`; mint 1,000,000.00 `734fcb5f…` (block 821687); token `7ec1d9ec691fb0489fddacf5c92ef7ab6bb294b0446a4489668daa53db046157` |
+| taxparams | `fdcb22a8508a1ec437f2d3ad83cf87f0e08f3610da6fcf2638aad5df37af7532` | DUTCH_V1 published `216c1a97…` — hash `7d729df9…`, unchanged |
+| payroll | `2747020da58755a08787386a3c999f47c3570c8b8e019603cdd866974124024d` | employer `9e584bd4…` assigned `1d2c5c8a…`; 2026 opened `4cc0b224…` |
+| fund | `ae30b2888cf2c9722821dd54763d079249c576ead3e795c9d91cafe374fa31a1` | deploy `17d12935…`; v1 published `adada36b…`; v1 recorded for 2026 `f5c00d92…`; €300.00 deposited for 202609 `cf021e53…` |
+| taxvault | `efc7a884ae9aec09715369f6b51e873626001fccaeba794022a54f4c022a6fb2` | deploy `540b0ed6…` |
+
+The previous five are archived in `deployment.json` as `…:pre-20260911`.
+
+Three things went wrong on the way, each worth knowing:
+
+- **The mint straight after the pEUR deploy failed with node error 170**, the
+  stale-dust-proof error `status.md` records for rapid transactions: the deploy
+  script submits both from one process. A mint from a fresh process succeeded.
+- **An inline `node -e` script cannot prove.** The in-process prover starts
+  workers with the parent's flags, and `--input-type=module` is only valid with
+  inline code, so every worker died with `--input-type can only be used with
+  string input via --eval`. Run from a file.
+- **`deploy:tax` reuses any registry record it can find**, in `deployment.json`
+  or in the `.env` baseline. Forcing a fresh one took both moving the record to an
+  archive key and blanking `taxparams_address`.
 
 ## Appendix: the tax and vault design
 

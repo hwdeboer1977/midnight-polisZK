@@ -14,6 +14,7 @@ import { walletCanProve } from "../lib/submitPayroll";
 import { useWallet } from "../wallet/WalletContext";
 import { useAttestations } from "../lib/useAttestations";
 import { assembleClaim } from "../lib/assembleClaim";
+import { openingDate, readClaimHistory } from "../lib/claimStatus";
 
 /**
  * Where a claimant actually claims.
@@ -139,8 +140,28 @@ export function ClaimForm() {
   async function claim() {
     if (!api || !account || !bundle || !payslip) return;
     setError(null);
-    setStep("Starting…");
+    setStep("Checking which month you can claim…");
     try {
+      if (!bundle.fund) {
+        throw new Error("No fund address came with this claim — the service has no fund deployed.");
+      }
+      // The month is the chain's answer, not a choice on this page: the earliest
+      // entitlement month that has begun and carries no nullifier of hers.
+      const history = await readClaimHistory({
+        networkId,
+        fundAddress: bundle.fund,
+        coinPublicKey: account.coinPublicKey,
+        finalPeriod: bundle.leaf.finalPeriod,
+      });
+      const month = history.nextClaimable;
+      if (month === null) {
+        throw new Error(
+          history.nextOpening
+            ? `Your next month, ${periodName(history.nextOpening.period)}, opens on ` +
+                `${openingDate(history.nextOpening.opensAt)}. The fund refuses a month before its first day.`
+            : "Every month of this entitlement has already been claimed."
+        );
+      }
       const result = await submitClaim({
         api,
         networkId,
@@ -148,11 +169,7 @@ export function ClaimForm() {
         payslip,
         coinPublicKey: account.coinPublicKey,
         provingMode: delegateProving && canDelegate ? "wallet" : "local",
-        // ⚠️ A zero-based INDEX, not a period. `claim` asserts
-        // `window < durationMonths`, which a YYYYMM value could never satisfy.
-        // The pilot claims the first window; a monthly scheme steps this
-        // forward, one nullifier per index.
-        window: 0,
+        month,
         onProgress: setStep,
       });
       setDone(result);
@@ -168,7 +185,7 @@ export function ClaimForm() {
       <section className="callout">
         <h2>Benefit paid — €{formatPeur(done.benefitMinor)}</h2>
         <p className="ok-line" style={{ marginTop: 0 }}>
-          ✓ Claimed, and the window is now spent
+          ✓ Claimed for {periodName(done.month)}
         </p>
         {/* Shown as a payslip would show it. A benefit is taxable income, and a
             net figure with no breakdown is the thing people misread. */}
@@ -191,20 +208,22 @@ export function ClaimForm() {
         <p className="note">
           Withheld under the same tax rules your final month was filed under —
           the circuit checks that, so the benefit cannot be taxed under a
-          schedule nobody published. The withheld part stays with the fund until
-          it is remitted to the treasuries.
+          schedule nobody published. The withheld part went straight to the tax
+          and social treasuries in the same transaction, as shielded coins, so no
+          withholding figure was published either.
         </p>
         <CopyRow label="Transaction" value={done.txHash} />
         <p className="note">
           The coin is in your wallet and its value was never published. What the
-          chain recorded is that a claim happened, and one nullifier nobody can
-          link to you — not the amount, not your employer, not which month of
-          salary it was derived from.
+          chain recorded is that a claim happened, for which final period and
+          which month, with one nullifier — not the amount, not your employer,
+          not your salary.
         </p>
         <p className="note">
-          Claiming window {done.window} again is refused on chain: the nullifier
-          is already in the fund's spent set, and it is the image of a secret, so
-          the set says nothing about whose it is.
+          Claiming {periodName(done.month)} again is refused on chain: its
+          nullifier is in the fund's spent set. Anyone holding your payment
+          address could recompute that entry — the trade described under “Have
+          you already claimed?”.
         </p>
       </section>
     );

@@ -83,7 +83,8 @@ function deploy() {
   const { currentContractState } = contract.initialState(
     createConstructorContext({}, hex(PLATFORM.bytes)),
     key(0xaa),
-    key(0xbb)
+    key(0xbb),
+    TOKEN
   );
   return currentContractState;
 }
@@ -210,19 +211,29 @@ else fail("a payslip opens the commitment while the seat is held", "it did not o
   const STRANGER = key(0x99);
   const attestation = bytes32(0xee);
 
-  // `endEmployment` requires a settled slot, so slot 0 is funded and paid
-  // before any of this. Funded per-slot rather than with `fundPeriod` on
-  // purpose: nothing here is about the withholding.
+  // `endEmployment` requires a settled slot — paid, with the month's
+  // withholding funded — so slot 0 is funded and paid and the withholding moved
+  // in before any of this. The withholding is then remitted as well, so the
+  // revoke below is not refused for money the contract still holds.
+  const taxTotal = LINES[0].taxQuotient + LINES[1].taxQuotient;
+  const socialTotal = LINES[0].contribQuotient + LINES[1].contribQuotient;
   const settle = (from) => {
     let s = call(EMPLOYER_A, from, "fundEmployee",
       PERIOD, 0n, GROSS[0], LINES[0].taxQuotient, LINES[0].contribQuotient,
       LINES[0].netMinor, 4n, NONCES[0],
       { nonce: bytes32(0xa0), color: TOKEN, value: LINES[0].netMinor });
-    return call(EMPLOYER_A, s, "payEmployee",
+    s = call(EMPLOYER_A, s, "payEmployee",
       PERIOD, 0n, GROSS[0], LINES[0].taxQuotient, LINES[0].contribQuotient,
       LINES[0].netMinor, 4n, NONCES[0],
       { nonce: bytes32(0xa0), color: TOKEN, value: LINES[0].netMinor, mt_index: 0n },
       PAYEES[0]);
+    s = call(EMPLOYER_A, s, "fundWithholding", PERIOD,
+      { nonce: bytes32(0xa2), color: TOKEN, value: taxTotal },
+      { nonce: bytes32(0xa3), color: TOKEN, value: socialTotal });
+    s = call(EMPLOYER_A, s, "remit", PERIOD, true, key(0xaa),
+      { nonce: bytes32(0xa2), color: TOKEN, value: taxTotal, mt_index: 1n });
+    return call(EMPLOYER_A, s, "remit", PERIOD, false, key(0xbb),
+      { nonce: bytes32(0xa3), color: TOKEN, value: socialTotal, mt_index: 2n });
   };
   state = settle(state);
   const refused = (caller, state, expect, name) => {

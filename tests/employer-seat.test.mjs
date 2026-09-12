@@ -89,7 +89,8 @@ function deploy() {
   const { currentContractState } = contract.initialState(
     createConstructorContext({}, hex(PLATFORM.bytes)),
     TAX_TREASURY,
-    SOCIAL_TREASURY
+    SOCIAL_TREASURY,
+    TOKEN
   );
   return currentContractState;
 }
@@ -314,7 +315,7 @@ console.log("\nthe employer seat\n");
 // withholding together, so a non-zero pool marks a month in flight.
 //
 // The property that makes it the RIGHT proxy is who can clear it. `remit` is
-// callable by the platform with no employer seated, so this delays a revoke by
+// callable by the platform as well as the employer, so this delays a revoke by
 // one transaction the platform can always make and never blocks it — unlike a
 // funded-unpaid counter, which only `payPeriod` clears and which would let an
 // employer veto their own revocation by funding a slot and never paying it.
@@ -358,8 +359,8 @@ console.log("\nthe employer seat\n");
       early.ok ? "the seat was vacated with money mid-flight" : early.error
     );
 
-  // The platform clears it itself — no employer needed, so this is a delay and
-  // not a veto.
+  // The platform clears it itself — no employer action needed, so this is a
+  // delay and not a veto.
   let s2 = call(PLATFORM, funded.state, "remit",
     PERIOD, true, TAX_TREASURY, qualified(0xf2, taxTotal, 2n));
   if (!s2.ok) fail("the platform can remit without the employer", s2.error);

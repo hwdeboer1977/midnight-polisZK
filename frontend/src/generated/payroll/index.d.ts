@@ -522,7 +522,6 @@ export type Ledger = {
     }
   };
   readonly payToken: Uint8Array;
-  readonly payTokenSet: boolean;
   readonly taxPool: bigint;
   readonly socialPool: bigint;
   readonly taxRemitted: bigint;
@@ -562,7 +561,8 @@ export declare class Contract<PS = any, W extends Witnesses<PS> = Witnesses<PS>>
   constructor(witnesses: W);
   initialState(context: __compactRuntime.ConstructorContext<PS>,
                taxTo_0: { bytes: Uint8Array },
-               socialTo_0: { bytes: Uint8Array }): __compactRuntime.ConstructorResult<PS>;
+               socialTo_0: { bytes: Uint8Array },
+               pays_0: Uint8Array): __compactRuntime.ConstructorResult<PS>;
 }
 
 export declare function ledger(state: __compactRuntime.StateValue | __compactRuntime.ChargedState): Ledger;

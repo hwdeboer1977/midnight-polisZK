@@ -25,10 +25,11 @@ import CompactStandardLibrary;
 // The anonymity set is what makes a claim safe to make, so it is worth being
 // explicit about its shape. Anchors are published as ONE Merkle root per
 // period, over every accredited employer on the platform. So not per employer,
-// and not per employee. A claim discloses the period its attestation names and
-// nothing else, so a claimant is indistinguishable from everyone terminated in
-// the same month anywhere on the platform. A root per employer would undo that
-// by making the disclosed root name the employer.
+// and not per employee. A claim discloses the final period its attestation
+// names, the calendar month being claimed and the nullifier, and nothing else,
+// so a claimant is indistinguishable from everyone terminated in the same month
+// anywhere on the platform. A root per employer would undo that by making the
+// disclosed root name the employer.
 //
 //
 // This is also why membership is proved with a path rather than a map lookup.
@@ -37,12 +38,23 @@ import CompactStandardLibrary;
 // published — so a lookup would announce exactly which slot of which employer
 // the claim was for. The path is a witness; only the root and the period are
 // public.
+//
+// ── No public amounts ──────────────────────────────────────────────────────
+// The tax and contribution withheld from a benefit leave INSIDE the claim, as
+// shielded coins straight to the two treasuries. They used to accumulate in
+// public pools and be remitted later, and because every claim is its own
+// transaction, each claim moved those pools by exactly its own withholding —
+// which inverts to the benefit and, below the cap, to the final gross. Nothing
+// public moves by an amount now. See `claim` for what that costs.
 
 // Struct BenefitParams: the benefit rules a claim is computed under. Published
-// by the platform, versioned, and hashed into `paramsFor` so a claim can prove
-// which version produced its figure.
+// by the platform, versioned, and hashed into `paramsFor`; the platform then
+// records which version applies to each final period in `paramsHashFor`.
 struct BenefitParams {
   version: Uint<16>;
+  // The first final period this version may be recorded for, as YYYYMM.
+  // Checked by `setParamsFor`, so a period can't be pointed at rules that
+  // didn't exist yet.
   validFrom: Uint<32>;
   // The cap on the monthly gross the benefit is computed from. Dutch Unemployment Benefit (UB) caps a
   // daily wage; this caps its monthly equivalent, and the figure is a policy
@@ -53,13 +65,9 @@ struct BenefitParams {
   rate: Uint<16>;
   // Months of employment required. Twelve, under the rules this models.
   minMonths: Uint<16>;
-  // How many monthly windows one termination entitles her to.
-  //
-  // ⚠️ Added because it was missing, and `claim` therefore never constrained
-  // `window`: it appeared in the nullifier and in no assertion. The duration
-  // was a TypeScript constant the page displayed, so a claimant calling the
-  // circuit directly could pass window 0, 1, 2, 3 … and draw a distinct
-  // nullifier — and a distinct payment — for each, until the fund was empty.
+  // How many calendar months after the final period can be claimed: a duration
+  // of three admits the three months following the final period, and nothing
+  // else.
   //
   // Here rather than as a circuit constant because it's a policy figure like
   // the rest: published, versioned, changed by publishing a new version.
@@ -159,13 +167,20 @@ struct RootAuthorSlot {
   root: Field;
 }
 
-// Struct ClaimNullifier: marks one monthly window as claimed. Hashed, checked
-// against `spent`, then inserted — so each (person, window) pays out once, and
-// `fund` stops a nullifier being replayed against another deployment.
+// Struct ClaimNullifier: marks one calendar month as claimed by one wallet.
+// Hashed, checked against `spent`, then inserted — so each (person, month) pays
+// out once, and `fund` stops a nullifier being replayed against another
+// deployment.
+//
+// Keyed on the MONTH, not on a window counted from the termination. That is
+// what lets a later job loss be claimed at all — its months are new months —
+// while two terminations that overlap can't pay the same month twice. A window
+// index would get one of those wrong: per wallet it strands the second job
+// loss, per termination it pays overlapping attestations twice.
 //
 // ⚠️ Keyed on her WALLET, and this is a deliberate trade. It used to key on a
-// secret claim key, because hash(payee, window) is computable by anyone who has
-// ever been given her coin public key — they can enumerate windows, test the
+// secret claim key, because hash(payee, month) is computable by anyone who has
+// ever been given her coin public key — they can enumerate months, test the
 // public `spent` set, and read her benefit history off it.
 //
 // That property cost a file. The claim key lived in one download, couldn't be
@@ -175,27 +190,52 @@ struct RootAuthorSlot {
 //
 // What is NOT given up: only she can claim. `payeeBinding` binds the claim to
 // `ownPublicKey()` independently. What is given up is unlinkability — anyone
-// holding her payment address can tell THAT she claimed, never how much or for
-// how long.
+// holding her payment address can tell THAT she claimed, and for which months,
+// never how much.
 //
 // Restoring it without a file needs a secret her wallet can reproduce on
 // demand. WebAuthn PRF is that shape; nothing in the connector is, today.
 struct ClaimNullifier {
   payee: ZswapCoinPublicKey;
-  window: Uint<32>;
+  month: Uint<32>;
   fund: Bytes<32>;
+}
+
+// Struct ClaimMonth: the calendar month being claimed, and the arithmetic that
+// pins it. All of it is disclosed — the month is public anyway, since the
+// block-time check publishes when it started.
+//
+// Compact has no division, so a YYYYMM number can't be split into year and
+// month in-circuit, and a year can't be tested for leap-ness. The claimant
+// supplies the pieces and `claim` / `monthStart` pin each one to the single
+// value that fits.
+struct ClaimMonth {
+  // The final period split into year and month: finalYear * 100 + finalMonth
+  // must equal `leaf.finalPeriod`, with finalMonth 1-12.
+  finalYear: Uint<16>;
+  finalMonth: Uint<8>;
+  // The month being claimed.
+  year: Uint<16>;
+  month: Uint<8>;
+  // floor(year / 4), floor(year / 100), floor(year / 400) — pinned in
+  // `monthStart`, and what decides whether `year` is a leap year.
+  q4: Uint<16>;
+  q100: Uint<16>;
+  q400: Uint<16>;
 }
 
 export ledger platform: ZswapCoinPublicKey;
 
 // Where withholding on a benefit goes, frozen at deploy and never settable again.
-// Same arrangement payroll uses
+// `claim` sends to these directly. Same two keys payroll uses: money withheld
+// from a salary and money withheld from the benefit that replaces it land in
+// the same place.
 export ledger taxTreasury: ZswapCoinPublicKey;
 export ledger socialTreasury: ZswapCoinPublicKey;
 
 // paramsFor: version → persistentHash(BenefitParams). The hash only, not the
-// struct — a claim supplies the params and `claim` checks them against this,
-// the same way payroll uses `paramsHashFor`.
+// struct — the platform supplies the params when recording them for a period,
+// and `setParamsFor` checks them against this.
 //
 // Append-only, for the same reason the tax registry is: a benefit computed
 // under rules that can be rewritten afterwards proves nothing about what
@@ -205,11 +245,23 @@ export ledger paramsFor: Map<Uint<16>, Bytes<32>>;
 // `latestVersion` is the pointer a client reads to find the current rules.
 export ledger latestVersion: Uint<16>;
 
+// paramsHashFor: final period (YYYYMM) → the hash of the benefit rules a
+// termination in that month is claimed under. Platform-recorded, write-once,
+// and only ever a version published in `paramsFor`.
+//
+// This is what stops a claimant choosing her rules. With only a version check,
+// every published version with `validFrom` at or before her final period
+// qualified — so an older one with a higher rate, a lower `minMonths` or a
+// longer duration was hers to pick. Payroll pins its tax rules per period the
+// same way, with `paramsHashFor`.
+export ledger paramsHashFor: Map<Uint<32>, Bytes<32>>;
+
 // rootFor: period (YYYYMM) → the Merkle root of that period's claim tree.
 // One root per period over every accredited employer on the platform — that
 // breadth is the anonymity set. A claim proves membership in this tree and
-// discloses only which period, so the claimant is indistinguishable from
-// everyone terminated that month anywhere on the platform.
+// discloses which final period (and which month it claims), so the claimant is
+// indistinguishable from everyone terminated that month anywhere on the
+// platform.
 export ledger rootFor: Map<Uint<32>, Field>;
 
 // rootAuthor: hash(author, period, root) → who published it.
@@ -220,33 +272,27 @@ export ledger rootFor: Map<Uint<32>, Field>;
 // others out.
 export ledger rootAuthor: Map<Bytes<32>, ZswapCoinPublicKey>;
 
-// Spent nullifiers. Public, and safe to be: each is the image of a secret, so
-// the set is a list of opaque values that nothing links to a person.
+// Spent nullifiers. Public. Each is hash(wallet, month, fund), so anyone who
+// holds a claimant's coin public key can find her entries here — see
+// `ClaimNullifier` for why that trade was made.
 export ledger spent: Set<Bytes<32>>;
 
 // Public totals. Coarse by design — how many claims, never who or how much each.
 export ledger claimsPaid: Counter;
 
-// Tax and social withheld from benefits paid out: held in the pools until
-// remitted, then accumulated in the remitted totals. All public.
+// The token this fund holds and pays in, frozen at deploy.
 //
-// ⚠️ This LEAKS what the rest of the fund hides. Withholding is a deterministic
-// function of the benefit, which is a deterministic function of the gross, so
-// public `taxPool + taxRemitted` discloses the fund's aggregate outflow — and
-// with `claimsPaid` alongside it, the average benefit.
-//
-// Accepted deliberately: withheld tax that is never remitted is not tax, and
-// remitting needs the contract to know what it owes, which means public state.
-// The alternative — retaining it silently — is a smaller benefit described as
-// a tax.
-//
-// What is NOT leaked: any individual benefit, or which claim contributed what.
-export ledger taxPool: Uint<64>;
-export ledger socialPool: Uint<64>;
-export ledger taxRemitted: Uint<64>;
-export ledger socialRemitted: Uint<64>;
+// ⚠️ It used to be set by the FIRST COIN RECEIVED. `fundBenefits` is open to
+// anyone, so anyone could send one unit of a token they minted themselves, pin
+// the fund to it, and every real contribution afterwards would fail `wrong
+// token for this fund` — permanently. The same attack `taxvault.compact`
+// closed the same way. The price is a deploy-order dependency: the token must
+// exist before the fund.
 export ledger benefitToken: Bytes<32>;
-export ledger benefitTokenSet: Boolean;
+
+// A receipt counter: every deposit, and each claim's surviving change coin, gets
+// the next number. Spent coins keep their numbers. The two intermediate change
+// coins a claim creates and spends in the same transaction get none.
 export ledger coinsReceived: Uint<32>;
 
 // Contributions coming IN, per period and in total.
@@ -264,36 +310,41 @@ export ledger coinsReceived: Uint<32>;
 // records what a depositor states. The mismatch is publicly checkable, not
 // enforced here.
 //
-// Note the direction: these are money IN. `taxPool` and the rest are tax
-// withheld from benefits paid OUT — different question, separate counters.
+// Money going OUT is deliberately not totalled: see the note on `claim`.
 export ledger contributedFor: Map<Uint<32>, Uint<64>>;
 export ledger contributionSourceFor: Map<Uint<32>, Bytes<32>>;
 export ledger contributedTotal: Uint<64>;
 export ledger contributionCount: Uint<32>;
 
-// Which leaf holds the pool's current coin. An ordinal, not a nonce and not a
-// value: enough for the fund's operator to reconstruct the coin they already
+// The receipt number of the coin that most recently entered the pool: a
+// deposit, or the change a claim left behind. An ordinal — not a nonce, not a
+// value, and not a Zswap leaf position (receipt order and tree order can
+// differ). Enough for the fund's operator to reconstruct the coin they already
 // know the value of, and useless to anyone who does not.
+//
+// It names the LATEST coin only. The fund holds one coin per deposit plus the
+// change coins, and `claim` accepts any fund-owned coin of the right token, so
+// an older coin is still spendable, just not pointed at here.
 export ledger poolOrdinal: Uint<32>;
 
-// Constructor
-constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
+// Constructor: the deployer becomes the platform; the treasuries and the token
+// are frozen here and can never be changed.
+constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey, holds: Bytes<32>) {
   platform = disclose(ownPublicKey());
   latestVersion = 0;
-  benefitTokenSet = false;
+  benefitToken = disclose(holds);
   contributedTotal = 0;
   contributionCount = 0;
   coinsReceived = 0;
 
   taxTreasury = disclose(taxTo);
   socialTreasury = disclose(socialTo);
-  taxPool = 0;
-  socialPool = 0;
-  taxRemitted = 0;
-  socialRemitted = 0;
 }
 
 // Publishes a rule set. Platform-only and write-once per version.
+//
+// Publishing makes a version AVAILABLE; it applies to nothing until
+// `setParamsFor` records it for a period.
 export circuit publishParams(params: BenefitParams): [] {
   assert(ownPublicKey() == platform, "only the platform may publish rules");
   const v = disclose(params.version);
@@ -301,10 +352,61 @@ export circuit publishParams(params: BenefitParams): [] {
   assert(!paramsFor.member(v), "that version is already published");
   assert(disclose(params.rate) <= 10000, "rate cannot exceed 100%");
   assert(disclose(params.minMonths) > 0, "eligibility needs a minimum");
+  assert(disclose(params.durationMonths) > 0, "an entitlement needs at least one month");
 
   paramsFor.insert(v, persistentHash<BenefitParams>(disclose(params)));
   if (v > latestVersion) {
     latestVersion = v;
+  }
+}
+
+// setParamsFor: records which published rule set terminations in a range of
+// final periods are claimed under. Platform-only, write-once per period.
+//
+// The same shape as `payroll.setParamsFor` — a year and a month range, so a
+// whole year is one transaction — with one thing payroll can't do: the rules
+// are checked against this contract's own registry. Payroll takes a hash on
+// trust because the tax registry is another contract; here `paramsFor` is in
+// the same ledger, so only a published version can be recorded.
+//
+// Months already recorded are skipped, not rejected, so re-running a year is
+// safe and a recorded month can never be changed.
+export circuit setParamsFor(
+  year: Uint<16>,
+  fromMonth: Uint<8>,
+  months: Uint<8>,
+  params: BenefitParams
+): [] {
+  assert(ownPublicKey() == platform, "only the platform may set the rule set");
+
+  const v = disclose(params.version);
+  assert(paramsFor.member(v), "no such rule set");
+  const h = persistentHash<BenefitParams>(disclose(params));
+  assert(paramsFor.lookup(v) == h, "those are not the published rules for that version");
+
+  const y = disclose(year);
+  assert(y >= 2000, "year must be YYYY, e.g. 2026");
+  assert(y <= 2999, "year must be YYYY, e.g. 2026");
+
+  const first = disclose(fromMonth);
+  const count = disclose(months);
+  assert(first >= 1, "the first month must be 1-12");
+  assert(first <= 12, "the first month must be 1-12");
+  assert(count >= 1, "must record at least one month");
+  // An upper bound on the last month rather than on the count, so a range can
+  // never roll past December into a month 13.
+  assert((first as Uint<16>) + (count as Uint<16>) <= 13, "the range runs past December");
+
+  const base = ((y as Uint<32>) * 100 + (first as Uint<32>)) as Uint<32>;
+  assert(disclose(params.validFrom) <= base, "that rule set does not apply yet");
+
+  for (const i of 0..12) {
+    if ((i as Uint<8>) < count) {
+      const p = (base + (i as Uint<32>)) as Uint<32>;
+      if (!paramsHashFor.member(p)) {
+        paramsHashFor.insert(p, h);
+      }
+    }
   }
 }
 
@@ -330,9 +432,6 @@ export circuit publishRoot(period: Uint<32>, root: Field): [] {
   assert(!rootAuthor.member(slot), "you have already published that root");
   rootAuthor.insert(slot, author);
 
-  // The platform's root is the one claims check against today. Widening this
-  // to accept another author is a policy change, not a contract change: the
-  // roots are all here and attributable.
   if (author == platform) {
     rootFor.insert(p, disclose(root));
   }
@@ -365,10 +464,6 @@ export circuit fundBenefits(
   assert(p <= 299912, "period must be YYYYMM, e.g. 202609");
   assert(disclose(amount) > 0, "a contribution of nothing records nothing");
 
-  if (!benefitTokenSet) {
-    benefitToken = disclose(coin.color);
-    benefitTokenSet = true;
-  }
   assert(benefitToken == disclose(coin.color), "wrong token for this fund");
   assert(coin.value == disclose(amount) as Uint<128>, "coin does not hold the stated amount");
 
@@ -391,13 +486,31 @@ export circuit fundBenefits(
   contributionCount = (contributionCount + 1) as Uint<32>;
 }
 
-// CLAIM: claims one month's benefit.
+// CLAIM: claims one calendar month's benefit.
 //
-// Discloses the period, the params version, the nullifier, and that a claim
-// happened. Not the employer, not the slot, not the salary, not the benefit.
+// Discloses the final period, the month claimed, the nullifier, which rule set
+// applies (its hash is recorded per period) and that a claim happened. Not the
+// employer, not the slot, not the salary, not the benefit.
+//
+// Pays three shielded coins out of one fund coin: the net to the claimant, the
+// withheld tax to `taxTreasury`, the withheld contribution to `socialTreasury`.
+// The remainder comes back to the fund as change.
+//
+// ⚠️ What sending the withholding here costs:
+//   · The public can no longer see how much benefit tax was withheld. Only the
+//     treasuries can, by the coins they receive.
+//   · Each treasury receives one coin per claim, and can invert its value to
+//     that claim's benefit and final gross. It learns the figures an observer
+//     used to learn from the pools — not who claimed.
+//   · The claim transaction needs the treasuries' ENCRYPTION keys as well as
+//     their coin keys, or it builds coins they can never find.
 //
 // The rate is flat here; the real UB scheme steps it down after the opening
 // months. That belongs in `BenefitParams` as a schedule and isn't modelled.
+//
+// ⚠️ The fund can't see re-employment — it can't read a payroll ledger — so a
+// claimant who finds work keeps claiming until the duration runs out. The
+// block-time check paces claims to the calendar; it does not stop them.
 export circuit claim(
   path: MerkleTreePath<16, Bytes<32>>,
   leaf: ClaimLeaf,
@@ -412,7 +525,8 @@ export circuit claim(
   employer: ZswapCoinPublicKey,
   payrollParamsHash: Bytes<32>,
   nonce: Bytes<32>,
-  window: Uint<32>,
+  // Which calendar month is being claimed, with the pieces that pin it.
+  calendar: ClaimMonth,
   params: BenefitParams,
   // The tax schedule the benefit is withheld under. Not trusted: pinned below
   // against the `paramsHash` bound into her salary commitment, so it is
@@ -425,16 +539,16 @@ export circuit claim(
   benefitSocialQ: Uint<60>,
   coin: QualifiedShieldedCoinInfo
 ): [] {
-  const version = disclose(params.version);
-  assert(paramsFor.member(version), "no such rule set");
-  assert(
-    paramsFor.lookup(version) == persistentHash<BenefitParams>(disclose(params)),
-    "those are not the published rules for that version"
-  );
-
   const p = disclose(leaf.finalPeriod);
-  assert(disclose(params.validFrom) <= p, "that rule set does not apply yet");
   assert(rootFor.member(p), "no claim tree published for that period");
+
+  // The rules. Recorded by the platform for her final period, so she cannot
+  // pick a more generous published version.
+  assert(paramsHashFor.member(p), "no benefit rules recorded for that period");
+  assert(
+    paramsHashFor.lookup(p) == persistentHash<BenefitParams>(disclose(params)),
+    "those are not the benefit rules recorded for that period"
+  );
 
   // Membership, as a witness. The leaf is never disclosed, so proving it is in
   // the tree says only "somebody terminated that month is claiming".
@@ -453,13 +567,30 @@ export circuit claim(
   // Auditable after the fact — the period count really is public.
   assert(leaf.monthsWorked >= params.minMonths, "not enough months of employment");
 
-  // The window is within the entitlement. Zero-based, so a duration of three
-  // admits windows 0, 1 and 2 — and nothing else. Without this the `spent` set
-  // bounded repeats of ONE window and never the number of windows.
+  // ── The month ─────────────────────────────────────────────────────────────
+  // Counted as year * 12 + month on both sides, so "the Nth month after the
+  // final period" needs no division and rolls over December correctly.
+  const cal = disclose(calendar);
+  assert(cal.finalMonth >= 1, "the final month must be 1-12");
+  assert(cal.finalMonth <= 12, "the final month must be 1-12");
   assert(
-    disclose(window) < params.durationMonths as Uint<32>,
-    "that window is beyond this entitlement"
+    (cal.finalYear as Uint<32>) * 100 + (cal.finalMonth as Uint<32>) == p,
+    "that year and month are not the final period"
   );
+  const finalIndex = (cal.finalYear as Uint<32>) * 12 + (cal.finalMonth as Uint<32>);
+  const claimIndex = (cal.year as Uint<32>) * 12 + (cal.month as Uint<32>);
+  assert(claimIndex > finalIndex, "a benefit starts the month after the final period");
+  assert(
+    claimIndex - finalIndex <= params.durationMonths as Uint<32>,
+    "that month is beyond this entitlement"
+  );
+  // Not before the month has begun, by the block's clock, in UTC. `monthStart`
+  // also checks the month is 1-12 and pins the leap-year quotients.
+  assert(
+    blockTimeGte(monthStart(cal.year, cal.month, cal.q4, cal.q100, cal.q400)),
+    "that month has not started yet"
+  );
+  const claimedMonth = ((cal.year as Uint<32>) * 100 + (cal.month as Uint<32>)) as Uint<32>;
 
   // Hers. Only the holder of the coin key that payroll filed can produce this,
   // which is what stops the employer who wrote the attestation from spending it.
@@ -538,9 +669,9 @@ export circuit claim(
   // this line uniquely rejects is withholding exactly EQUAL to the benefit,
   // which the subtraction would accept as a net of zero.
   //
-  // Rejecting it is deliberate. A zero-net claim would burn the window's
+  // Rejecting it is deliberate. A zero-net claim would burn the month's
   // nullifier — `spent` is inserted below and never removed — and send a coin
-  // worth nothing, so the claimant would spend her one claim on that window to
+  // worth nothing, so the claimant would spend her one claim on that month to
   // receive nothing and could not retry.
   //
   // ⚠️ Unreachable under any sane rule set, and worth knowing before anyone
@@ -555,114 +686,76 @@ export circuit claim(
     benefitTaxQ + benefitSocialQ < benefitQ,
     "withholding leaves nothing of the benefit"
   );
-  // What actually reaches her. The withheld part is never sent, so it stays in
-  // the pool coin's change and is already backing the pools below.
+  // What actually reaches her. The withheld part goes to the treasuries below.
   const benefitNet = (benefitQ - benefitTaxQ - benefitSocialQ) as Uint<60>;
 
-  // Once per window. Fresh-then-inserted, so a replay inside one transaction
+  // Once per month. Fresh-then-inserted, so a replay inside one transaction
   // cannot slip through between the two.
   const nullifier = persistentHash<ClaimNullifier>(
     ClaimNullifier {
       payee: ownPublicKey(),
-      window: disclose(window),
+      month: claimedMonth,
       fund: kernel.self().bytes
     }
   );
-  assert(!spent.member(disclose(nullifier)), "already claimed for that window");
+  assert(!spent.member(disclose(nullifier)), "already claimed for that month");
   spent.insert(disclose(nullifier));
 
-  assert(benefitTokenSet, "the fund holds nothing yet");
   assert(benefitToken == disclose(coin.color), "wrong token for this fund");
 
-  // The coin must cover the benefit — at least, not exactly, unlike everywhere
-  // else in this codebase.
+  // The coin must hold MORE than the whole benefit — net and withholding both,
+  // and at least one unit over.
   //
-  // Payroll requires an exact coin because a remainder there would be stranded.
-  // Here `sendShielded` splits: it derives the change coin's nonce from the
-  // input's and creates it as an output back to this contract, so the remainder
-  // stays the fund's.
+  // More than the benefit, because all of it leaves in this circuit. The
+  // strict inequality is what guarantees change after every one of the three
+  // sends, so each send below has a coin to spend and the fund always keeps a
+  // coin back.
   //
-  // Exactness would also leak. Sizing a coin to the benefit means knowing the
-  // benefit, which derives from her private salary — so whoever prepared the
-  // coin would have to be told the figure this contract exists to hide.
-  //
-  // Only the NET leaves; the withheld tax stays in the change and backs the
-  // pools.
+  // Not exact, unlike payroll. Payroll requires an exact coin because a
+  // remainder there would be stranded; here `sendShielded` splits, returning
+  // the remainder to this contract. And exactness would leak: sizing a coin to
+  // the benefit means knowing the benefit, which derives from her private
+  // salary — so whoever prepared the coin would have to be told the figure this
+  // contract exists to hide.
   assert(
-    coin.value >= benefitNet as Uint<128>,
+    coin.value > benefitQ as Uint<128>,
     "the pool coin cannot cover the benefit"
   );
 
-  const paid = sendShielded(
+  // Three sends, chained through the change. The first spends a coin already
+  // in the Zswap tree; the other two spend change created a moment earlier in
+  // this same transaction, which is what `sendImmediateShielded` is for.
+  //
+  // ⚠️ Run in the local runtime, not yet on chain. Untested on chain: spending
+  // change in the same transaction, and a zero-value send, which a rule set
+  // with a zero rate would produce for the tax or the contribution.
+  const toClaimant = sendShielded(
     disclose(coin),
     left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
     disclose(benefitNet) as Uint<128>
   );
-
-  // The change's ordinal, so the pool can be found again. The nonce is NOT
-  // recorded: it is derivable from the spent coin's, and publishing it
-  // alongside the public coin commitment would let anyone try candidate values
-  // until one matched — recovering the pool balance, and with it every
-  // benefit, from the differences between claims.
-  if (paid.change.is_some) {
-    poolOrdinal = coinsReceived;
-    coinsReceived = (coinsReceived + 1) as Uint<32>;
-  }
-
-  taxPool = (taxPool + disclose(benefitTaxQ)) as Uint<64>;
-  socialPool = (socialPool + disclose(benefitSocialQ)) as Uint<64>;
-  claimsPaid.increment(1);
-}
-
-// Sends the withheld tax on to the treasury it was destined for at deploy.
-export circuit remitBenefitTax(coin: QualifiedShieldedCoinInfo): [] {
-  assert(taxPool > 0, "no withheld tax to remit");
-  assert(benefitTokenSet, "the fund holds nothing yet");
-  assert(benefitToken == disclose(coin.color), "wrong token for this fund");
-  assert(coin.value >= taxPool as Uint<128>, "that coin cannot cover the withheld tax");
-
-  const owed = taxPool;
-  const sent = sendShielded(
-    disclose(coin),
+  const toTax = sendImmediateShielded(
+    toClaimant.change.value,
     left<ZswapCoinPublicKey, ContractAddress>(taxTreasury),
-    disclose(owed) as Uint<128>
+    disclose(benefitTaxQ) as Uint<128>
   );
-
-  // Same bookkeeping as a claim: the remainder comes back as a new coin, and
-  // the pool has to keep pointing at whichever coin that is.
-  if (sent.change.is_some) {
-    poolOrdinal = coinsReceived;
-    coinsReceived = (coinsReceived + 1) as Uint<32>;
-  }
-
-  taxPool = 0;
-  taxRemitted = (taxRemitted + owed) as Uint<64>;
-}
-
-// The same for the contribution, to its own treasury.
-export circuit remitBenefitSocial(coin: QualifiedShieldedCoinInfo): [] {
-  assert(socialPool > 0, "no withheld contribution to remit");
-  assert(benefitTokenSet, "the fund holds nothing yet");
-  assert(benefitToken == disclose(coin.color), "wrong token for this fund");
-  assert(
-    coin.value >= socialPool as Uint<128>,
-    "that coin cannot cover the withheld contribution"
-  );
-
-  const owed = socialPool;
-  const sent = sendShielded(
-    disclose(coin),
+  const toSocial = sendImmediateShielded(
+    toTax.change.value,
     left<ZswapCoinPublicKey, ContractAddress>(socialTreasury),
-    disclose(owed) as Uint<128>
+    disclose(benefitSocialQ) as Uint<128>
   );
+  assert(toSocial.change.is_some, "the pool coin cannot cover the benefit");
 
-  if (sent.change.is_some) {
-    poolOrdinal = coinsReceived;
-    coinsReceived = (coinsReceived + 1) as Uint<32>;
-  }
+  // The surviving change's ordinal, so the pool can be found again. The two
+  // intermediate change coins are spent in this transaction and never counted.
+  // The nonce is NOT recorded: it is derivable from the spent coin's, and
+  // publishing it alongside the public coin commitment would let anyone try
+  // candidate values until one matched — recovering the pool balance, and with
+  // it every benefit, from the differences between claims.
+  poolOrdinal = coinsReceived;
+  coinsReceived = (coinsReceived + 1) as Uint<32>;
 
-  socialPool = 0;
-  socialRemitted = (socialRemitted + owed) as Uint<64>;
+  claimsPaid.increment(1);
 }
 
 // ── Tree construction, exposed ───────────────────────────────────────────────
@@ -703,8 +796,9 @@ export pure circuit pathRoot(path: MerkleTreePath<16, Bytes<32>>): Field {
 /**
  * The hash a tax schedule must produce to be accepted.
  *
- * Exposed so a claimant can check her copy of the rules against the
- * `paramsHashFor` her employer filed BEFORE she proves, rather than discovering
+ * Exposed so a claimant can check her copy of the rules against PAYROLL's
+ * `paramsHashFor` for her final period (not this contract's, which holds
+ * benefit rules) BEFORE she proves, rather than discovering
  * the mismatch as a failed assertion after two minutes of proving. The same
  * reason `pathRoot` is exposed.
  */
@@ -712,11 +806,80 @@ export pure circuit taxParamsHash(params: TaxParams): Bytes<32> {
   return persistentHash<TaxParams>(params);
 }
 
+/**
+ * The hash a benefit rule set is published and recorded under.
+ *
+ * `paramsFor` and `paramsHashFor` hold only this hash, so a client holding the
+ * published figures needs it to find which version the platform recorded for a
+ * final period — and to check its copy before proving, rather than as a failed
+ * assertion afterwards. The same reason `taxParamsHash` is exposed.
+ */
+export pure circuit benefitParamsHash(params: BenefitParams): Bytes<32> {
+  return persistentHash<BenefitParams>(params);
+}
 
-// claimNullifier: the nullifier for one wallet in one window, exposed so a
-// claimant can check the public `spent` set for herself.
+// monthStart: the first second of a calendar month, UTC, as seconds since
+// 1970-01-01 — what `claim` compares the block time against.
 //
-// `claim` builds the identical value and refuses a window already in `spent`.
+// Exposed for the same reason as `pathRoot`: the claimant's client can compute
+// the quotients, call this, and learn locally whether a month has started,
+// instead of finding out as a failed proof.
+//
+// Compact has no division, so leap-ness can't be tested directly. The caller
+// supplies floor(year / 4), floor(year / 100) and floor(year / 400); each is
+// pinned by q * d <= year < (q + 1) * d, which admits exactly one q.
+//
+// Days before the year: 365 per year since 1970, plus the leap days in
+// between. The leap years strictly before `year` number
+// floor((year-1)/4) - floor((year-1)/100) + floor((year-1)/400), less the 477
+// that fall before 1970. floor((year-1)/d) is q, less one when d divides year.
+export pure circuit monthStart(
+  year: Uint<16>,
+  month: Uint<8>,
+  q4: Uint<16>,
+  q100: Uint<16>,
+  q400: Uint<16>
+): Uint<64> {
+  assert(month >= 1, "month must be 1-12");
+  assert(month <= 12, "month must be 1-12");
+  assert(year >= 1970, "year must be 1970 or later");
+
+  const y = year as Uint<64>;
+  const d4 = q4 as Uint<64>;
+  const d100 = q100 as Uint<64>;
+  const d400 = q400 as Uint<64>;
+  assert(d4 * 4 <= y, "year / 4 quotient too large");
+  assert(y < (d4 + 1) * 4, "year / 4 quotient too small");
+  assert(d100 * 100 <= y, "year / 100 quotient too large");
+  assert(y < (d100 + 1) * 100, "year / 100 quotient too small");
+  assert(d400 * 400 <= y, "year / 400 quotient too large");
+  assert(y < (d400 + 1) * 400, "year / 400 quotient too small");
+
+  const div4 = d4 * 4 == y;
+  const div100 = d100 * 100 == y;
+  const div400 = d400 * 400 == y;
+  const leap = div4 && (!div100 || div400);
+
+  // year >= 1970 keeps every quotient well above zero, so these never underflow.
+  const f4 = div4 ? (d4 - 1) as Uint<64> : d4;
+  const f100 = div100 ? (d100 - 1) as Uint<64> : d100;
+  const f400 = div400 ? (d400 - 1) as Uint<64> : d400;
+  const yearStart = (365 * (y - 1970) + (f4 - f100) + f400 - 477) as Uint<64>;
+
+  const before: Uint<64> =
+    month == 1 ? 0 : month == 2 ? 31 : month == 3 ? 59 : month == 4 ? 90 :
+    month == 5 ? 120 : month == 6 ? 151 : month == 7 ? 181 : month == 8 ? 212 :
+    month == 9 ? 243 : month == 10 ? 273 : month == 11 ? 304 : 334;
+  const leapDay: Uint<64> = (leap && month > 2) ? 1 : 0;
+
+  return ((yearStart + before + leapDay) * 86400) as Uint<64>;
+}
+
+
+// claimNullifier: the nullifier for one wallet in one calendar month, exposed so
+// a claimant can check the public `spent` set for herself.
+//
+// `claim` builds the identical value and refuses a month already in `spent`.
 // Without this a claimant had no way to ask "have I already claimed for that
 // month?" — the set is public, but every entry is an opaque image, and finding
 // her own means computing it.
@@ -734,10 +897,10 @@ export pure circuit taxParamsHash(params: TaxParams): Bytes<32> {
 // present hands that indexer the linkage directly.
 export pure circuit claimNullifier(
   payee: ZswapCoinPublicKey,
-  window: Uint<32>,
+  month: Uint<32>,
   fund: Bytes<32>
 ): Bytes<32> {
   return persistentHash<ClaimNullifier>(
-    ClaimNullifier { payee: payee, window: window, fund: fund }
+    ClaimNullifier { payee: payee, month: month, fund: fund }
   );
 }

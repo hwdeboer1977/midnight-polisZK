@@ -132,6 +132,16 @@ async function main(): Promise<void> {
         "   together — a corrected month has to be funded and paid again.)"
     );
   }
+  // And the month's withholding funded. The circuit refuses a termination for a
+  // month whose tax and contribution never reached the contract — otherwise the
+  // month could still be re-filed, wiping the attestation.
+  if (!ledger.withheldFor.member(p) || !ledger.withheldFor.lookup(p)) {
+    throw new Error(
+      `The withholding for ${periodName(period)} has not been funded.\n` +
+        "   A termination must name a settled period, tax included, so fund the\n" +
+        "   month's withholding first."
+    );
+  }
   if (ledger.terminationFor.member(p) && ledger.terminationFor.lookup(p).member(i)) {
     throw new Error(
       `Employment has already been ended for employee ${slot + 1} in ${periodName(period)}.\n` +

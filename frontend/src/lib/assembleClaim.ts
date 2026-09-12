@@ -199,9 +199,10 @@ export async function assembleClaim(options: {
         goesLeft: entry.goesLeft,
       })),
       fund: pool.fund,
-      // The newest published rule set. `claim` pins it against `paramsFor`, so
-      // a wrong guess fails there rather than silently.
-      paramsVersion: 1,
+      // Advisory only. The rules a claim is computed under are the ones the
+      // platform recorded for the final period, which `submitClaim` reads from
+      // the fund at claim time.
+      paramsVersion: null,
       poolCoin: pool.coin,
     },
   };

@@ -42,6 +42,28 @@ export function treasuryKeys(): TreasuryKeys {
 }
 
 /**
+ * The pEUR token a contract freezes in its constructor, read from `.env`.
+ *
+ * The fund, every payroll and the tax vault take their token at deploy rather
+ * than from the first coin they receive. Fixed by a first coin, the fund and
+ * the vault — whose deposits are permissionless — could be pinned to a
+ * self-minted token by anyone, and a payroll by its own employer. The cost is a
+ * deploy-order dependency: pEUR must exist first, and `peur_token_id` is what
+ * `npm run deploy:peur` writes.
+ */
+export function deployToken(): Uint8Array {
+  const tokenId = (process.env.peur_token_id ?? "").replace(/^0x/, "").trim();
+  if (!/^[0-9a-f]{64}$/i.test(tokenId)) {
+    throw new Error(
+      "`peur_token_id` in .env must be the pEUR token id — 64 hex characters.\n" +
+        "   It is written by `npm run deploy:peur`, and the token is frozen at deploy,\n" +
+        "   so there is no fixing it afterwards."
+    );
+  }
+  return Uint8Array.from(Buffer.from(tokenId, "hex"));
+}
+
+/**
  * The treasuries' ENCRYPTION public keys, which sending to them requires.
  *
  * A coin public key says who owns a shielded coin; the encryption public key is

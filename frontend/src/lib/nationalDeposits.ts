@@ -117,13 +117,11 @@ export interface NationalTotals {
     /** Every contribution ever deposited, over how many deposits. Not a balance. */
     contributedMinor: bigint;
     contributionCount: number;
-    /** How many benefits were paid. Never how much — see the header. */
+    /**
+     * How many benefits were paid. Never how much — see the header — and no
+     * withholding total either: it leaves inside each claim, to the treasuries.
+     */
     claimsPaid: number;
-    /** Withheld from those benefits: still here, and already sent onward. */
-    taxHeldMinor: bigint;
-    taxRemittedMinor: bigint;
-    socialHeldMinor: bigint;
-    socialRemittedMinor: bigint;
   } | null;
   taxvault: {
     address: string;
@@ -185,10 +183,6 @@ export async function readNationalTotals(networkId: string): Promise<NationalTot
           contributedMinor: (l.contributedTotal ?? 0n) as bigint,
           contributionCount: Number(l.contributionCount ?? 0),
           claimsPaid: Number(l.claimsPaid ?? 0),
-          taxHeldMinor: (l.taxPool ?? 0n) as bigint,
-          taxRemittedMinor: (l.taxRemitted ?? 0n) as bigint,
-          socialHeldMinor: (l.socialPool ?? 0n) as bigint,
-          socialRemittedMinor: (l.socialRemitted ?? 0n) as bigint,
         }))
       : Promise.resolve(null),
     vaultDeployment

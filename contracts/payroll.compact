@@ -171,6 +171,9 @@ export ledger employeeCountFor: Map<Uint<32>, Uint<8>>;
 // checked in-circuit per employee, so anyone can verify at the aggregate level
 // that the withholding adds up — across every employer — without a single
 // individual figure being readable.
+//
+// ⚠️ Only with a large enough roster. At 2, each employee knows their own
+// figures, so subtracting them from a total gives the colleague's exactly.
 export ledger totalPayrollFor: Map<Uint<32>, Uint<64>>;
 export ledger totalTaxFor: Map<Uint<32>, Uint<64>>;
 export ledger totalSocialFor: Map<Uint<32>, Uint<64>>;
@@ -276,11 +279,17 @@ export ledger coinsReceived: Uint<32>;
 // NullifierAlreadyPresent` or `Public transcript input mismatch`.
 export ledger coinOrdinalFor: Map<Uint<32>, Map<Uint<8>, Uint<32>>>;
 
-// payToken: the token this instance pays in, fixed on the first payment.
-// Without it, anyone could fund a slot with a token they minted themselves and
-// the contract would treat it as salary.
+// payToken: the token this instance pays in, frozen at deploy. Every coin in or
+// out is checked against it, so a slot can't be funded or settled with a token
+// minted for the purpose.
+//
+// ⚠️ It used to be fixed by the FIRST COIN RECEIVED. Funding is employer-only,
+// so that let the employer pick any token — a self-minted one included — and
+// still have every slot marked funded and paid and the tax marked remitted.
+// Setting it at deploy takes that choice away, the same fix `taxvault.compact`
+// made. The price is a deploy-order dependency: the token must exist before
+// the payroll.
 export ledger payToken: Bytes<32>;
-export ledger payTokenSet: Boolean;
 
 // Withheld tax and social contributions, in minor units. Running totals for
 // this contract, not per period — the per-period figures are `totalTaxFor` and
@@ -312,13 +321,14 @@ export ledger socialCoinFor: Map<Uint<32>, Uint<32>>;
 
 // Constructor: Deploys the instance. The deployer becomes the `platform` key, and the two
 // treasury addresses are frozen here — `remit` can never send anywhere else.
-// ⚠️ There is no `transferPlatform`. This key cannot be rotated!
-constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey) {
+// The platform key can be rotated later with `transferSeat(true, …)`; the
+// treasuries and the pay token can never be changed.
+constructor(taxTo: ZswapCoinPublicKey, socialTo: ZswapCoinPublicKey, pays: Bytes<32>) {
   platform = disclose(ownPublicKey());
   employerAssigned = false;
   everAssigned = false;
   latestPeriod = 0;
-  payTokenSet = false;
+  payToken = disclose(pays);
   coinsReceived = 0;
 
   taxTreasury = disclose(taxTo);
@@ -421,13 +431,14 @@ export circuit assignEmployer(newEmployer: ZswapCoinPublicKey): [] {
 // pools and totals all stand.
 //
 // Money in flight is frozen, not lost: funded-but-unpaid slots become payable
-// again when the same employer is re-seated. The pools are less encumbered
-// still — `remit` is callable by the platform with no seat filled.
+// again when the same employer is re-seated. The pools are already empty: the
+// assert below requires them settled before the seat is vacated, and `remit`
+// itself needs a seated employer.
 export circuit revokeEmployer(): [] {
   assert(ownPublicKey() == platform, "only the platform may revoke the employer");
   assert(employerAssigned, "no employer assigned yet");
 
-// Settle the pools before vacating. This is a proxy for "no month is
+  // Settle the pools before vacating. This is a proxy for "no month is
   // mid-flight", not an exact check: on the normal path `fundPeriod` funds net
   // coins and withholding together, so a non-zero pool means a month is in
   // progress. A period funded with `fundEmployee` alone slips through.
@@ -654,15 +665,16 @@ export circuit setPayroll(
   // in place would follow the index and silently attach to whoever now occupies
   // it: an attestation the employer never made about that person.
   //
-  // This is a hole in write-once, but a narrow one. `endEmployment` needs the
-  // slot PAID, and the guard above refuses to re-file a month whose withholding
-  // is funded. `fundPeriod` funds withholding with the nets. So on the
-  // normal path a month carrying a termination can't be re-filed at all.
+  // In practice this clears an empty map. `endEmployment` needs the month's
+  // withholding FUNDED, and the guard above refuses to re-file a month whose
+  // withholding is funded — so a month carrying a termination can't reach this
+  // line. The reset stays so that invariant doesn't rest on one assert in
+  // another circuit.
   //
-  // The one route through is a period funded with `fundEmployee` alone, never
-  // put through `fundWithholding`: the interrupted-run recovery path. Even then
-  // the re-file clears `paidFor`, so the month must be funded and paid again
-  // before it can be attested afresh.
+  // It used to be a real hole: `endEmployment` required only the slot PAID, so
+  // a month settled through `fundEmployee` + `payEmployee` without
+  // `fundWithholding` could carry a termination and still be re-filed, wiping
+  // the attestation.
   terminationFor.insert(p, default<Map<Uint<8>, Bytes<32>>>);
 
   // Every filing starts a new round, so a re-filed month funds fresh coins.
@@ -768,10 +780,6 @@ PayrollCommitment {
     "the figures and nonce do not open the commitment for that employee"
   );
 
-  if (!payTokenSet) {
-    payToken = disclose(coin.color);
-    payTokenSet = true;
-  }
   assert(payToken == disclose(coin.color), "wrong token for this payroll");
   // Net, not gross: this coin is the employee's. Tax and the contribution are
   // funded once for the whole period by `fundWithholding`, because they are
@@ -787,21 +795,25 @@ PayrollCommitment {
   coinsReceived = (coinsReceived + 1) as Uint<32>;
 }
 
-// FUND PERIOD: funds the whole month in one transaction, soboth employees' net
+// FUND PERIOD: funds the whole month in one transaction, so both employees' net
 // pay, plus the tax and social contribution.
 //
 // The normal path. Run separately, `fundEmployee` and `fundWithholding` leave a
 // window where employees are funded and the withholding isn't (`fundedFor`
 // true, `withheldFor` false): a state in which the employer is holding money
 // that isn't theirs. Here it can't occur: one circuit receives every coin or
-// none. Skipping the tax stops being something to notice and chase, and becomes
-// something that can't be built.
+// none. On this path, skipping the tax stops being something to notice and
+// chase, and becomes something that can't be built.
+//
+// ⚠️ On this path only. `fundEmployee` + `payEmployee` still settle a month
+// without `fundWithholding` ever being called. What they can't do is carry a
+// termination: `endEmployment` requires the withholding funded.
 //
 // One circuit, not several calls in one transaction. A call's transcript is
 // computed against the state BEFORE the transaction, so two calls can't see
 // each other's writes — `coinsReceived` is incremented by every receipt here
-// and `payToken` is set by the first coin and read by the rest. Both would be
-// wrong across separate calls and the ledger would reject the replay.
+// and read back for the next. That would be wrong across separate calls and the
+// ledger would reject the replay.
 //
 // It does not pay anyone. Spending a coin needs its position in the Zswap tree,
 // which doesn't exist until the coin has been committed — so receiving and
@@ -824,14 +836,6 @@ export circuit fundPeriod(
   const p = disclose(period);
   assert(commitmentsFor.member(p), "no payroll filed for that period");
   assert(!withheldFor.member(p) || !withheldFor.lookup(p), "withholding already funded");
-
-  // The pay token is fixed by the first coin this contract ever receives, and
-  // that must be an employee's, never the withholding's — the same rule
-  // `fundWithholding` enforces by refusing to be first.
-  if (!payTokenSet) {
-    payToken = disclose(netCoins[0].color);
-    payTokenSet = true;
-  }
 
   // ── the roster, unrolled ────────────────────────────────────────────────
   for (const i of 0..2) {
@@ -954,12 +958,8 @@ PayrollCommitment {
     "recipient is not the payee filed for that employee"
   );
 
-  // One token per instance, fixed the first time anyone is paid. Otherwise a
-  // slot could be settled with a token minted for the purpose.
-  if (!payTokenSet) {
-    payToken = disclose(coin.color);
-    payTokenSet = true;
-  }
+  // One token per instance, frozen at deploy, so a slot can't be settled with a
+  // token minted for the purpose.
   assert(payToken == disclose(coin.color), "wrong token for this payroll");
 
   // The coin must carry exactly the committed salary — not at least it, not a
@@ -986,9 +986,10 @@ PayrollCommitment {
 // The one release is a re-file, which clears this period's terminations along
 // with its commitments, see the note at that line in `setPayroll` for why it
 // must (a slot is an index, and a re-file can change who occupies it). That is
-// not a way around write-once: `setPayroll` refuses to re-file any period whose
-// withholding is funded, so a termination attached to a month that has seen
-// money is final and cannot be restated by any route.
+// not a way around write-once: this circuit requires the month's withholding
+// funded, and `setPayroll` refuses to re-file any period whose withholding is
+// funded, so once a termination exists its month can't be re-filed and the
+// statement can't be restated by any route.
 export circuit endEmployment(
   period: Uint<32>,
   index: Uint<8>,
@@ -1012,14 +1013,22 @@ export circuit endEmployment(
   // index in the same circuit that writes the commitment checked above.
   //
   // ⚠️ The cost falls on the EMPLOYEE. An employer who never pays the final
-  // month can't attest its termination. So a worker whose employer stopped
-  // paying can't get the statement a claim is built from, exactly when they
-  // most need it. The contract can't tell a delinquent employer from a slow
+  // month — or pays it but never funds its withholding (see below) — can't
+  // attest its termination. So a worker whose employer stopped paying can't get
+  // the statement a claim is built from, exactly when they most need it. The contract can't tell a delinquent employer from a slow
   // one. The softer form is `fundedFor` instead of `paidFor`: money reached the
   // contract, without requiring it reached the employee.
   assert(
     paidFor.lookup(p).lookup(i),
     "that slot has not been paid — a termination must name a settled period"
+  );
+  // And the month's withholding funded. Without this, a month settled through
+  // `fundEmployee` + `payEmployee` alone could carry a termination whose tax
+  // never arrived — and since only funded withholding blocks a re-file, that
+  // termination could then be wiped and restated by re-filing the month.
+  assert(
+    withheldFor.member(p) && withheldFor.lookup(p),
+    "that period's withholding is not funded — a termination must name a settled period"
   );
 
   if (!terminationFor.member(p)) {
@@ -1043,7 +1052,7 @@ export circuit endEmployment(
 // The money stays here afterwards. Forwarding it per period would cost a
 // transaction each time and put it at an address before anyone has committed to
 // what it is; held in the pool it is under this contract's own accounting until
-// `remitTax` sends it on.
+// `remit` sends it on.
 export circuit fundWithholding(
   period: Uint<32>,
   taxCoin: ShieldedCoinInfo,
@@ -1056,7 +1065,6 @@ export circuit fundWithholding(
   assert(commitmentsFor.member(p), "no payroll filed for that period");
   assert(!withheldFor.member(p) || !withheldFor.lookup(p), "already funded");
 
-  assert(payTokenSet, "fund an employee first — the pay token is not fixed yet");
   assert(payToken == disclose(taxCoin.color), "wrong token for the tax coin");
   assert(payToken == disclose(socialCoin.color), "wrong token for the contribution coin");
 
@@ -1096,6 +1104,11 @@ export circuit fundWithholding(
 // as an argument — the way `payPeriod` passes `disclose(payees[i])` — fixed it.
 // Do not move the send inside the branch, and do not read `taxTreasury`
 // directly: both put that fix back at risk.
+//
+// ⚠️ Ledger provenance may not be the whole cause: the fund's former
+// `remitBenefitTax` sent to `taxTreasury` read from its ledger and landed
+// (tx 43f90e25…), and the fund's `claim` still sends to ledger-read treasuries. This shape
+// is kept because it is the one proven HERE, not because the cause is settled.
 //
 // Taking the treasury as an argument does not let a caller choose it. The
 // assert below pins it to the value frozen at deploy and refuses any other.

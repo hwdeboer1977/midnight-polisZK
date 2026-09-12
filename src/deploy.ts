@@ -27,7 +27,7 @@ import { currentInstance, deploymentKey, saveDeployment } from "./utils/deployme
 import { MidnightProviders } from "./providers/midnight-providers.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js";
-import { treasuryKeys } from "./utils/treasury.js";
+import { deployToken, treasuryKeys } from "./utils/treasury.js";
 
 async function main() {
   console.log();
@@ -167,10 +167,14 @@ async function main() {
       contractName === "fund" || contractName === "payroll"
         ? (() => {
             const t = treasuryKeys();
+            // The token as well: fixed by a first coin, a fund could be pinned
+            // to a self-minted token by anyone, and a payroll by its employer.
+            const token = deployToken();
             console.log(chalk.gray(`   tax treasury    ${process.env.TAX_TREASURY_KEY}`));
             console.log(chalk.gray(`   social treasury ${process.env.SOCIAL_TREASURY_KEY}`));
-            console.log(chalk.gray("   Both are frozen at deploy and can never be changed."));
-            return [t.tax, t.social];
+            console.log(chalk.gray(`   token           ${Buffer.from(token).toString("hex")}`));
+            console.log(chalk.gray("   All three are frozen at deploy and can never be changed."));
+            return [t.tax, t.social, token];
           })()
         : contractName === "taxvault"
           ? (() => {

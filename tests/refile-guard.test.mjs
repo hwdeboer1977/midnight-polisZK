@@ -24,13 +24,15 @@
  *     withholding can never be funded at all, and the chain shows a tax total
  *     larger than anything ever collected.
  *
- * ── The termination reset ─────────────────────────────────────────────────
+ * ── The termination window ────────────────────────────────────────────────
  *
  * A slot is an index, not a person. `setPayroll` rewrites `payeeFor`, so slot 0
  * after a re-file need not be slot 0 before it — and a termination left in place
  * would stay attached to the index and silently transfer to whoever now occupies
- * it. An employer would be holding an on-chain attestation that employment ended
- * for someone they never said it about.
+ * it. `setPayroll` clears terminations on a re-file for that reason, which also
+ * let a termination be wiped and restated. Both are now unreachable:
+ * `endEmployment` needs the month's withholding funded, and a month whose
+ * withholding is funded cannot be re-filed.
  *
  * Compiling proves the guards exist. It does not prove they FIRE, so this drives
  * the real compiled circuits: no wallet, no node, no proofs.
@@ -87,7 +89,8 @@ function deploy() {
   const { currentContractState } = contract.initialState(
     createConstructorContext({}, hex(PLATFORM.bytes)),
     key(0xaa),
-    key(0xbb)
+    key(0xbb),
+    TOKEN
   );
   return currentContractState;
 }
@@ -253,17 +256,18 @@ base = file(base, PERIOD, GROSS, [PAYEE_A, PAYEE_B]);
     );
 }
 
-// ── A termination does not survive a re-file ──────────────────────────────
+// ── A termination needs the withholding funded, and is then final ─────────
 //
-// The hazard is the slot changing hands. Slot 0 is filed for payee 0x71, paid,
-// ended, and then re-filed for payee 0x81 — a different person, same index.
+// The hazard this section used to exercise was the slot changing hands: slot 0
+// filed for payee 0x71, paid, ended, then re-filed for payee 0x81 — a different
+// person, same index. The route ran through `fundEmployee` + `payEmployee` with
+// the withholding never funded, the one window in which a month carrying a
+// termination could still be re-filed.
 //
-// The route has to be the per-slot one. `endEmployment` now needs the slot paid,
-// and `setPayroll` refuses to re-file a month whose withholding is funded — so
-// on the `fundPeriod` path the two guards close around each other and a month
-// carrying a termination can never be re-filed at all. Funding with
-// `fundEmployee` leaves `withheldFor` false, which is the single remaining
-// window and the one this line exists for.
+// `endEmployment` now requires the withholding funded as well, and `setPayroll`
+// refuses to re-file a month whose withholding is funded — so the two guards
+// close around each other on every path. What is checked is that the window is
+// shut: no termination without the withholding, and none a re-file can wipe.
 {
   /** Funds and pays every slot WITHOUT touching the withholding. */
   const settle = (state, gross, payeeKeys) => {
@@ -285,51 +289,55 @@ base = file(base, PERIOD, GROSS, [PAYEE_A, PAYEE_B]);
   };
 
   const paid = settle(base, GROSS, [PAYEE_A, PAYEE_B]);
-  const ended = call(EMPLOYER, paid, "endEmployment", PERIOD, 0n, bytes32(0x99));
+
+  // The old window: every slot paid, the withholding never funded.
+  const unwithheld = tryCall(EMPLOYER, paid, "endEmployment", PERIOD, 0n, bytes32(0x99));
+  if (!unwithheld.ok && /withholding is not funded/.test(unwithheld.error))
+    ok("a paid slot whose withholding is not funded cannot be terminated");
+  else
+    fail(
+      "a paid slot whose withholding is not funded cannot be terminated",
+      unwithheld.ok ? "the termination was recorded against a month whose tax never arrived" : unwithheld.error
+    );
+
+  const withheld = call(EMPLOYER, paid, "fundWithholding", PERIOD,
+    coin(0xf2, LINES[0].taxQuotient + LINES[1].taxQuotient),
+    coin(0xf3, LINES[0].contribQuotient + LINES[1].contribQuotient));
+  const ended = call(EMPLOYER, withheld, "endEmployment", PERIOD, 0n, bytes32(0x99));
   const before = payroll.ledger(ended);
   if (before.terminationFor.member(PERIOD) &&
       before.terminationFor.lookup(PERIOD).member(0n))
-    ok("a settled slot can be terminated");
-  else fail("a settled slot can be terminated", "not recorded");
+    ok("a settled slot, withholding included, can be terminated");
+  else fail("a settled slot, withholding included, can be terminated", "not recorded");
 
-  // Write-once holds within a filing.
+  // Write-once holds.
   const twice = tryCall(EMPLOYER, ended, "endEmployment", PERIOD, 0n, bytes32(0x98));
   if (!twice.ok && /already been ended/.test(twice.error))
-    ok("a termination cannot be restated within the same filing");
+    ok("a termination cannot be restated");
   else
     fail(
-      "a termination cannot be restated within the same filing",
+      "a termination cannot be restated",
       twice.ok ? "the slot was ended twice" : twice.error
     );
 
-  const refiled = file(ended, PERIOD, [500000n, 650000n], [PAYEE_C, PAYEE_B]);
-  const after = payroll.ledger(refiled);
-  const stale =
-    after.terminationFor.member(PERIOD) &&
-    after.terminationFor.lookup(PERIOD).member(0n);
-  if (!stale)
-    ok("re-filing clears the termination rather than transferring it to the new occupant");
+  // And a re-file — here for a different payee in slot 0 — cannot wipe it, so
+  // the attestation can neither be restated nor move to a new occupant.
+  const refile = tryCall(EMPLOYER, ended, "setPayroll",
+    PERIOD, [500000n, 650000n], [4n, 4n],
+    [500000n, 650000n].map((g) => computeLine(g, DUTCH_V1).taxQuotient),
+    [500000n, 650000n].map((g) => computeLine(g, DUTCH_V1).contribQuotient),
+    [bytes32(0x01), bytes32(0x02)],
+    [new Uint8Array(100), new Uint8Array(100)],
+    [binding(PAYEE_C, PERIOD), binding(PAYEE_B, PERIOD)],
+    PARAMS
+  );
+  if (!refile.ok && /withholding is funded/.test(refile.error))
+    ok("a month carrying a termination cannot be re-filed");
   else
     fail(
-      "re-filing clears the termination rather than transferring it to the new occupant",
-      "the attestation survived and now names a payee it was never made about"
+      "a month carrying a termination cannot be re-filed",
+      refile.ok ? "the re-file was accepted and the termination wiped" : refile.error
     );
-
-  // The re-file cleared `paidFor` too, so the corrected month is unsettled and
-  // the new statement cannot rest on the money the superseded one rested on.
-  const tooSoon = tryCall(EMPLOYER, refiled, "endEmployment", PERIOD, 0n, bytes32(0x97));
-  if (!tooSoon.ok && /has not been paid/.test(tooSoon.error))
-    ok("the corrected month must be settled again before it can be attested");
-  else
-    fail(
-      "the corrected month must be settled again before it can be attested",
-      tooSoon.ok ? "attested against a month the re-file had unpaid" : tooSoon.error
-    );
-
-  const resettled = settle(refiled, [500000n, 650000n], [PAYEE_C, PAYEE_B]);
-  const reEnded = tryCall(EMPLOYER, resettled, "endEmployment", PERIOD, 0n, bytes32(0x97));
-  if (reEnded.ok) ok("once settled afresh, the corrected month can be attested");
-  else fail("once settled afresh, the corrected month can be attested", reEnded.error);
 }
 
 console.log(

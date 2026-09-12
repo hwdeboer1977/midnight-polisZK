@@ -346,18 +346,12 @@ export function Public() {
                 arithmetic.
               </p>
               <p className="note">
-                Benefits are themselves taxed, and those totals <em>are</em>{" "}
-                public — for the opposite reason to everything above: tax that is
-                never remitted is not tax, and remitting requires the contract to
-                know what it owes. Withheld from benefits so far:{" "}
-                <strong title={exact(stats.fund.taxHeld + stats.fund.taxRemitted)}>
-                  {money(stats.fund.taxHeld + stats.fund.taxRemitted)}
-                </strong>{" "}
-                tax and{" "}
-                <strong title={exact(stats.fund.socialHeld + stats.fund.socialRemitted)}>
-                  {money(stats.fund.socialHeld + stats.fund.socialRemitted)}
-                </strong>{" "}
-                contributions.
+                Benefits are themselves taxed, and the withholding is not
+                published either. It leaves inside each claim, as shielded coins
+                sent straight to the tax and social treasuries. Every claim is
+                its own transaction, so a public running total would move by
+                exactly one claim's withholding — and give away that claimant's
+                benefit, and with it their final salary.
               </p>
               <p className="note">
                 {stats.fund.claimsPaid === 0

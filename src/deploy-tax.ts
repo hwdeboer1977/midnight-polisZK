@@ -16,7 +16,7 @@ import {
 import { MidnightProviders } from "./providers/midnight-providers.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { toPublicKey } from "./utils/keys.js";
-import { treasuryKeys } from "./utils/treasury.js";
+import { deployToken, treasuryKeys } from "./utils/treasury.js";
 import { DUTCH_V1 } from "./utils/tax-params.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js";
 
@@ -356,7 +356,8 @@ async function main() {
 
       payrollDeployed = await deployContract(providersFor("payroll") as any, {
         compiledContract: payrollContract.compiledContract as any,
-        args: [treasuries.tax, treasuries.social],
+        // The pay token too, frozen with the treasuries — see `deployToken`.
+        args: [treasuries.tax, treasuries.social, deployToken()],
       } as any);
       payrollAddress = payrollDeployed.deployTxData.public.contractAddress;
 

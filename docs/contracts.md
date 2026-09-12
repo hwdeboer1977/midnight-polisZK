@@ -147,6 +147,14 @@ lineage, and a filer-gate would break exactly that: an employer who rotated
 their key could no longer end employment for periods filed under the old one,
 which is the same bug `employerFor` was written to fix.
 
+What it **is** gated on is the month being settled. The slot must be paid and —
+in the 2026-09-11 source — the month's withholding funded. Without the second, a
+month settled through `fundEmployee` + `payEmployee` alone could carry a
+termination whose tax never arrived, and because only funded withholding blocks
+a re-file, that termination could then be wiped and restated by re-filing the
+month. `tests/refile-guard.test.mjs` and `tests/payroll-token.test.mjs` drive
+both.
+
 Assertions fire during local circuit execution, **before** balancing, so an
 unauthorised call costs nothing and never reaches the chain.
 
@@ -477,8 +485,15 @@ export ledger socialRemitted: Uint<64>;
   must equal `totalTaxFor[period]` and `totalSocialFor[period]` exactly, so the
   contract cannot be underfunded; the coin ordinals are recorded the same way
   employee coins are.
-- `remitTax(period, coin)` / `remitSocial(period, coin)` — employer **or**
-  platform, sending that period's amount to the frozen treasury key.
+- `remit(period, isTax, treasury, coin)` — employer **or** platform, sending
+  that period's tax or contribution to its frozen treasury key; see *Remitting:
+  one circuit, not two* above. It asserts a seated employer, so after a revoke
+  nothing can remit — which is why `revokeEmployer` refuses while either pool is
+  non-zero.
+
+`fundPeriod` receives both employees' nets and the two withholding coins in one
+circuit, and is the normal path; `fundEmployee` + `fundWithholding` is the
+recovery path for a run that broke partway.
 
 The destinations are fixed at deploy and never settable again. That is what
 makes exposing remit to either party safe: remitting moves money the employer
@@ -492,9 +507,16 @@ cleanly, run correctly, and remit tax to the platform — wrong in a way nobody
 notices until someone asks where the tax went. Generate them with `npm run
 payee`.
 
-**Assessed, not yet collected.** The three circuits compile and are deployed,
-but nothing in the UI calls them, so `taxPool` and `socialPool` read €0.00 and
-the Public page's "Tax collected" is honestly zero. Wiring them is the next step.
+**Collected and remitted.** For 202609, `fundWithholding` moved €200.20 of tax
+and €16.80 of contribution into the pools and two `remit` calls sent them on to
+the treasury wallets, leaving both pools at €0.00 — see `status.md`.
+
+**The pay token is frozen at deploy too** — since the 2026-09-11 deploy, to pEUR
+`7ec1d9ec…`. `payToken` is the constructor's third argument, `peur_token_id` via
+`deployToken()` in `src/utils/treasury.ts`. It used to be fixed by the first coin
+the contract received, and funding is employer-only, so the employer chose it — a
+self-minted token included — and could still have every slot marked paid and the
+tax marked remitted.
 
 ### Deploying the tax half
 

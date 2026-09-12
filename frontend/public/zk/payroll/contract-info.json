@@ -1286,8 +1286,8 @@
     {
       "name": "employer",
       "index": [
-        0,
-        3
+        1,
+        0
       ],
       "exported": true,
       "storage": "Cell",
@@ -1309,7 +1309,7 @@
       "name": "employerAssigned",
       "index": [
         1,
-        0
+        1
       ],
       "exported": true,
       "storage": "Cell",
@@ -1321,7 +1321,7 @@
       "name": "lastEmployer",
       "index": [
         1,
-        1
+        2
       ],
       "exported": true,
       "storage": "Cell",
@@ -1343,7 +1343,7 @@
       "name": "everAssigned",
       "index": [
         1,
-        2
+        3
       ],
       "exported": true,
       "storage": "Cell",
@@ -1355,7 +1355,7 @@
       "name": "periods",
       "index": [
         1,
-        3
+        4
       ],
       "exported": true,
       "storage": "Set",
@@ -1368,7 +1368,7 @@
       "name": "latestPeriod",
       "index": [
         1,
-        4
+        5
       ],
       "exported": true,
       "storage": "Cell",
@@ -1381,7 +1381,7 @@
       "name": "employeeCountFor",
       "index": [
         1,
-        5
+        6
       ],
       "exported": true,
       "storage": "Map",
@@ -1398,7 +1398,7 @@
       "name": "totalPayrollFor",
       "index": [
         1,
-        6
+        7
       ],
       "exported": true,
       "storage": "Map",
@@ -1415,7 +1415,7 @@
       "name": "totalTaxFor",
       "index": [
         1,
-        7
+        8
       ],
       "exported": true,
       "storage": "Map",
@@ -1432,7 +1432,7 @@
       "name": "totalSocialFor",
       "index": [
         1,
-        8
+        9
       ],
       "exported": true,
       "storage": "Map",
@@ -1449,7 +1449,7 @@
       "name": "totalNetFor",
       "index": [
         1,
-        9
+        10
       ],
       "exported": true,
       "storage": "Map",
@@ -1466,7 +1466,7 @@
       "name": "paramsHashFor",
       "index": [
         1,
-        10
+        11
       ],
       "exported": true,
       "storage": "Map",
@@ -1483,7 +1483,7 @@
       "name": "commitmentsFor",
       "index": [
         1,
-        11
+        12
       ],
       "exported": true,
       "storage": "Map",
@@ -1507,7 +1507,7 @@
       "name": "sealedFor",
       "index": [
         1,
-        12
+        13
       ],
       "exported": true,
       "storage": "Map",
@@ -1531,7 +1531,7 @@
       "name": "payeeFor",
       "index": [
         1,
-        13
+        14
       ],
       "exported": true,
       "storage": "Map",
@@ -1554,8 +1554,8 @@
     {
       "name": "fundedFor",
       "index": [
-        1,
-        14
+        2,
+        0
       ],
       "exported": true,
       "storage": "Map",
@@ -1578,7 +1578,7 @@
       "name": "paidFor",
       "index": [
         2,
-        0
+        1
       ],
       "exported": true,
       "storage": "Map",
@@ -1601,7 +1601,7 @@
       "name": "terminationFor",
       "index": [
         2,
-        1
+        2
       ],
       "exported": true,
       "storage": "Map",
@@ -1625,7 +1625,7 @@
       "name": "fileRoundFor",
       "index": [
         2,
-        2
+        3
       ],
       "exported": true,
       "storage": "Map",
@@ -1642,7 +1642,7 @@
       "name": "employerFor",
       "index": [
         2,
-        3
+        4
       ],
       "exported": true,
       "storage": "Map",
@@ -1668,7 +1668,7 @@
       "name": "coinsReceived",
       "index": [
         2,
-        4
+        5
       ],
       "exported": true,
       "storage": "Cell",
@@ -1681,7 +1681,7 @@
       "name": "coinOrdinalFor",
       "index": [
         2,
-        5
+        6
       ],
       "exported": true,
       "storage": "Map",
@@ -1705,25 +1705,13 @@
       "name": "payToken",
       "index": [
         2,
-        6
+        7
       ],
       "exported": true,
       "storage": "Cell",
       "type": {
         "type-name": "Bytes",
         "length": 32
-      }
-    },
-    {
-      "name": "payTokenSet",
-      "index": [
-        2,
-        7
-      ],
-      "exported": true,
-      "storage": "Cell",
-      "type": {
-        "type-name": "Boolean"
       }
     },
     {

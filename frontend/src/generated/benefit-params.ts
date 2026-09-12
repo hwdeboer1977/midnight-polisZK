@@ -43,12 +43,12 @@ export interface BenefitParams {
   /** Months of employment required to claim. */
   minMonths: number;
   /**
-   * Monthly windows one termination entitles her to.
+   * How many calendar months after the final period can be claimed.
    *
-   * Part of the struct now, which is the whole point: `claim` asserts
-   * `window < durationMonths`, so the figure the page shows and the figure the
-   * contract allows are the same value. It used to be `PILOT_DURATION_MONTHS`
-   * alone — a constant the UI honoured and the circuit never saw.
+   * Part of the struct, which is the whole point: `claim` admits exactly these
+   * months, so the figure the page shows and the figure the contract allows are
+   * the same value. It used to be `PILOT_DURATION_MONTHS` alone — a constant the
+   * UI honoured and the circuit never saw.
    */
   durationMonths: number;
 }
@@ -98,7 +98,7 @@ export function paramsForVersion(version: number): BenefitParams {
 
 /** The shape the generated `claim` binding wants for its `params` argument. */
 /**
- * How many monthly windows one termination entitles a claimant to.
+ * How many calendar months one termination entitles a claimant to, under v1.
  *
  * ⚠️ PILOT SIMPLIFICATION. Three months for everyone, regardless of how long
  * they worked. The scheme this models derives duration from employment history
@@ -107,46 +107,100 @@ export function paramsForVersion(version: number): BenefitParams {
  * compute it; this is a placeholder chosen so the pilot has an answer, and it
  * is deliberately flat rather than a plausible-looking formula nobody sourced.
  *
- * ✅ NOW PART OF `BenefitParams`, and now enforced.
+ * ✅ PART OF `BenefitParams`, and enforced.
  *
- * It was neither. `claim` took `window` as an argument, put it in the nullifier
- * and asserted nothing about it, so this figure was what the app SHOWED and not
- * what the contract ALLOWED — a claimant calling the circuit directly passed
- * window 0, 1, 2, 3 … and drew a distinct nullifier, and a distinct payment,
- * for each. Everything else about them was genuine; only the NUMBER of payments
- * was theirs to choose.
+ * It was neither at first. `claim` took a window number, put it in the
+ * nullifier and asserted nothing about it, so this figure was what the app
+ * SHOWED and not what the contract ALLOWED — a claimant calling the circuit
+ * directly passed 0, 1, 2, 3 … and drew a distinct payment for each.
  *
- * `claim` now asserts `window < params.durationMonths`, so the two agree by
- * construction rather than by nobody having tried. The cost was the one the old
- * note predicted: the struct hash changed, so every version had to be
- * republished and the fund redeployed.
+ * `claim` now names a calendar month instead: one of the `durationMonths`
+ * after the final period, already begun, once per wallet. The figure the page
+ * shows and the months the contract admits agree by construction.
  *
  * Read from the rule set rather than declared beside it, so the page cannot
- * show a duration the contract would refuse.
+ * show a duration the contract would refuse. A real claim uses the rules
+ * recorded for its final period on the fund — see `recordedParams`.
  */
 export const PILOT_DURATION_MONTHS = BENEFIT_V1.durationMonths;
 
+/** 202601 → 202602. Rolls the year rather than producing a month 13. */
+export function nextPeriod(period: number): number {
+  const year = Math.floor(period / 100);
+  const month = period % 100;
+  return month >= 12 ? (year + 1) * 100 + 1 : year * 100 + month + 1;
+}
+
 /**
- * The windows one termination entitles her to: the final month, then the next.
+ * The calendar months a termination entitles her to claim: the months AFTER
+ * the final period, as many as the rule set's `durationMonths`.
  *
- * Starting AT the final period rather than after it, because that is the month
- * the relay publishes a tree for and the month her bundle is built against — a
- * benefit that began the following month would leave her first window with no
- * published root to prove membership of.
+ * After, not including, the final period. That month was paid as salary —
+ * `endEmployment` refuses to attest a month that was not — so a benefit for it
+ * would pay the same month twice, and `claim` refuses it. Every claim still
+ * proves membership of the FINAL period's tree, whichever month it names, so
+ * starting later needs no other root.
  */
-export function entitlementWindows(
+export function entitlementPeriods(
   finalPeriod: number,
   months: number = PILOT_DURATION_MONTHS
 ): number[] {
-  const windows: number[] = [];
+  const periods: number[] = [];
   let period = finalPeriod;
   for (let i = 0; i < months; i += 1) {
-    windows.push(period);
-    const year = Math.floor(period / 100);
-    const month = period % 100;
-    period = month >= 12 ? (year + 1) * 100 + 1 : year * 100 + month + 1;
+    period = nextPeriod(period);
+    periods.push(period);
   }
-  return windows;
+  return periods;
+}
+
+/**
+ * The first second of a YYYYMM month in UTC, as seconds since 1970 — what
+ * `claim` compares the block time against. The fund's `monthStart` pure circuit
+ * computes the same value, and `tests/claim-nullifier.test.mjs` checks the two
+ * agree.
+ */
+export function monthStartSeconds(period: number): number {
+  return Date.UTC(Math.floor(period / 100), (period % 100) - 1, 1) / 1000;
+}
+
+/**
+ * The `calendar` argument `claim` takes for one month of one termination.
+ *
+ * Compact has no division, so the circuit is handed the year/month split and
+ * the leap-year quotients and pins each to the one value that fits. Computing
+ * them here is not a licence to choose them: anything else fails to prove.
+ */
+export function claimCalendar(finalPeriod: number, claimPeriod: number) {
+  const year = Math.floor(claimPeriod / 100);
+  return {
+    finalYear: BigInt(Math.floor(finalPeriod / 100)),
+    finalMonth: BigInt(finalPeriod % 100),
+    year: BigInt(year),
+    month: BigInt(claimPeriod % 100),
+    q4: BigInt(Math.floor(year / 4)),
+    q100: BigInt(Math.floor(year / 100)),
+    q400: BigInt(Math.floor(year / 400)),
+  };
+}
+
+/**
+ * The published rule set whose hash is `recorded` — the one the platform pinned
+ * to a final period in the fund's `paramsHashFor` — or null if no version known
+ * here hashes to it.
+ *
+ * The hash function is passed in so this file stays free of contract imports
+ * (it is copied into the frontend). Callers pass the fund's own
+ * `benefitParamsHash` pure circuit, never a TypeScript reimplementation.
+ */
+export function recordedParams(
+  recorded: Uint8Array,
+  hashOf: (params: ReturnType<typeof toCircuitParams>) => Uint8Array
+): BenefitParams | null {
+  const hex = (bytes: Uint8Array) =>
+    Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const want = hex(recorded);
+  return PUBLISHED.find((p) => hex(hashOf(toCircuitParams(p))) === want) ?? null;
 }
 
 export function toCircuitParams(p: BenefitParams) {

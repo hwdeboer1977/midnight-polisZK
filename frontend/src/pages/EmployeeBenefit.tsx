@@ -139,15 +139,10 @@ export function EmployeeBenefit() {
 
       {error ? <p className="status error">{error}</p> : null}
 
-      {/* Ordered by what this wallet needs next.
-
-          While employed, the claim key comes first: it is the only thing here
-          with a closing window, since the employer writes the hash into a
-          write-once termination and an employee who reaches their last day
-          without one can never claim.
-
-          Once employment has ended that reverses. The key is already anchored
-          or already lost, and what a claimant needs now is to claim. */}
+      {/* Ordered by what this wallet needs next: once employment has ended,
+          the entitlement and the claim come first. Nothing has to be set up in
+          advance any more — the claim key that had to be anchored before a
+          termination was removed on 2026-09-02. */}
       {/* `registered` is optimistic while the scan runs: "not on a payroll yet"
           is the wrong thing to show someone who is, and it would appear and
           then correct itself on every visit. Wrong in the harmless direction. */}
@@ -168,26 +163,25 @@ export function EmployeeBenefit() {
               .join(", ")}{" "}
             was attested on chain as your final employment period.
           </p>
-          {/* Two files now, not three — the claim key is gone. The nullifier
-              is `hash(ownPublicKey, window, fund)`, so what changes month to
-              month is the WINDOW and nothing else, and the wallet supplies the
-              rest. */}
+          {/* The nullifier is `hash(ownPublicKey, month, fund)`, so what
+              changes from one payment to the next is the MONTH and nothing
+              else, and the wallet supplies the rest. */}
           <p className="note" style={{ marginTop: 0 }}>
-            Each payment is a separate claim against a different month, made
-            with the <em>same</em> two files every time. You collect them once:
+            Each payment is a separate claim for one calendar month, starting
+            the month after your final period, and each month opens on its first
+            day. Every claim needs the same single file:
           </p>
           <ul className="needs">
             <li>
-              <strong>Your claim bundle</strong> — from the fund's relay
-            </li>
-            <li>
-              <strong>Your payslip for that period</strong> — from your employer
-            </li>
-            <li>
-              <strong>Your claim-key file</strong> — the one you downloaded when
-              you set up your claim key, with this same wallet connected
+              <strong>Your payslip for your final period</strong> — from your
+              employer
             </li>
           </ul>
+          <p className="note">
+            Everything else is assembled in your browser from the chain and this
+            wallet — keep this same wallet connected, because only the wallet
+            your employer filed can claim.
+          </p>
         </section>
       ) : null}
 
@@ -218,13 +212,18 @@ export function EmployeeBenefit() {
               <li>How many claims have settled</li>
               <li>How many payments the fund has taken in</li>
               <li>Which periods have a claim tree published</li>
-              <li>One spent nullifier per claim, linked to nobody</li>
+              <li>The final period and the month each claim pays</li>
+              <li>
+                One spent nullifier per claim — which anyone holding your
+                payment address can recompute
+              </li>
             </ul>
           </div>
           <div className="col private">
             <h4>Never published</h4>
             <ul>
               <li>The benefit amount</li>
+              <li>What was withheld from it</li>
               <li>Who the claimant is, or which employer they left</li>
               <li>The salary it was derived from</li>
               <li>The fund's balance</li>

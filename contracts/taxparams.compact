@@ -75,12 +75,18 @@ constructor() {
 
 // Hands the authority seat to a new key.
 //
-// This is the most important key in the codebase. Payroll can't file a period
-// without a rule set published here, so if this key is lost and can't be
-// rotated, no new period can be filed on ANY payroll instance once the calendar
-// moves past the last published version — the whole platform, not one contract.
+// This is meant to be the most important key in the codebase. Every payroll
+// period is filed under a rule set, and new rule sets are published here, so if
+// this key is lost and can't be rotated, no new rules can be published once the
+// calendar moves past the last version — the whole platform, not one contract.
 // (Compare `taxvault.transferAuthority`, which protects a balance, and
 // `payroll.transferSeat`, which protects one instance.)
+//
+// ⚠️ Meant to be, not enforced. Payroll cannot read this registry: its platform
+// records a rule-set HASH per period (`payroll.setParamsFor`), and nothing on
+// chain checks that hash against a version published here. The link lives in
+// the tooling, and today `src/utils/rule-window.ts` hashes a TypeScript
+// constant and only checks that this contract is deployed.
 //
 // Rotation grants nothing new: the holder could already publish any rule set,
 // and publication is append-only, so a new authority cannot alter or withdraw
@@ -106,7 +112,8 @@ export circuit publish(params: TaxParams): [] {
   assert(startsAt >= 200001, "validFrom must be YYYYMM, e.g. 202601");
   assert(startsAt <= 299912, "validFrom must be YYYYMM, e.g. 202601");
 
-  // Checked here so the payroll circuit doesn't have to.
+  // Checked here so the payroll circuit doesn't have to — which holds only for
+  // a rule set actually published here (see the ⚠️ on `transferAuthority`).
   assert(
     disclose(params.threshold1) < disclose(params.threshold2),
     "thresholds must be in ascending order"
@@ -139,8 +146,9 @@ export circuit publish(params: TaxParams): [] {
   //   · `maxContribBase` has no upper limit. Setting it above any real salary
   //     makes contributions effectively uncapped — a policy choice, and a
   //     visible one.
-  //   · `versionCount` overflows at 65,536 versions. Compact range-checks the
-  //     cast, so it would refuse the publish rather than wrap (see findings.md).
+  //   · `versionCount` has no overflow check, and needs none: versions are
+  //     Uint<16> and must be above zero, so at most 65,535 can exist, which
+  //     fits. The cast below is range-checked regardless.
 
   paramsFor.insert(v, disclose(params));
   versions.insert(v);

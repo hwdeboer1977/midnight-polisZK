@@ -5,100 +5,78 @@ import { fetchContractState } from "./chain";
 import { keyToHex } from "./keys";
 import { loadContract } from "./contracts";
 import { fromHex } from "./payslip";
-import { PILOT_DURATION_MONTHS, entitlementWindows } from "../generated/benefit-params";
+import {
+  PILOT_DURATION_MONTHS,
+  entitlementPeriods,
+  monthStartSeconds,
+  recordedParams,
+} from "../generated/benefit-params";
 
 /**
- * Which benefit windows this claimant has already claimed.
+ * Which benefit months this claimant has claimed, and which she can claim now.
  *
- * The page used to say this was unanswerable. That was the wrong conclusion
- * from a correct premise. The premise is that NOBODY ELSE may compute her
- * nullifiers — which is why `fund.compact` keys them on her secret claim key
- * rather than on her coin public key, and says so at length: a nullifier
- * derived from an address she hands out to be paid would let every employer she
- * ever had enumerate windows and read her benefit history off a public Set.
+ * ── Keyed on her wallet, and what that costs ───────────────────────────────
  *
- * None of that stops HER computing them. She is the one party who holds the
- * key. What was actually missing was a way to compute the hash without
- * reimplementing it — `claimNullifier` was not exposed as a pure circuit, and
- * `claim-tree.ts` records why a TypeScript copy of a contract hash is not an
- * acceptable substitute.
+ * The fund's nullifier is `hash(ownPublicKey, month, fund)`. The connected
+ * wallet is therefore the whole input, and the answer needs no file — but the
+ * same is true for anyone holding her coin public key, which is an address she
+ * hands out to be paid. `fund.compact` records that trade on `ClaimNullifier`.
  *
  * ── Two properties this must not give up ───────────────────────────────────
  *
  * The check is LOCAL. The whole spent set is read and searched here. Asking an
  * indexer whether one particular nullifier is present would hand that indexer
- * the linkage the entire construction exists to deny it — the query itself
- * would be the disclosure, even though the answer is public.
+ * the linkage directly — the query itself would be the disclosure, even though
+ * the answer is public.
  *
- * The claim key is never persisted. It arrives from her file, is used, and is
- * dropped with the component.
+ * The hash is the contract's own. `claimNullifier` is a pure circuit, so a
+ * TypeScript copy of the struct encoding never gets the chance to drift.
  *
- * ── Where the entitlement figure comes from ────────────────────────────────
+ * ── Where the entitlement comes from ───────────────────────────────────────
  *
- * `PILOT_DURATION_MONTHS` — three months for everyone, a stated pilot
- * simplification rather than the scheme's rule, which derives duration from
- * employment history.
- *
- * It is APP policy, not contract policy, and that distinction matters here more
- * than anywhere else in this file. `BenefitParams` carries no duration, and
- * `claim` now asserts `window < params.durationMonths`, so a window outside the
- * entitlement is refused on chain rather than merely absent from this table.
- * Windows are zero-based indices; the month each one falls in is shown for
- * readability and is not what the circuit sees.
- *
- * So "2 remaining" means "2 remaining under the rule this app displays", not
- * "the fund would refuse a third". Which is why the scan does not stop at the
- * entitlement — it looks past it and reports anything found there. A claim
- * outside the three months is not something the chain prevents, so the honest
- * thing is to be able to see one.
+ * The rule set the platform recorded for her FINAL period in `paramsHashFor`,
+ * matched to published figures by hash. `claim` enforces exactly these months
+ * and refuses one that has not started by the block's clock, so this table is
+ * the contract's answer rather than an app policy.
  */
 
-export interface WindowStatus {
+export interface MonthStatus {
   /** YYYYMM. */
-  window: number;
+  period: number;
   claimed: boolean;
+  /** Whether the month has begun (UTC). Before then `claim` refuses it. */
+  started: boolean;
+  /** When the month opens, in seconds since 1970. */
+  opensAt: number;
 }
 
 export interface ClaimHistory {
-  /** The entitlement windows, in order. What the table shows. */
-  windows: WindowStatus[];
-  /**
-   * Claimed windows falling OUTSIDE the entitlement.
-   *
-   * Normally empty. Non-empty means a claim the app's rule does not account
-   * for — which the contract permits today, so it is surfaced rather than
-   * assumed impossible.
-   */
-  outside: WindowStatus[];
-  /** How many entitlement windows carry her nullifier. */
+  /** The entitlement months, in order. What the table shows. */
+  months: MonthStatus[];
+  /** How many of them carry her nullifier. */
   claimedCount: number;
-  /** How many entitlement windows do not. */
+  /** How many do not. */
   remaining: number;
-  /** What the entitlement was measured against. */
+  /** The rule set's `durationMonths`, or the pilot figure when it is unknown. */
   entitlementMonths: number;
+  /** The earliest unclaimed month that has started — the one a claim should name. */
+  nextClaimable: number | null;
+  /** The earliest unclaimed month that has NOT started yet, if any. */
+  nextOpening: MonthStatus | null;
   /**
    * `claimsPaid` from the fund's ledger: every claim by everyone, ever.
    *
    * Public already, and included because it is the honest denominator for what
-   * she is looking at — it says nothing about which of them were hers.
+   * she is looking at.
    */
   claimsOnFund: number;
+  /**
+   * False when the fund has no rule set recorded for the final period, or this
+   * build does not know the figures of the one it has. The months shown then
+   * assume the pilot duration, and no claim can be made until it is resolved.
+   */
+  rulesKnown: boolean;
 }
-
-/** 202601 → 202602. Rolls the year rather than producing a month 13. */
-export function nextPeriod(period: number): number {
-  const year = Math.floor(period / 100);
-  const month = period % 100;
-  return month >= 12 ? (year + 1) * 100 + 1 : year * 100 + month + 1;
-}
-
-/**
- * How far past the entitlement to look for claims that should not exist.
- *
- * A year. Long enough that an extra claim shows up rather than sitting just
- * beyond the edge of the scan, short enough to stay a handful of local hashes.
- */
-const OVERRUN_MONTHS = 12;
 
 export async function readClaimHistory(options: {
   networkId: string;
@@ -106,12 +84,12 @@ export async function readClaimHistory(options: {
   fundAddress: string;
   /** The connected wallet's coin public key, hex or Bech32m. */
   coinPublicKey: string;
-  /** The month her employer attested as final. The entitlement starts here. */
+  /** The month her employer attested as final. The entitlement starts after it. */
   finalPeriod: number;
-  entitlementMonths?: number;
+  /** Milliseconds since 1970; defaults to now. */
+  nowMs?: number;
 }): Promise<ClaimHistory> {
   const { networkId, fundAddress, coinPublicKey, finalPeriod } = options;
-  const entitlementMonths = options.entitlementMonths ?? PILOT_DURATION_MONTHS;
 
   const state = await fetchContractState(networkId, fundAddress);
   if (!state) throw new Error("The fund contract has no state on chain.");
@@ -126,6 +104,7 @@ export async function readClaimHistory(options: {
     // would be a wrong answer wearing the shape of a right one.
     void ledger.claimsPaid;
     void ledger.spent.size();
+    void ledger.paramsHashFor.size();
   } catch {
     throw new Error("The fund's state could not be read with this build of the contract.");
   }
@@ -133,37 +112,54 @@ export async function readClaimHistory(options: {
   const fundBytes = fromHex(fundAddress.replace(/^0x/, ""));
   const payeeBytes = fromHex(keyToHex(coinPublicKey));
 
-  // ⚠️ `window` is an INDEX now, not a period. `claim` asserts
-  // `window < params.durationMonths`, which YYYYMM could never satisfy — and
-  // the assert is the point: the number of windows is the published rule set's
-  // answer rather than whatever the caller passes. The month each index falls
-  // in is still shown, from `entitlementWindows`, because an index is not a
-  // thing anybody wants to read.
-  const isClaimed = (index: number): boolean =>
-    ledger.spent.member(
-      fund.pureCircuits.claimNullifier({ bytes: payeeBytes }, BigInt(index), fundBytes)
-    ) as boolean;
+  const finalKey = BigInt(finalPeriod);
+  let entitlementMonths = PILOT_DURATION_MONTHS;
+  let rulesKnown = false;
+  if (ledger.paramsHashFor.member(finalKey)) {
+    const params = recordedParams(ledger.paramsHashFor.lookup(finalKey), (p) =>
+      fund.pureCircuits.benefitParamsHash(p)
+    );
+    if (params) {
+      entitlementMonths = params.durationMonths;
+      rulesKnown = true;
+    }
+  }
 
-  const entitlement = entitlementWindows(finalPeriod, entitlementMonths);
-  const windows = entitlement.map((period, index) => ({
-    window: period,
-    index,
-    claimed: isClaimed(index),
-  }));
+  const nowSeconds = Math.floor((options.nowMs ?? Date.now()) / 1000);
+  const months: MonthStatus[] = entitlementPeriods(finalPeriod, entitlementMonths).map(
+    (period) => {
+      const opensAt = monthStartSeconds(period);
+      return {
+        period,
+        claimed: ledger.spent.member(
+          fund.pureCircuits.claimNullifier({ bytes: payeeBytes }, BigInt(period), fundBytes)
+        ) as boolean,
+        started: nowSeconds >= opensAt,
+        opensAt,
+      };
+    }
+  );
 
-  // Nothing can fall outside the entitlement any more: a window at or beyond
-  // `durationMonths` is refused by the circuit, so there is no set of stray
-  // nullifiers left to go looking for.
-  const outside: WindowStatus[] = [];
-
-  const claimedCount = windows.filter((entry) => entry.claimed).length;
+  const claimedCount = months.filter((entry) => entry.claimed).length;
 
   return {
-    windows,
-    outside,
+    months,
     claimedCount,
-    remaining: windows.length - claimedCount,
+    remaining: months.length - claimedCount,
     entitlementMonths,
+    nextClaimable: months.find((entry) => !entry.claimed && entry.started)?.period ?? null,
+    nextOpening: months.find((entry) => !entry.claimed && !entry.started) ?? null,
     claimsOnFund: Number(ledger.claimsPaid),
+    rulesKnown,
   };
+}
+
+/** A month's opening date for display: "1 November 2026". UTC, as the fund counts it. */
+export function openingDate(opensAt: number): string {
+  return new Date(opensAt * 1000).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }

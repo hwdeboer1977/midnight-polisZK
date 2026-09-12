@@ -10,6 +10,9 @@ where privacy costs something and the places where it is not yet complete.
 Everything below was verified on preview, not inferred from documentation. Where
 something is unproven it says so.
 
+> **The fund rows describe the fund deployed on 2026-09-11**, `ae30b288…`. Where
+> the previous fund `eb40dcad…` — still on chain — differs, the row says so.
+
 ### On chain
 
 | | Visible to anyone | Why |
@@ -25,14 +28,14 @@ something is unproven it says so.
 | **The openings** | no | sealed under the employer's key |
 | A termination happened, for some slot | **yes** | `terminationFor` has a key per terminated slot |
 | **Months worked** | no | committed inside the attestation |
-| How many monthly windows anyone gets | **yes** | `durationMonths` in `BenefitParams` — a rule, not a fact about a person |
+| How many months of benefit anyone gets | **yes** | `durationMonths` in `BenefitParams` — a rule, not a fact about a person |
+| Which rule set each final period is claimed under | **yes** | `paramsHashFor` on the fund |
 | Which periods have a claim tree | **yes** | `rootFor` |
 | How many claims have settled | **yes** | `claimsPaid` — a count, never an amount |
-| One spent nullifier per claim | **yes** | ⚠️ derived from the claimant's wallet — see below |
+| One spent nullifier per claim, and the month it paid | **yes** | ⚠️ derived from the claimant's wallet — see below |
 | **Who claimed, and for how much** | no | the benefit is a shielded coin |
 | **The fund's balance** | no | a shielded coin, so the fund is *not* publicly solvent |
-| Tax and contribution withheld from benefits, in total | **yes** | `taxPool`/`taxRemitted` — deliberate, and it discloses aggregate outflow |
-| **Which claim withheld what** | no | only the running totals move |
+| **Tax and contribution withheld from benefits** | no | sent to the treasuries inside each claim, as shielded coins — the treasuries see their own coins. ⚠️ On `eb40dcad…` these are public pools, and they disclose each claim |
 
 The public total is deliberate and useful: an auditor can check what a company
 paid in a month without learning what anyone earns.
@@ -40,9 +43,9 @@ paid in a month without learning what anyone earns.
 ⚠️ **The nullifier stopped being unlinkable on 2026-09-02.** It was
 `hash(claimKey, window, fund)` over a secret only the claimant held, so the
 `spent` set was a list of values nothing could tie to a person. It is now
-`hash(ownPublicKey, window, fund)`, so **anyone holding a claimant's payment
+`hash(ownPublicKey, month, fund)`, so **anyone holding a claimant's payment
 address can compute it and test the set** — learning *that* she claimed and for
-how many windows.
+which months.
 
 Not the world: `payeeFor` publishes only a hash, so a passer-by cannot. But a
 former employer can, from the workbook, and so can anyone she has given that
@@ -53,6 +56,16 @@ That was a deliberate trade for removing a 32-byte file that could not be
 reissued, could not be sealed to her wallet, and had to be handed to her employer
 *before* a write-once statement. [Wave 2](#wave-2-hardening) records what would
 buy it back.
+
+⚠️ **The fund's withholding pools disclosed each claim, not just the total.**
+Until the 2026-09-11 source, withholding on benefits accumulated in public
+`taxPool` / `socialPool`, documented as disclosing only the fund's aggregate
+outflow. Every claim is its own transaction, so each one moved the pools by
+exactly its own withholding, and that delta inverts to the claim's benefit and,
+below the cap, to the final gross. The withholding now leaves inside the claim.
+The price is that the public can no longer see what was withheld from benefits,
+and each treasury can invert the coin it receives per claim — learning the
+benefit and gross, never who claimed.
 
 The fund's opposite is deliberate too, and costs something real. It publishes
 **counts, not amounts**, and its balance is a shielded coin — so it cannot
@@ -85,6 +98,10 @@ readonly held: { nonce: Uint8Array, color: Uint8Array,
 choose and keep choosing: the coin must stay a **witness argument** on every
 call, never ledger state.
 
+The same holds for any public figure a private payment moves. A coin can be
+shielded and still give its value away through a counter the same transaction
+updates — which is exactly what the fund's withholding pools did.
+
 The cost is that the contract does not know what it holds, so the caller must
 rebuild each coin from `nonce`, `color`, `value` and `mt_index`. The first three
 are derived; `mt_index` comes from the indexer:
@@ -96,7 +113,8 @@ coin_coms: MerkleTree { 31757: (70db1d7c…, Some(ContractAddress(3fe1db34…)))
 
 ⚠️ That view lists every coin the contract ever **received**, including ones it
 has since spent — there is no unspent view, and `nullifiers` reads empty. Do not
-treat it as a list of available coins.
+treat it as a list of available coins, and find a coin in it by rebuilding its
+commitment rather than by counting positions.
 
 ## Where proving happens
 
@@ -229,7 +247,7 @@ a wish.
 
 ### 1. Make the nullifier unlinkable again
 
-**Now:** `hash(ownPublicKey, window, fund)` — computable by anyone with the
+**Now:** `hash(ownPublicKey, month, fund)` — computable by anyone with the
 claimant's payment address.
 
 **Needs:** a secret her wallet can reproduce on demand. Two candidates, and the
@@ -292,9 +310,10 @@ as item 1.
 
 **Small-roster inference.** `totalPayrollFor` and `employeeCountFor` are both
 public and `setPayroll` is unrolled to two employees, so the average is within a
-whisker of each person's pay. That is inherent to publishing exact totals at
-small headcount. It eases as the roster grows and it does not go away; the fix
-is a bigger roster, not a code change.
+whisker of each person's pay — and each employee, knowing their own figures, can
+subtract them from the total and read the colleague's exactly. That is inherent
+to publishing exact totals at small headcount. It eases as the roster grows and it
+does not go away; the fix is a bigger roster, not a code change.
 
 **The open pEUR mint.** `peur.compact`'s `mint` asserts nothing about its caller
 — the issuer check was removed so a demo can fund itself — so `totalSupply`

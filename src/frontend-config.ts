@@ -204,7 +204,10 @@ copySharedSource();
 let peurToken: string | undefined;
 
 for (const [key, record] of listDeployments()) {
-  if (record.contractName === "peur") {
+  // The live pEUR only. An archived one (`preview/peur:pre-…`, retired) lists
+  // after it and used to overwrite this with the RETIRED token — which the page
+  // then labelled balances with, and which no current contract accepts.
+  if (record.contractName === "peur" && !record.instance && !record.retired) {
     peurToken = await peurTokenId(record.networkId, record.contractAddress);
   }
 

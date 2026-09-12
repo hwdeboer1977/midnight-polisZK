@@ -5,23 +5,39 @@ disclosing the salary it rests on or being identifiable as a claimant.
 
 [← back to the README](../README.md)
 
+> **Redeployed 2026-09-11.** `contracts/fund.compact` was changed after a review
+> — withholding leaves inside the claim, a claim names a calendar month, the
+> rules are pinned per final period, the token is frozen at deploy — and the
+> fund below runs that build. No claim has been made against it yet, so the
+> parts of a claim that only a real transaction can prove are still marked as
+> unproven.
+
 ## The fund
 
 One shared instance, deployed by the platform. It holds the money benefits are
-paid from, the versioned benefit rules, one Merkle root per period, and the set
-of spent nullifiers.
+paid from, the versioned benefit rules and which of them applies to each final
+period, one Merkle root per period, and the set of spent nullifiers.
 
 ```
-preview/fund  820815a16c4a94ca49d8d2b3f109d094f92b57dd0e487b198b48d1e5744ad1c1
+preview/fund  ae30b2888cf2c9722821dd54763d079249c576ead3e795c9d91cafe374fa31a1
+              token pEUR 7ec1d9ec… · v1 recorded for final periods 202601–202612 · €300.00 deposited (coin #0)
 ```
 
 An earlier fund, `8615dd7a…`, ran without withholding and is **abandoned with
 €306 in it**. Adding withholding changed the ledger layout, and verifier keys are
 fixed at deploy — so the money can only be reached by rebuilding from
-`contracts/fund.compact.bak` and claiming against it. That is the cost of a
-contract change to a contract with **no withdrawal circuit**, and it is worth
-knowing before the next one: money enters a fund easily and leaves only through
-a claim.
+`contracts/fund.compact.bak` and claiming against it. `820815a1…`, the first fund
+with withholding, was superseded on 2026-09-02. That is the cost of a contract
+change to a contract with **no withdrawal circuit**: money enters a fund easily
+and leaves only through a claim.
+
+⚠️ **`eb40dcad…`, the previous fund, is now in the same position.** Read on
+2026-09-11 it shows €310.00 contributed, one claim paid, and €55.055 of tax and
+€4.62 of contribution still in its pools. Those pools can be remitted only by the
+previous build's `fund remit`, which the current CLI no longer has — so reaching
+them means rebuilding the last commit before these changes. It is archived in
+`deployment.json` as `preview/fund:pre-20260911`. Its money is in the previous
+pEUR token as well, so nothing the new contracts do can use it.
 
 ### Why it is a separate contract, and what that costs
 
@@ -39,9 +55,9 @@ the other way round would be a lie about what the proof proves.
 
 Roots are published as **one tree per period over every accredited employer on
 the platform** — not per employer, and not per employee. A claim discloses the
-period its attestation names and nothing else, so a claimant is
-indistinguishable from everyone terminated in the same month anywhere on the
-platform.
+final period its attestation names, the calendar month it pays and one
+nullifier, so a claimant is indistinguishable from everyone terminated in the
+same month anywhere on the platform.
 
 A root per employer would undo that: the disclosed root would name the employer.
 
@@ -61,9 +77,13 @@ claimant from somewhere off chain, and that somewhere is
 `npm run frontend:config`.
 
 ```
-v1   cap €4,000.00/month · 7000 bp (70%) · minMonths 1 · from 200001
-     published 2026-08-25, tx a99421c5ce1505633ea4b277fc087254ee83fba8a929d75e67306cc28bbcd226
+v1   cap €4,000.00/month · 7000 bp (70%) · minMonths 1 · durationMonths 3 · from 200001
 ```
+
+v1 was first published on 2026-08-25, in tx
+`a99421c5ce1505633ea4b277fc087254ee83fba8a929d75e67306cc28bbcd226`, on a fund
+since replaced. Every struct change since has meant republishing it on the new
+fund.
 
 ⚠️ **Editing a published version in that file silently breaks every claim under
 it.** The registry is append-only on purpose: a new schedule is a new version
@@ -75,6 +95,36 @@ you publish one the file does not know.
 the alternative — an employer attesting twelve months against an instance whose
 public filings show one — because a published rule set that says what it is stays
 honest, while a fabricated attestation contradicts a record anybody can read.
+
+### Which rules apply is recorded per final period
+
+Publishing a version makes it **available**; it applies to nothing until the
+platform records it for a range of final periods:
+
+```bash
+npm run fund -- rules --version 1 --year 2026   # every final period in 2026
+```
+
+`setParamsFor(year, fromMonth, months, params)` writes
+`paramsHashFor[period] = hash(params)` for each month. It is platform-only and
+write-once per month — a month already recorded is skipped, never changed — and
+it only accepts a version published in `paramsFor`, with a `validFrom` no later
+than the first month. That last check is one payroll cannot make: payroll's
+rule-set hash comes from another contract it cannot read, while the fund's
+registry is in its own ledger.
+
+`claim` then requires `paramsHashFor[finalPeriod]` to equal the hash of the rules
+it is given. **Before 2026-09-11 it checked only that the version was published
+and had taken effect by the final period**, so every older version still
+qualified — a claimant could pick the one with the highest rate, the lowest
+`minMonths` or the longest duration. That was harmless while only v1 existed and
+would have opened the day a v2 was published.
+
+A final period with no rules recorded cannot be claimed against. The relay warns
+about it, and the claim page says so before proving. The client finds the
+version by hashing each locally known one with the fund's `benefitParamsHash`
+pure circuit and matching it — a pure circuit carries no verifier key, so adding
+it cost nothing on deploy.
 
 ### `fund-pool.json` is the only copy of the fund's coin nonces
 
@@ -99,24 +149,37 @@ globbed, so a `.bak` is caught too. **Back it up.**
 
 ### Change coins, and why `reconcile` exists
 
-`sendShielded` splits the coin it spends: the benefit goes to the claimant and
-the remainder returns to the contract as a **new coin whose nonce is derived from
-the spent one and published nowhere**. After a claim, the pool is therefore a
-coin this machine has no record of.
+A claim makes **three sends chained through their change**: the net to the
+claimant (`sendShielded` on the pool coin), then the tax to the tax treasury and
+the contribution to the social treasury (`sendImmediateShielded`, each spending
+the change the previous send created a moment earlier in the same transaction).
+The last change comes back to the contract as a **new coin whose nonce is derived
+and published nowhere**. After a claim, the pool is therefore a coin this machine
+has no record of.
 
-The derivation is `evolveChangeNonce` in `src/utils/fund-pool.ts` —
-`upgradeFromTransient(transientHash([field("midnight:kernel:nonce_evolve/2"),
-degradeToTransient(nonce)]))`, read off the compiled circuit rather than off
-documentation. **Verified on chain 2026-08-25**: the derived nonce reproduced the
-change coin's commitment at leaf 42896 exactly.
+Each send derives its change nonce the same way — `evolveChangeNonce` in
+`src/utils/fund-pool.ts`, `upgradeFromTransient(transientHash([field(
+"midnight:kernel:nonce_evolve/2"), degradeToTransient(nonce)]))`, read off the
+compiled circuit rather than off documentation. For one send it is **verified on
+chain**: on 2026-08-25 the derived nonce reproduced a change coin's commitment at
+leaf 42896 exactly. A claim's surviving coin is the pool coin's nonce evolved
+three times, `claimChangeNonce`, and its value is the pool coin **less the whole
+benefit**, withholding included.
+
+⚠️ The three-step form has run only in the local runtime so far. If the first
+reconcile after a claim on the new fund finds no match, suspect it before the
+value.
 
 ```bash
 npm run fund -- reconcile --value 96
 ```
 
-It rebuilds the candidate coin from every parent it knows, hashes it, and
-**refuses to record one whose commitment does not match what the chain holds**.
-That turns "probably the right nonce" into "provably the coin at leaf N".
+It rebuilds a candidate coin from every parent it knows, hashes it, and looks for
+that commitment among the fund's leaves — **by commitment, never by indexing the
+leaves with the receipt ordinal**, because the two orders disagree whenever one
+transaction creates more than one coin, and every claim now does. It refuses to
+record a coin whose commitment is not on chain, which turns "probably the right
+nonce" into "provably the coin at leaf N".
 
 ⚠️ **The value cannot be derived, only checked.** The benefit a claim paid is
 private, so the operator does not know what the change came to — they must be
@@ -159,26 +222,49 @@ encoding identically without a test failing.
   → €94.325 paid            against €134.75 net pay
 ```
 
-### Where the withheld money goes, and what that costs
+### Where the withheld money goes
 
-`taxPool` / `socialPool` accumulate, and `remitBenefitTax` / `remitBenefitSocial`
-send them to treasuries **frozen in the constructor** — the same two keys payroll
-uses, because money withheld from a salary and money withheld from the benefit
-that replaces it must land in the same place. Both remit circuits are
-**permissionless**: the destination cannot be redirected by whoever triggers one,
-so a platform that stops running cannot strand the money.
+**Inside the claim, straight to the treasuries** frozen in the constructor — the
+same two keys payroll uses, because money withheld from a salary and money
+withheld from the benefit that replaces it must land in the same place. One
+claim pays three shielded coins: the net to her, the tax and the contribution to
+the two treasuries. Nothing withheld stays in the fund, and there are no remit
+circuits.
 
-⚠️ **This leaks what the rest of the fund hides.** Withholding is a deterministic
-function of the benefit, which is a deterministic function of the gross — so a
-public `taxPool + taxRemitted` discloses the fund's **aggregate outflow**, and
-with `claimsPaid` alongside it, the average benefit. That was accepted
-deliberately, and the alternatives were worse: withheld tax that is never
-remitted is not tax, and remitting requires the contract to know what it owes,
-which means public state. Retaining it silently would have been a smaller benefit
-described as a tax.
+**Why it changed on 2026-09-11.** The previous build accumulated withholding in
+public `taxPool` / `socialPool` and remitted them later. That was documented as
+disclosing only the fund's aggregate outflow. It disclosed **each claim**: every
+claim is its own transaction, so each moved the pools by exactly its own
+withholding. With the published contribution rate the contribution delta gives
+the benefit, and below the cap the benefit gives the final gross — €4.62 at 3% is
+€154.00, and €154.00 at 70% is €220.00, the example above. More claims do not
+hide that; only settling several claims in one transaction would.
 
-What is still **not** leaked: any individual benefit, or which claim contributed
-what.
+What sending it inside the claim costs, stated rather than discovered:
+
+- **The public can no longer see how much benefit tax was withheld.** Only the
+  treasuries can, by the coins they receive.
+- **Each treasury receives one coin per claim**, and can invert its value to that
+  claim's benefit and final gross. It learns what an observer used to learn from
+  the pools — not who claimed.
+- **A claim needs the treasuries' encryption public keys**, or it builds coins
+  they can never find. The browser reads `VITE_TAX_TREASURY_ENC_KEY` and
+  `VITE_SOCIAL_TREASURY_ENC_KEY` and passes them through `submitCallTx`, which,
+  unlike the `callTx` shorthand, can carry them.
+
+⚠️ The deployed `eb40dcad…` still has public pools, and they still disclose each
+claim.
+
+### The pool coin must cover the whole benefit
+
+`claim` asserts `coin.value > benefitQ` — the net and both withholdings, plus at
+least one unit. The previous build checked the coin against the **net** alone, so
+a claim could add more to the withholding pools than the coin's change actually
+held. The strict inequality guarantees change after each of the three sends.
+
+An exact coin is not required, and would be worse: sizing a coin to a benefit
+means knowing the benefit, which derives from the salary this contract exists to
+hide.
 
 ### Operator commands
 
@@ -186,36 +272,29 @@ Flags come **after `--`**. Without it npm reads `--amount 10` as its own config
 and the script never sees it; the CLI detects that case and says so.
 
 ```bash
-npm run fund status                    # rules, claims paid, token, trees
-npm run fund pool                      # coins, which is the pool, what is spendable
-npm run fund -- pool --full            # full nonces
-npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1
-npm run fund -- deposit --amount 200   # put money in
-npm run fund -- reconcile --value 96   # recover a post-claim change coin
-npm run fund -- remit --what tax       # send withheld tax to its treasury
-npm run fund -- remit --what social    # and the contribution to its own
+npm run fund status                                  # rules published and recorded, claims, token, trees
+npm run fund pool                                    # coins, which is the pool, what is spendable
+npm run fund -- pool --full                          # full nonces
+npm run fund -- params --version 1 --cap 4000 --rate 7000 --min-months 1 --duration-months 3
+npm run fund -- rules --version 1 --year 2026        # apply it to final periods in 2026
+npm run fund -- deposit --period 202609 --amount 200 # put money in, against a period
+npm run fund -- reconcile --value 96                 # recover a post-claim change coin
 ```
 
-A remit spends the pool coin, so the pool moves to its change afterwards and has
-to be reconciled exactly as it does after a claim. The command prints the
-`reconcile` line to run next.
+`params` publishes, `rules` applies; a version never recorded for a period
+applies to nothing.
 
-Remitting needs each treasury's **encryption public key**, not just the coin key
-frozen at deploy — a shielded coin can only be found by someone whose encryption
-key the transaction was built with. It is derived from `TAX_TREASURY_SEED` /
-`SOCIAL_TREASURY_SEED`, or read from `TAX_TREASURY_ENC_KEY` /
-`SOCIAL_TREASURY_ENC_KEY` if set, which is what a machine that should not hold
-the treasuries' spending keys wants.
+**The token is frozen at deploy.** `benefitToken` is a constructor argument, read
+from `peur_token_id` in `.env`, so pEUR must be deployed first. Earlier builds
+fixed it on the **first deposit** instead — and `fundBenefits` is open to anyone,
+so a stranger could pin a fresh fund to a self-minted token with a single unit,
+after which every real contribution failed `wrong token for this fund`, with a
+redeploy as the only recovery. `deposit` refuses a pEUR that does not match the
+fund's token.
 
-The **first** deposit fixes `benefitToken` for the contract's lifetime. The token
-is read off the deployed pEUR contract rather than out of `.env`, because a stale
-copy in a config file would not cause a failed transaction — it would cause a
-successful one that pins the wrong token, and the only fix after that is a new
-fund.
-
-`pool` works out which coins are spent by deriving each one's change nonce and
-looking for it among the others, so a spent coin and its own remainder are not
-counted twice:
+`pool` works out which coins are spent by deriving each one's claim change nonce
+and looking for it among the others, so a spent coin and its own remainder are
+not counted twice. Output from an earlier fund:
 
 ```
     €        250.00  coin #2    leaf 42886  spent
@@ -240,8 +319,15 @@ record for a worker.
 > [What the employee no longer needs](#what-the-employee-no-longer-needs).
 
 Write-once matters: an employer who could reissue a termination could restate the
-final month after seeing what it entitled someone to. Correcting one means
-re-filing the period, which has its own guards.
+final month after seeing what it entitled someone to.
+
+**The final month must be settled, tax included.** `endEmployment` requires the
+slot paid and — since 2026-09-11 — the month's withholding funded. Without the
+second, a month settled through `fundEmployee` + `payEmployee` alone could carry a
+termination whose tax never arrived, and since only funded withholding stops a
+re-file, that termination could then be wiped and restated by re-filing the
+month. Now a month carrying a termination can never be re-filed. Both
+termination routes check this before proving.
 
 **The employer cannot claim on it.** `claim` requires the payee's own wallet key,
 which `payeeFor` binds and no employer holds.
@@ -298,11 +384,14 @@ npm run relay -- 202601 --publish   # and publish the root to the fund
 The relay reads `terminations/*.json`, checks each opening against the
 attestation on chain, builds one tree over every termination in the period, and
 publishes the root. It writes one bundle per claimant into
-`claims/<period>/claim-bundle-<instance>-<period>-slot-N.json`.
+`claims/<period>/claim-bundle-<instance>-<period>-slot-N.json` — a fallback now,
+since the browser assembles its own.
 
 It **refuses** any opening that does not reproduce its on-chain attestation — a
 relay that published a leaf the employer never attested to would be publishing
-its own claim about someone's employment.
+its own claim about someone's employment. It **warns** when the fund has no
+benefit rules recorded for the period, because a tree nobody can claim against
+yet looks exactly like one that works.
 
 What the relay never sees: any salary. Leaves are built from commitments and
 payee bindings, both already public and both opaque. The one non-public input is
@@ -331,10 +420,10 @@ records that a fund-owned coin exists and publishes `poolOrdinal`, but never its
 nonce or value, which is the point of a shielded coin. Those live in
 `fund-pool.json`, written when the deposit was made.
 
-So `GET /api/pool-coin` serves those two fields, and it is the only part of a
-claim that still needs the service. It discloses nothing about who is asking: a
-request names a network and gets a coin, never which leaf in a period is the
-caller's.
+So `GET /api/pool-coin` serves those two fields, with the coin's leaf found by
+rebuilding its commitment, and it is the only part of a claim that still needs
+the service. It discloses nothing about who is asking: a request names a network
+and gets a coin, never which leaf in a period is the caller's.
 
 Two consequences remain, and neither is fixable from the relay:
 
@@ -347,8 +436,10 @@ Two consequences remain, and neither is fixable from the relay:
   the pilot's case and not a general answer.
 
 The relay also **cannot size them**. It sees commitments, never salaries, so it
-has no idea what any benefit comes to. An undersized coin surfaces as a claim
-that will not prove, and the fix is a deposit rather than a change to the relay.
+has no idea what any benefit comes to. It warns against `cap × rate`, the most
+any benefit can be; a coin that does not hold more than a claim's whole benefit
+surfaces as a claim that will not prove, and the fix is a deposit rather than a
+change to the relay.
 
 ## Claiming
 
@@ -409,14 +500,14 @@ The claim key did three jobs. Two were replaceable and one was not.
 
 | Job | After removal |
 | --- | --- |
-| Seed the nullifier, so a window cannot be claimed twice | `ClaimNullifier { payee, window, fund }` from `ownPublicKey()` — the wallet cannot lie about its own key |
-| Bound the number of windows | unrelated to the key; see the `durationMonths` fix below |
+| Seed the nullifier, so a month cannot be claimed twice | `ClaimNullifier { payee, month, fund }` from `ownPublicKey()` — the wallet cannot lie about its own key |
+| Bound the number of payments | unrelated to the key; see [Months, not windows](#months-not-windows) |
 | Keep the nullifier **unlinkable** | **lost** |
 
 The third is the real cost and should be stated plainly: the nullifier is now
-`hash(ownPublicKey, window, fund)`, so **anyone holding a claimant's payment
+`hash(ownPublicKey, month, fund)`, so **anyone holding a claimant's payment
 address can compute it and test the public `spent` set** — learning *that* she
-claimed, and for how many windows. Never how much, never her salary, never which
+claimed, and for which months. Never how much, never her salary, never which
 employer.
 
 Not the world: `payeeFor` publishes only a hash, so a passer-by cannot do it. But
@@ -428,28 +519,56 @@ that would restore unlinkability without a file: a secret her wallet can
 reproduce on demand. **WebAuthn PRF** is that shape; nothing in the connector is,
 today. See [wave 2](privacy.md#wave-2-hardening).
 
-### The number of windows is now enforced
+### Months, not windows
 
-⚠️ **It was not.** `claim` took `window` as an argument, put it in the nullifier
-and asserted nothing about it. `PILOT_DURATION_MONTHS = 3` lived only in
-TypeScript, so a claimant calling the circuit directly passed window 0, 1, 2,
-3 … and drew a distinct nullifier — and a distinct payment — for each, until the
-fund was empty. Everything else about them was genuine; only the *number* of
-payments was theirs to choose.
+The number of payments has been fixed twice.
 
-`BenefitParams` now carries `durationMonths`, and `claim` asserts
-`window < params.durationMonths`. Windows are zero-based **indices**, not
-periods — a YYYYMM value could never satisfy that bound. The month each index
-falls in is shown for readability and is not what the circuit sees.
+**Until 2026-09-02, nothing bounded it.** `claim` took a `window` argument, put it
+in the nullifier and asserted nothing about it. `PILOT_DURATION_MONTHS = 3` lived
+only in TypeScript, so a claimant calling the circuit directly passed window 0,
+1, 2, 3 … and drew a distinct payment for each, until the fund was empty.
 
-The cost was the one the old note in `utils/benefit-params.ts` predicted: the
-struct hash changed, so every published version had to be republished and the
-fund redeployed.
+**On 2026-09-02** `BenefitParams` gained `durationMonths` and `claim` asserted
+`window < durationMonths`. That bounded the count and left two faults: every
+window could be claimed at once, and the nullifier `(wallet, window, fund)` capped
+a person at `durationMonths` windows **for the fund's lifetime**, so a later job
+loss could never be claimed.
+
+**Since 2026-09-11** a claim names a calendar month. `claim` takes
+`calendar: ClaimMonth` — the final period split into year and month, the month
+being claimed, and `floor(year/4)`, `floor(year/100)`, `floor(year/400)` — and
+asserts:
+
+- the month is one of the `durationMonths` after the final period, counted as
+  `year × 12 + month` so December rolls into January without a division;
+- `blockTimeGte(monthStart(…))`: not before the first second of that month, UTC,
+  by the block's clock. `monthStart` computes days since 1970 on chain and pins
+  the three quotients, because Compact has no division. It agrees with
+  JavaScript's `Date.UTC` for every one of the 12,360 months from 1970 to 2999;
+- the nullifier is `hash(wallet, month, fund)`.
+
+So one person gets at most one benefit per calendar month from this fund. A later
+job loss brings new months and can be claimed; two terminations covering the
+same month cannot pay it twice. The final month itself is not claimable — it was
+paid as salary.
+
+⚠️ **The fund cannot see re-employment**, because it cannot read a payroll ledger.
+The date gate paces claims to the calendar; it does not stop someone who has found
+work from drawing the rest.
+
+⚠️ **Overlapping terminations still extend an entitlement.** Final periods of
+202601 and 202603 with a three-month duration cover 202602 to 202606 — five
+months, not three. Each termination needs its own paid, withheld month, so it is
+priced, not free.
+
+The client side is `entitlementPeriods`, `monthStartSeconds` and `claimCalendar`
+in `benefit-params.ts`. The claim form claims the earliest month that has started
+and carries none of her nullifiers.
 
 ### Every assertion is checked before proving
 
 The circuit's checks are re-run off-circuit first, against the same pure
-circuits, so a wrong file names itself instead of costing minutes of proving and
+circuits, so a wrong input names itself instead of costing minutes of proving and
 then reporting `assertion failed`:
 
 - the payslip is for this contract, this period, this slot — and when it is
@@ -457,19 +576,22 @@ then reporting `assertion failed`:
   payslip the previous contract issued keeps naming it, and "a different
   contract" sends someone hunting for a file that does not exist yet;
 - the leaf was filed for the connected wallet (`payeeHash`);
-- the payslip figures open the published commitment (`commitmentFor`);
+- the payslip figures open the published commitment (`commitmentFor`), against
+  the key that filed the period rather than whoever holds the seat now;
 - the rebuilt path reproduces the published root;
-- the pool coin covers the benefit.
-
-The anchored-key check is gone with the key it checked. It used to be the
-likeliest failure in the whole flow.
+- benefit rules are recorded for the final period, and this build knows them;
+- the month is one of the entitlement months and has started;
+- its nullifier is not already in the spent set, checked locally;
+- the pool coin is in the fund's token and holds more than the whole benefit;
+- the build carries both treasury encryption keys.
 
 ### She can check what she has already claimed
 
 `/employee` → *Have I already claimed?*. It runs on its own, with **no file**:
-the page computes `claimNullifier(ownPublicKey, index, fund)` for each window of
-the entitlement and looks it up in the public `spent` set, reporting claimed and
-remaining.
+the page reads the rules recorded for her final period, computes
+`claimNullifier(ownPublicKey, month, fund)` for each entitlement month and looks
+it up in the public `spent` set. Each month shows as claimed, claimable now, or
+the date it opens.
 
 This was documented as impossible, then became possible with a file, and is now
 automatic. The premise was that nobody else may compute her nullifiers, which
@@ -477,88 +599,53 @@ was true while they were keyed on a secret — and it never implied she could no
 compute her own. What was missing was a pure circuit, because reimplementing a
 contract hash in TypeScript is what `claim-tree.ts` exists to forbid.
 
-The page is now explicit that the convenience has a price: anyone holding her
+The page is explicit that the convenience has a price: anyone holding her
 payment address can run the same check. That is the linkability traded away with
 the claim key, said where it matters rather than left for a reader to infer.
 
-**Adding it cost nothing on chain**, which is worth recording generally: pure
-circuits carry no prover or verifier keys. Recompiling `fund.compact` with
-`claimNullifier` left all 12 prover keys, all 12 verifier keys and all 12 zkir
-files byte-identical — only `contract/index.js` and `contract-info.json` moved —
-so the deployed fund was unaffected and `findDeployedContract` still matches.
-The note in `benefit-params.ts` that a pure circuit "needs a redeploy, since
-verifier keys are fixed at deploy" is therefore wrong, and the
-`benefitParamsHash` circuit it wants is free.
+**Pure circuits cost nothing on chain**, which is worth recording generally: they
+carry no prover or verifier keys. Recompiling `fund.compact` with
+`claimNullifier` left every prover key, verifier key and zkir file byte-identical
+— only `contract/index.js` and `contract-info.json` moved. `monthStart` and
+`benefitParamsHash` were added the same way.
 
 The lookup is local: the whole set is read and searched in the page. Querying an
 indexer for one nullifier would hand it the linkage the construction denies,
 even though the answer is public.
 
-⚠️ **Entitlement is three months, flat — a pilot simplification**, and it is
-`PILOT_DURATION_MONTHS` in `benefit-params.ts` rather than a field of
-`BenefitParams`, because that struct is hashed against `paramsFor` and a new
-field would stop v1 from opening. The scheme it models derives duration from
-employment history, and `leaf.monthsWorked` already carries the input.
-
-⚠️ **`claim` does not enforce it, or any limit.** `window` is an argument that
-appears in the nullifier and in no assertion — it is not tied to
-`leaf.finalPeriod` and not bounded, so every distinct window is a fresh
-nullifier. Three months is what the app shows, not what the fund allows. See
-**Where the money could go wrong** for why that is more than a display concern.
+⚠️ **Entitlement is three months, flat — a pilot simplification.** The scheme it
+models derives duration from employment history, and `leaf.monthsWorked` already
+carries the input.
 
 ### What a claim discloses
 
-The period, the params version, the nullifier, and that a claim happened. **Not**
-the employer, not the slot, not the salary, not the benefit paid.
+The final period, the calendar month it pays, the nullifier, the hash of the
+rules recorded for that period, and that a claim happened. **Not** the employer,
+not the slot, not the salary, not the benefit paid.
 
-The nullifier is `hash(claimKey, window, fund)` — keyed on a secret. The obvious
-construction, `hash(domain, ownPublicKey, window)`, is computable by everyone who
-has ever been given her coin public key, which is an address she hands out to be
-paid. They would enumerate windows, test membership of the public `spent` set,
-and read her benefit history. It is the single most sensitive fact in the system
-and it would have been recoverable by every employer she ever had.
+The nullifier is the one weak point, and it is a chosen one: anyone holding the
+claimant's payment address can recompute it (see
+[What was traded away](#what-was-traded-away)).
 
-### Where the money could go wrong
+⚠️ On the deployed `eb40dcad…` a claim also discloses its benefit and final
+gross, through the public withholding pools the current source removed.
 
-⚠️ **`claim` does not bound how many windows one claimant may claim.** This is
-a reading of the source, not a demonstrated exploit — nobody has run it — but
-the chain of steps is short enough to state precisely, and it deserves fixing
-before this carries real money.
+### What the 2026-09-11 build closed
 
-`window` is a `Uint<32>` argument. It appears in exactly one place: the
-nullifier preimage. Of the nineteen assertions in `claim`, none mentions it. It
-is not tied to `leaf.finalPeriod`, not bounded by any duration, and
-`BenefitParams` has no duration field to bound it with. So a distinct `window`
-is a distinct nullifier, and a distinct nullifier is a fresh payout.
+A review of the fund found five faults, each now fixed in source and exercised by
+`tests/fund-claim.test.mjs` against the compiled contract. All five are live on
+the fund deployed on 2026-09-11, `ae30b288…`; none has yet been exercised by a
+real claim there.
 
-The brake is supply, not rule: `claim` needs an unspent fund coin, and her
-bundle carries exactly one. But the contract's own comment at the change coin
-says:
+| Fault | Now |
+| --- | --- |
+| Each claim moved the public withholding pools by its own withholding, disclosing its benefit and final gross | withholding sent to the treasuries inside the claim |
+| Any published rule set that had taken effect qualified, so a claimant could choose the most generous | rules pinned per final period with `setParamsFor` |
+| Every window claimable at once, and a later job loss never claimable | calendar months with a date gate, nullifier per month |
+| The first coin deposited fixed the token, and anyone may deposit | token frozen at deploy |
+| The pool coin was checked against the net only | checked against the whole benefit |
 
-> The change's ordinal, so the pool can be found again. The nonce is NOT
-> recorded: **it is derivable from the spent coin's**
-
-She knows her input coin's nonce — it is in her bundle. The change's ordinal is
-published as `poolOrdinal`. Its `mtIndex` comes from the indexer by ordinal,
-which is exactly what `relay.ts` already does with `contractLeaves`. Its value
-is her input minus a benefit she computed herself. That appears to be everything
-`claim` needs for a second call at `window + 1`, and the same again after that.
-
-That comment is right about what it addresses — publishing the nonce beside a
-public coin commitment would let anyone grind the pool balance. It was written
-against a different threat, and does not seem to have been weighed against an
-unconstrained `window`.
-
-**The fix is one assertion**, and it is the same one that would make the
-three-month entitlement real rather than advisory: put the duration in
-`BenefitParams` and require `window` to fall inside
-`[finalPeriod, finalPeriod + duration)`. Both halves are load-bearing — the
-duration alone changes a hashed struct, so every published version must be
-republished, and the assertion lives in an impure circuit, so the fund
-redeploys. There is no cheap version of this.
-
-Until then, `/employee` reports any claim it finds outside the entitlement
-rather than assuming there cannot be one.
+`findings.md` records how each was found and what verified the fix.
 
 ### The benefit is derived from the final month alone
 
@@ -584,4 +671,5 @@ months. That belongs in `BenefitParams` as a schedule and is not modelled.
 Months worked is **attested by the employer, not derived**. The fund cannot read
 a payroll ledger to count for itself, and a public per-person counter would be a
 tenure record keyed to one worker. It stays auditable after the fact, because the
-filings are public.
+filings are public — but nothing enforces it: one filed, paid and withheld month
+with an attested `monthsWorked` of 12 satisfies a `minMonths` of 12.

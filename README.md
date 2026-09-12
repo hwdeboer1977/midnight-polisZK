@@ -18,15 +18,19 @@ field, and nothing an observer can enumerate to find one.
 
 | | |
 | --- | --- |
-| Payroll | `fe2e98f8fbca0d9c3d9a63967de1bf814d51acf406de279594f3697efd623fa5` |
-| Settlement asset (pEUR) | `eefd3c255ed64dce05cd8c9b357b95aae94be6aef6ad009069af7836af481d91` |
-| Tax rules | `7feb657fb4a0541e3308d8fb14eca4538e6343d16f0a7540b620ed7547492910` |
-| Benefit fund | `eb40dcadbff3af16ee9b614d30332c2e4ad63b94f27c3199cc780bae477cf391` |
-| Tax vault | `d49344be86c6fc839581cf430edeafce6bb4fd3eab9e30a9450fa3259b81b4f4` |
+| Payroll | `2747020da58755a08787386a3c999f47c3570c8b8e019603cdd866974124024d` |
+| Settlement asset (pEUR) | `763fd7a5f8237249a549c591b7b320abe83c7c621ea0846e1af44e1559b017e3` |
+| Tax rules | `fdcb22a8508a1ec437f2d3ad83cf87f0e08f3610da6fcf2638aad5df37af7532` |
+| Benefit fund | `ae30b2888cf2c9722821dd54763d079249c576ead3e795c9d91cafe374fa31a1` |
+| Tax vault | `efc7a884ae9aec09715369f6b51e873626001fccaeba794022a54f4c022a6fb2` |
 
-Payroll and the fund were **redeployed on 2026-09-02**, when the claim key was
-removed from the protocol and the benefit duration became a contract rule. Both
-struct layouts changed, so the previous instances cannot be read by this build.
+**All five were redeployed on 2026-09-11**, after a review closed six faults —
+among them a benefit withholding pool that disclosed each claim's benefit, and
+claim windows that could all be drawn at once. pEUR is a new token
+(`7ec1d9ec…`), so every balance held in the previous one does not work with
+these contracts. The new payroll has nothing filed yet, and no claim has been
+made against the new fund. Deploy transactions are in
+[docs/findings.md](docs/findings.md#deployed-2026-09-11).
 
 Two payroll periods have been filed, funded, paid and remitted end to end, and a
 benefit has been claimed against the fund — from the browser, with the salaries
@@ -40,7 +44,7 @@ never leaving the employer's machine. The transaction hashes are in
 | **`payroll`** | one per employer | net pay, briefly | Files a period: headcount, totals, one commitment per employee. Holds withheld tax and contributions until remitted, and records the employer's write-once attestation that someone's employment ended. |
 | **`taxparams`** | one, shared | no | The versioned, append-only record of what the rates were, so a filing stays checkable against the rules in force when it was made. |
 | **`peur`** | one, shared | — | A shielded EUR stablecoin payroll is denominated in. Balances and transfer amounts are private; total supply is public so it can be audited against reserves. |
-| **`fund`** | one, shared | yes | The money benefits are paid from, and the per-period Merkle roots a claim proves membership of. |
+| **`fund`** | one, shared | yes | The money benefits are paid from, the rules each final period is claimed under, and the per-period Merkle roots a claim proves membership of. |
 | **`taxvault`** | one, shared | yes | Receives wage tax under a withdrawal authority frozen at deploy. Unlike the fund it never pays out privately, so its balance *is* public. |
 
 ## Architecture
@@ -121,10 +125,9 @@ The service exists for exactly three things a browser cannot do: hold the
 not a backend in the usual sense: it never sees a salary, and the payroll
 workbook never leaves the employer's machine.
 
-The database holds three tables and can read only one of them meaningfully.
-`registrations` is bookkeeping; `claim_key_hashes` is inert public data;
-`sealed_rosters` is ciphertext under the employer's payroll passphrase, which the
-service never receives.
+The database can read little of what it holds. `registrations` is bookkeeping,
+and `sealed_rosters` is ciphertext under the employer's payroll passphrase, which
+the service never receives.
 
 ## How a month works
 
@@ -152,9 +155,12 @@ When employment ends, the employer signs a write-once attestation — needing
 into one Merkle tree whose root is published.
 
 To claim, she proves — in zero knowledge — that a leaf naming her wallet is in
-that tree, that she worked long enough, and what her final salary was. The chain
-learns the period, that *a* claim happened, and one nullifier. Not who, not
-which employer, not how much.
+that tree, that she worked long enough, and what her final salary was. Each claim
+pays one calendar month, from the month after her final period, and not before
+that month has started. The chain learns the final period, the month, that *a*
+claim happened, and one nullifier. Not who, not which employer, not how much.
+The tax and contribution withheld from the benefit go to the treasuries in the
+same transaction, as shielded coins, so they are not published either.
 
 **She needs one file: the payslip her employer already sends her.** Everything
 else is assembled in her browser — her leaf reconstructed from public payroll
@@ -163,9 +169,9 @@ Nobody tells her which leaf is hers; she recomputes her own digest and finds the
 match.
 
 ⚠️ One thing this buys convenience with: the nullifier is derived from her
-wallet, so **anyone holding her payment address can tell that she claimed** —
-never how much, never her salary, never which employer. Removing the claim key
-is what traded that away, and
+wallet, so **anyone holding her payment address can tell that she claimed, and
+for which months** — never how much, never her salary, never which employer.
+Removing the claim key is what traded that away, and
 [docs/privacy.md](docs/privacy.md#wave-2-hardening) records what would restore
 it.
 
@@ -210,14 +216,14 @@ midnight-polisZK/
 │   ├── payroll.compact            # private salaries, public aggregate, terminations
 │   ├── taxparams.compact          # versioned, append-only tax rules
 │   ├── peur.compact               # shielded stablecoin
-│   ├── fund.compact               # unemployment fund: rules, roots, nullifiers, pool
+│   ├── fund.compact               # unemployment fund: rules per period, roots, nullifiers
 │   ├── taxvault.compact           # wage tax, under a frozen withdrawal authority
 │   └── managed/                   # compiled artifacts, per contract (gitignored)
 ├── src/
 │   ├── deploy.ts                  # deploys whichever CONTRACT_NAME names
 │   ├── payroll-cli.ts             # payroll CLI
 │   ├── peur-cli.ts                # pEUR CLI
-│   ├── fund-cli.ts                # fund: status, params, deposit, pool, reconcile
+│   ├── fund-cli.ts                # fund: status, params, rules, deposit, pool, reconcile
 │   ├── terminate-cli.ts           # end employment (CLI route)
 │   ├── relay.ts                   # build + publish a period's claim tree
 │   ├── check-balance.ts           # address + tNIGHT/tDUST
@@ -227,9 +233,9 @@ midnight-polisZK/
 │   │   └── guards.ts              # rate limiting, platform token, signup code
 │   ├── providers/                 # midnight-js provider wiring
 │   └── utils/
-│       ├── benefit-params.ts      # the published rule sets — only their HASH is on chain
+│       ├── benefit-params.ts      # the published rule sets, entitlement months — only their HASH is on chain
 │       ├── claim-tree.ts          # the tree, hashed by the contract's own pure circuits
-│       ├── fund-pool.ts           # coin nonces + change-nonce derivation
+│       ├── fund-pool.ts           # coin nonces, change-nonce derivation, coins found by commitment
 │       ├── peur.ts                # the pEUR token id, read off the contract
 │       └── …                      # network config, wallet, contract, deployments
 ├── frontend/                      # wallet-connect UI (Vite + TypeScript)
@@ -238,10 +244,10 @@ midnight-polisZK/
 │       ├── wallet/WalletContext.tsx   # connect, account snapshot, refresh
 │       ├── pages/                     # Public, Operator, EmployerPayroll/Employees/
 │       │                              #   History/Settings, Employee, EmployeeBenefit
-│       ├── components/                # DashHero, ClaimForm, ClaimKey, EndEmployment,
+│       ├── components/                # DashHero, ClaimForm, ClaimStatus, EndEmployment,
 │       │                              #   EmployerTable, FundDeposit, NationalTotals, …
-│       └── lib/                       # claim.ts, claimKey.ts, runMonth.ts, sealedRoster.ts,
-│                                      #   publishedClaimKeys.ts, useRunGuard.ts, …
+│       └── lib/                       # claim.ts, claimStatus.ts, runMonth.ts, sealedRoster.ts,
+│                                      #   useRunGuard.ts, …
 ├── terminations/                  # employers' termination openings — input to the relay
 ├── claims/<period>/               # claim bundles the CLI relay writes — a fallback; the browser assembles its own
 ├── .env                           # config (keep private!)

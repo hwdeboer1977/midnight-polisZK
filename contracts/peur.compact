@@ -58,17 +58,6 @@ constructor() {
   totalSupply = 0;
 }
 
-// Issues pEUR straight to someone else — an employer being funded, say.
-//
-// The recipient is a coin public key, but that alone is not enough for them to
-// use the coin: a shielded coin can only be found and spent by someone whose
-// encryption key the transaction was built with. The caller must therefore also
-// supply the recipient's encryption public key off-circuit, via the SDK's
-// `additionalCoinEncPublicKeyMappings`. Get both from `npm run frontend` or the
-// recipient's `npm run peur`.
-
-
-
 // export circuit — makes it a callable entry point. An exported circuit gets its own verifier key, 
 // lands in the generated TypeScript as a callable, and can be invoked in a transaction. 
 // A circuit without export is internal 

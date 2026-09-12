@@ -19,8 +19,9 @@ import { forNetwork, loadDeployments, type Deployment } from "./deployments";
  * an omission: **the fund's balance.** It is a shielded coin, so it is not
  * published — the fund is deliberately not publicly solvent, and that cannot be
  * fixed without also revealing what each claimant received, since successive
- * balances would give away the differences between them. Benefits paid, claims
- * settled and withholding totals are all real reads.
+ * balances would give away the differences between them. Claims settled and
+ * contributions received are real reads; the fund's withholding on benefits is
+ * not published at all, because each claim sends it straight to the treasuries.
  */
 export interface NetworkStats {
   /** Payroll contracts on this network that have an employer assigned. */
@@ -82,11 +83,6 @@ export interface NetworkStats {
      */
     contributed: bigint;
     contributionCount: number;
-    /** Withheld from benefits, held and remitted. Public by design. */
-    taxHeld: bigint;
-    taxRemitted: bigint;
-    socialHeld: bigint;
-    socialRemitted: bigint;
   } | null;
   /**
    * Payroll contracts whose on-chain layout does not match this build.
@@ -181,10 +177,6 @@ export function useNetworkStats(networkId: string) {
                 claimTrees: [...ledger.rootFor].length,
                 contributed: ledger.contributedTotal ?? 0n,
                 contributionCount: Number(ledger.contributionCount ?? 0),
-                taxHeld: ledger.taxPool ?? 0n,
-                taxRemitted: ledger.taxRemitted ?? 0n,
-                socialHeld: ledger.socialPool ?? 0n,
-                socialRemitted: ledger.socialRemitted ?? 0n,
               };
             } catch {
               // A fund from an earlier contract shape. Left null rather than

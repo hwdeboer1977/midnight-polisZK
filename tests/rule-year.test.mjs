@@ -75,7 +75,9 @@ function deploy() {
   const { currentContractState } = contract.initialState(
     createConstructorContext({}, hex(PLATFORM.bytes)),
     key(0xaa),
-    key(0xbb)
+    key(0xbb),
+    // The pay token, frozen at deploy. Nothing here funds anything.
+    new Uint8Array(32).fill(0xcc)
   );
   return currentContractState;
 }

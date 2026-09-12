@@ -145,6 +145,11 @@ export circuit transferAuthority(newAuthority: ZswapCoinPublicKey): [] {
 // Withdraws ONE coin at a time, and `amount` must equal that coin's full value
 // — coins are not merged or split here, so the vault pays out in the same
 // denominations it received.
+//
+// ⚠️ Never called yet. The recipient is `authority`, read from the ledger —
+// the shape `payroll.remit`'s comment blames for node error 103. But
+// fund's former `remitBenefitTax` also sent to a ledger read and landed, so
+// whether this one works is untested rather than known either way.
 export circuit withdraw(amount: Uint<64>, coin: QualifiedShieldedCoinInfo): [] {
   assert(ownPublicKey() == authority, "only the authority may withdraw");
   assert(token == disclose(coin.color), "wrong token for this vault");

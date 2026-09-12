@@ -10,7 +10,7 @@ import { MidnightProviders } from "./providers/midnight-providers.js";
 import { EnvironmentManager } from "./utils/environment.js";
 import { loadCompiledContract } from "./utils/contract.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./utils/wallet.js";
-import { treasuryKeys } from "./utils/treasury.js";
+import { deployToken, treasuryKeys } from "./utils/treasury.js";
 import { DUTCH_V1, computeLine } from "./utils/tax-params.js";
 import { deriveEmployerKey, deriveNonce, sealOpening } from "./utils/payroll-openings.js";
 import { FULL_MONTH_WEEKS } from "./utils/roster.js";
@@ -116,7 +116,7 @@ async function main(): Promise<void> {
     const treasuries = treasuryKeys();
     const deployed: any = await deployContract(providers, {
       compiledContract,
-      args: [treasuries.tax, treasuries.social],
+      args: [treasuries.tax, treasuries.social, deployToken()],
     } as any);
     const address = deployed.deployTxData.public.contractAddress;
     say(address);

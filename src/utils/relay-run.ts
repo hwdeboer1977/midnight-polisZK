@@ -22,12 +22,12 @@ import { EnvironmentManager } from "./environment.js";
 import { deploymentKey, getDeployment, listDeployments } from "./deployments.js";
 import { buildWallet, makeWalletProviders, waitForSync } from "./wallet.js";
 import { MidnightProviders } from "../providers/midnight-providers.js";
-import { contractLeaves, contractModulePath, loadCompiledContract } from "./contract.js";
+import { contractModulePath, loadCompiledContract } from "./contract.js";
 import { putClaimDigests } from "./claim-digests.js";
 import { buildTree, type ClaimLeafInput } from "./claim-tree.js";
-import { BASIS_POINTS, PUBLISHED } from "./benefit-params.js";
+import { BASIS_POINTS, PUBLISHED, recordedParams } from "./benefit-params.js";
 import { formatPeur } from "./constructor-args.js";
-import { listDeposits } from "./fund-pool.js";
+import { contractCoinLeaves, findCoinLeaf, listDeposits } from "./fund-pool.js";
 
 /**
  * The relay's work, without a terminal around it.
@@ -156,8 +156,18 @@ function fund(): Promise<any> {
  */
 async function fetchFundLedger(
   indexer: string,
-  record: { contractAddress: string }
-): Promise<{ claimsPaid: number; coinsReceived: number } | null> {
+  record: { contractAddress: string },
+  period?: number
+): Promise<{
+  claimsPaid: number;
+  coinsReceived: number;
+  /**
+   * The benefit rules recorded for `period` in `paramsHashFor`: the published
+   * version they match, `null` if no version known here has that hash, and
+   * `undefined` if nothing is recorded for the period at all.
+   */
+  rules?: ReturnType<typeof recordedParams>;
+} | null> {
   try {
     const response = await fetch(indexer, {
       method: "POST",
@@ -170,12 +180,21 @@ async function fetchFundLedger(
     const body: any = await response.json();
     const encoded = body.data?.contractAction?.state;
     if (!encoded) return null;
-    const ledger = (await fund()).ledger(
+    const fundModule = await fund();
+    const ledger = fundModule.ledger(
       ContractState.deserialize(Buffer.from(encoded, "hex")).data
     );
+    const key = period === undefined ? null : BigInt(period);
+    const rules =
+      key === null || !ledger.paramsHashFor?.member(key)
+        ? undefined
+        : recordedParams(ledger.paramsHashFor.lookup(key), (p) =>
+            fundModule.pureCircuits.benefitParamsHash(p)
+          );
     return {
       claimsPaid: Number(ledger.claimsPaid ?? 0),
       coinsReceived: Number(ledger.coinsReceived ?? 0),
+      rules,
     };
   } catch {
     return null;
@@ -381,14 +400,27 @@ export async function runRelay(options: {
     : [];
 
   const fundLeaves = fundRecord
-    ? await contractLeaves(
+    ? await contractCoinLeaves(
         indexerPublicDataProvider(network.indexer, network.indexerWS) as any,
         fundRecord.contractAddress
       )
     : [];
 
+  // Each coin's leaf is found by rebuilding its commitment, not by indexing the
+  // leaves with its receipt ordinal: the two orders disagree whenever one
+  // transaction creates more than one coin, and every claim does.
+  const hexBytes = (value: string) => Uint8Array.from(Buffer.from(value, "hex"));
   const coins = recorded
-    .map((d) => ({ deposit: d, mtIndex: fundLeaves[d.ordinal as number] }))
+    .map((d) => ({
+      deposit: d,
+      mtIndex: fundRecord
+        ? findCoinLeaf(
+            fundLeaves,
+            { nonce: hexBytes(d.nonce), color: hexBytes(d.color), value: BigInt(d.value) },
+            fundRecord.contractAddress
+          )
+        : undefined,
+    }))
     .filter((c) => c.mtIndex !== undefined);
 
   /**
@@ -413,7 +445,9 @@ export async function runRelay(options: {
    * coin is still a coin the fund once received; filtering to spendable ones
    * would make every reconciliation look overdue the moment it succeeded.
    */
-  const fundLedger = fundRecord ? await fetchFundLedger(network.indexer, fundRecord) : null;
+  const fundLedger = fundRecord
+    ? await fetchFundLedger(network.indexer, fundRecord, period)
+    : null;
   if (fundLedger && fundRecord) {
     const settled = fundLedger.claimsPaid;
     const known = listDeposits(network.networkId, fundRecord.contractAddress).filter(
@@ -433,20 +467,36 @@ export async function runRelay(options: {
 
   if (recorded.length > coins.length) {
     warnings.push(
-      `${recorded.length - coins.length} recorded fund coin(s) have no visible leaf — the indexer may be behind.`
+      `${recorded.length - coins.length} recorded fund coin(s) match no leaf the indexer shows — it may be behind.`
     );
   }
 
-  // The rule set to claim under: the newest published version that had taken
-  // effect by the final period. Chosen here rather than by the claimant, so a
-  // claim cannot be built under a version the fund would reject.
-  const applicable = PUBLISHED.filter((v) => v.validFrom <= period).sort(
-    (a, b) => b.version - a.version
-  )[0];
+  // The rule set this period is claimed under: the one the platform recorded
+  // for it on the fund. `claim` refuses any other published version, so naming
+  // another would describe a claim that cannot be made. Only when the fund
+  // cannot be read does this fall back to the newest locally known version that
+  // had taken effect, for the coin-size warning below.
+  let applicable: (typeof PUBLISHED)[number] | undefined = PUBLISHED.filter(
+    (v) => v.validFrom <= period
+  ).sort((a, b) => b.version - a.version)[0];
+  if (fundLedger) {
+    if (fundLedger.rules === undefined) {
+      warnings.push(
+        `No benefit rules are recorded on the fund for ${period}, so no claim against this ` +
+          "tree can be made yet. Record them: npm run fund -- rules --version <N> --year <YYYY>"
+      );
+    } else if (fundLedger.rules === null) {
+      warnings.push(
+        `The fund has benefit rules recorded for ${period} that utils/benefit-params.ts does ` +
+          "not know — no claim can be built until their figures are added there."
+      );
+      applicable = undefined;
+    } else {
+      applicable = fundLedger.rules;
+    }
+  }
   if (!applicable) {
-    warnings.push(
-      `No rule set in utils/benefit-params.ts applies to ${period}; bundles carry no version.`
-    );
+    warnings.push(`No rule set known here applies to ${period}; bundles carry no version.`);
   }
   if (coins.length < accepted.length) {
     warnings.push(

@@ -112,14 +112,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('transferAuthority',
                                      'argument 1 (as invoked from Typescript)',
-                                     'taxparams.compact line 88 char 1',
+                                     'taxparams.compact line 94 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(newAuthority_0) === 'object' && newAuthority_0.bytes.buffer instanceof ArrayBuffer && newAuthority_0.bytes.BYTES_PER_ELEMENT === 1 && newAuthority_0.bytes.length === 32)) {
           __compactRuntime.typeError('transferAuthority',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'taxparams.compact line 88 char 1',
+                                     'taxparams.compact line 94 char 1',
                                      'struct ZswapCoinPublicKey<bytes: Bytes<32>>',
                                      newAuthority_0)
         }
@@ -148,14 +148,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('publish',
                                      'argument 1 (as invoked from Typescript)',
-                                     'taxparams.compact line 98 char 1',
+                                     'taxparams.compact line 104 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(typeof(params_0) === 'object' && typeof(params_0.version) === 'bigint' && params_0.version >= 0n && params_0.version <= 65535n && typeof(params_0.validFrom) === 'bigint' && params_0.validFrom >= 0n && params_0.validFrom <= 4294967295n && typeof(params_0.threshold1) === 'bigint' && params_0.threshold1 >= 0n && params_0.threshold1 <= 1152921504606846975n && typeof(params_0.threshold2) === 'bigint' && params_0.threshold2 >= 0n && params_0.threshold2 <= 1152921504606846975n && typeof(params_0.rate1) === 'bigint' && params_0.rate1 >= 0n && params_0.rate1 <= 65535n && typeof(params_0.rate2) === 'bigint' && params_0.rate2 >= 0n && params_0.rate2 <= 65535n && typeof(params_0.rate3) === 'bigint' && params_0.rate3 >= 0n && params_0.rate3 <= 65535n && typeof(params_0.maxContribBase) === 'bigint' && params_0.maxContribBase >= 0n && params_0.maxContribBase <= 1152921504606846975n && typeof(params_0.contribRate) === 'bigint' && params_0.contribRate >= 0n && params_0.contribRate <= 65535n)) {
           __compactRuntime.typeError('publish',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'taxparams.compact line 98 char 1',
+                                     'taxparams.compact line 104 char 1',
                                      'struct TaxParams<version: Uint<0..65536>, validFrom: Uint<0..4294967296>, threshold1: Uint<0..1152921504606846976>, threshold2: Uint<0..1152921504606846976>, rate1: Uint<0..65536>, rate2: Uint<0..65536>, rate3: Uint<0..65536>, maxContribBase: Uint<0..1152921504606846976>, contribRate: Uint<0..65536>>',
                                      params_0)
         }
@@ -437,7 +437,7 @@ export class Contract {
                                        { ins: { cached: true, n: 1 } }]);
     const tmp_0 = ((t1) => {
                     if (t1 > 65535n) {
-                      throw new __compactRuntime.CompactError('taxparams.compact line 164 char 18: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 65535');
+                      throw new __compactRuntime.CompactError('taxparams.compact line 155 char 18: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 65535');
                     }
                     return t1;
                   })(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
@@ -587,7 +587,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 65535n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'taxparams.compact line 57 char 1',
+                                     'taxparams.compact line 55 char 1',
                                      'Uint<0..65536>',
                                      key_0)
         }
@@ -616,7 +616,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(key_0) === 'bigint' && key_0 >= 0n && key_0 <= 65535n)) {
           __compactRuntime.typeError('lookup',
                                      'argument 1',
-                                     'taxparams.compact line 57 char 1',
+                                     'taxparams.compact line 55 char 1',
                                      'Uint<0..65536>',
                                      key_0)
         }
@@ -696,7 +696,7 @@ export function ledger(stateOrChargedState) {
         if (!(typeof(elem_0) === 'bigint' && elem_0 >= 0n && elem_0 <= 65535n)) {
           __compactRuntime.typeError('member',
                                      'argument 1',
-                                     'taxparams.compact line 61 char 1',
+                                     'taxparams.compact line 60 char 1',
                                      'Uint<0..65536>',
                                      elem_0)
         }
@@ -768,7 +768,7 @@ export const pureCircuits = {
     if (!(typeof(params_0) === 'object' && typeof(params_0.version) === 'bigint' && params_0.version >= 0n && params_0.version <= 65535n && typeof(params_0.validFrom) === 'bigint' && params_0.validFrom >= 0n && params_0.validFrom <= 4294967295n && typeof(params_0.threshold1) === 'bigint' && params_0.threshold1 >= 0n && params_0.threshold1 <= 1152921504606846975n && typeof(params_0.threshold2) === 'bigint' && params_0.threshold2 >= 0n && params_0.threshold2 <= 1152921504606846975n && typeof(params_0.rate1) === 'bigint' && params_0.rate1 >= 0n && params_0.rate1 <= 65535n && typeof(params_0.rate2) === 'bigint' && params_0.rate2 >= 0n && params_0.rate2 <= 65535n && typeof(params_0.rate3) === 'bigint' && params_0.rate3 >= 0n && params_0.rate3 <= 65535n && typeof(params_0.maxContribBase) === 'bigint' && params_0.maxContribBase >= 0n && params_0.maxContribBase <= 1152921504606846975n && typeof(params_0.contribRate) === 'bigint' && params_0.contribRate >= 0n && params_0.contribRate <= 65535n)) {
       __compactRuntime.typeError('paramsHash',
                                  'argument 1',
-                                 'taxparams.compact line 176 char 1',
+                                 'taxparams.compact line 174 char 1',
                                  'struct TaxParams<version: Uint<0..65536>, validFrom: Uint<0..4294967296>, threshold1: Uint<0..1152921504606846976>, threshold2: Uint<0..1152921504606846976>, rate1: Uint<0..65536>, rate2: Uint<0..65536>, rate3: Uint<0..65536>, maxContribBase: Uint<0..1152921504606846976>, contribRate: Uint<0..65536>>',
                                  params_0)
     }
