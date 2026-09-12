@@ -13,6 +13,10 @@ paper/
 # Environment variables
 .env
 .env.local
+# Backups of it too. `.env` alone does not cover `.env.bak-20260912`, and a
+# backup holds the same WALLET_MNEMONIC and treasury seeds as the original —
+# so a single `git add .` would publish the platform wallet.
+.env.bak*
 .env.development.local
 .env.test.local
 .env.production.local
@@ -72,7 +76,8 @@ midnight-level-db/
 payroll-secrets*
 
 # Deployment records kept around before a redeploy.
-deployment.json.bak-*
+# Globbed without the hyphen, so `deployment.json.bak2-...` is caught too.
+deployment.json.bak*
 
 # Cached wallet sync state
 .wallet-state/
@@ -135,3 +140,7 @@ terminations/
 # and deployment.json remain the source of truth, so losing this costs a
 # duplicate the operator can see and prune.
 /.onboarded-keys.json
+
+# Personal Claude Code settings for this checkout (permission rules etc.).
+# Not committed: it is per-machine, and its allow rules speak for one person.
+.claude/settings.local.json

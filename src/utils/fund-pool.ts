@@ -3,6 +3,7 @@
 
 import crypto from "crypto";
 import fs from "fs";
+import { dataPath } from "./data-dir.js";
 import {
   CompactTypeField,
   CompactTypeVector,
@@ -38,7 +39,29 @@ import {
  * a real coin nobody can describe, which is not.
  */
 
-const FILE = "fund-pool.json";
+/**
+ * Resolved through `dataDir()`, like `deployment.json` and `claims.json`.
+ *
+ * ⚠️ This was a bare relative path, and that cost a fund its spendability.
+ *
+ * `data-dir.ts` deliberately excluded this file, on the reasoning that it
+ * "belongs to operator CLIs that run on a person's own machine, where cwd is
+ * already durable". That was true while only CLIs read it. It stopped being
+ * true when `/api/pool-coin` began serving these records to browsers — the
+ * server's cwd on a managed host is the deploy directory, replaced wholesale on
+ * every push, so the file was never durable there and nobody noticed until a
+ * claim asked for a coin and got "this fund has no recorded deposits".
+ *
+ * What makes it the worst file in the project to lose is stated above: the
+ * nonce exists nowhere else, not on chain and not derivable, so losing it
+ * leaves money in the contract that nothing can ever spend. Losing
+ * `deployment.json` costs an address that can be found again on an explorer;
+ * losing this costs the money.
+ *
+ * Locally, with DATA_DIR unset, this still resolves to `./fund-pool.json` —
+ * every existing CLI workflow is unchanged.
+ */
+const FILE = dataPath("fund-pool.json");
 
 export interface DepositRecord {
   /**
