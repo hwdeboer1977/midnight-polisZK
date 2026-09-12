@@ -357,23 +357,32 @@ export function saveDeployment(record: DeploymentRecord): void {
 }
 
 /**
- * Every deployment this process will offer, payroll narrowed to the pinned one.
+ * Every deployment this process will offer.
  *
- * `payroll_address` names the payroll contract this deployment is running. The
- * narrowing is what makes that mean something: without it a stale record in
- * `deployment.json`, or a contract onboarded under an earlier version, is still
- * listed by `/api/deployments`, still reaches the browser, and is still offered
- * as somewhere to file payroll. `contractVersion` already hides the ones this
- * build cannot transact with at all; this is the tighter statement — not "can I
- * talk to it" but "is it the one I was told to use".
+ * ── Why payroll is no longer narrowed to one address ────────────────────────
  *
- * Only payroll is narrowed. pEUR, taxparams and fund are single-deployment and
- * there is nothing to choose between.
+ * This used to filter payroll down to `payroll_address` — "not can I talk to
+ * it, but is it the one I was told to use". That was the right statement while
+ * one deployment served one employer. It is the wrong one now that onboarding
+ * deploys a contract per employer again: every contract this service creates
+ * for a new employer would be filtered straight back out of `/api/deployments`,
+ * so the employer who just registered would be told they have no contract. The
+ * pin would have silently undone the feature it sits upstream of.
  *
- * `PAYROLL_CONTRACT` overrides it with a comma-separated list, for the case this
- * shape does not cover: running one service across several employer contracts.
- * Setting it replaces the pin rather than adding to it, so `payroll_address` has
- * to be in the list to survive.
+ * What remains is the check that was always the load-bearing one: `read()`
+ * already drops records whose `contractVersion` does not match this build, so
+ * nothing reaches the browser that it would fail against at submit with a wall
+ * of verifier-key text. That is the real safety property; naming a single
+ * address was a proxy for it.
+ *
+ * `PAYROLL_CONTRACT` still pins, and now means it. Set it to a comma-separated
+ * list to offer only those contracts — a demo deployment that wants exactly one
+ * payroll contract on screen, say. It is opt-in: previously it merely
+ * *overrode* a pin that `payroll_address` switched on for everyone, which made
+ * "several employers" a setting nobody knew they had to change.
+ *
+ * Only payroll would ever be narrowed. pEUR, taxparams and fund are
+ * single-deployment and there is nothing to choose between.
  *
  * ── What this does NOT do ──────────────────────────────────────────────────
  *
@@ -393,9 +402,15 @@ export function listDeployments(): [string, DeploymentRecord][] {
   );
 }
 
-/** The payroll addresses this deployment may offer, or null when unset. */
+/**
+ * The payroll addresses this deployment may offer, or null when unset.
+ *
+ * `PAYROLL_CONTRACT` only. The `payroll_address` fallback is deliberately gone:
+ * that variable's job is to name the default contract, not to declare it the
+ * only one, and conflating the two capped the service at one employer.
+ */
 function pinnedPayroll(): Set<string> | null {
-  const raw = (process.env.PAYROLL_CONTRACT ?? process.env.payroll_address ?? "").trim();
+  const raw = (process.env.PAYROLL_CONTRACT ?? "").trim();
   if (!raw) return null;
   const allowed = new Set(
     raw.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)

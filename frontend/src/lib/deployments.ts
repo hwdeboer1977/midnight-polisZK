@@ -10,6 +10,17 @@ export interface Deployment {
   /** pEUR only: the token type its coins carry, so balances can be labelled. */
   tokenId?: string;
   /**
+   * Fingerprint of the compiled contract this was deployed from.
+   *
+   * Stamped at deploy by `saveDeployment` and carried here by
+   * `/api/deployments`, so the browser can tell a contract it agrees with from
+   * one whose verifier keys it would fail against — see `canTransactWith`.
+   *
+   * Absent on the env baseline, which states an address and no build. Treated
+   * as "not stated" rather than "mismatched".
+   */
+  contractVersion?: string;
+  /**
    * Deployed from a contract version this build can no longer read.
    *
    * Not a deletion, and the distinction matters: the contract is still on chain,
@@ -79,15 +90,32 @@ export async function loadDeployments(): Promise<Deployments> {
 }
 
 /**
- * Narrows the list to the payroll contracts this build is pinned to.
+ * Narrows the list to the payroll contracts this build can actually transact with.
  *
  * Why this exists: a payroll contract compiled from different contract source
  * has different verifier keys, and this frontend can only transact with one it
  * agrees with. Every older instance stays listed, stays selectable, and fails
  * at submit with a wall of verifier-key text — which is what an afternoon was
- * spent chasing. `VITE_PAYROLL_CONTRACTS` names the addresses that belong to
- * the contract version this bundle was built from, and everything else stops
- * being offered.
+ * spent chasing.
+ *
+ * ── Why this is no longer an address list ───────────────────────────────────
+ *
+ * It used to be `VITE_PAYROLL_CONTRACTS`, defaulting to `VITE_PAYROLL_ADDRESS`:
+ * a build-time allowlist of the addresses this bundle was told about. That
+ * answered the verifier-key question with the wrong instrument, and the cost
+ * was written into the comment it replaced — "a contract onboarded AFTER this
+ * bundle was built is not in the list, so it will not appear". With onboarding
+ * deploying a contract per employer again, that is not a cost, it is a
+ * guarantee that self-service registration produces a contract the browser
+ * refuses to show. Exactly the orphan bug that removing per-employer deploys
+ * was meant to fix, arrived at from the other side.
+ *
+ * So ask the question directly. `VITE_ZK_VERSION` is this bundle's compiled
+ * contract fingerprint, and a deploy stamps the same fingerprint on its record
+ * (`saveDeployment` in `src/utils/deployments.ts`). Equal means the verifier
+ * keys match, whenever the contract was deployed and whoever deployed it. This
+ * is the rule `read()` already applies on the server; the browser now applies
+ * it too, from the same two values.
  *
  * Applied AFTER the merge rather than to either source, because both can carry
  * stale instances: the env baseline names whichever payroll contract `.env` was
@@ -96,62 +124,40 @@ export async function loadDeployments(): Promise<Deployments> {
  * Payroll only. Other contracts are single-deployment and there is nothing to
  * choose between.
  *
- * ── The cost, stated plainly ────────────────────────────────────────────────
+ * ── What an unstamped record means ──────────────────────────────────────────
  *
- * A contract onboarded AFTER this bundle was built is not in the list, so it
- * will not appear until the variable is updated and the frontend redeployed.
- * That is the wrong trade for a service onboarding real employers, and the
- * right one while a contract is changing under you. Unset, nothing is filtered
- * and behaviour is exactly as before.
- */
-/**
- * The pinned addresses, or null when nothing is pinned.
+ * Kept, not dropped. A record carries no `contractVersion` when it came from
+ * the `.env`/`VITE_` baseline, which is an operator naming the contract this
+ * deployment runs — there is no fingerprint to compare and no reason to
+ * distrust it. Dropping those would hide the one contract a hosted build is
+ * certain to know about. Unstamped is "not stated", not "mismatched".
  *
- * Exported because the deployment list is not the only place a payroll contract
- * is offered: the deployer's registrations roll comes from the registry service
- * and knows nothing about this file, so it has to apply the same rule from the
- * same source or the two views disagree about which contracts exist.
+ * With `VITE_ZK_VERSION` unset nothing is filtered, which is the old
+ * unpinned behaviour.
  */
-export function pinnedContracts(): Set<string> | null {
-  // Cast rather than typed in an ambient declaration: Vite types unknown keys
-  // loosely enough that .split() lands on any.
-  //
-  // Falls back to the baseline address, which is the whole point: the contract
-  // this build was told to run is by definition the one it may offer, so the
-  // common case needs no second variable. Writing the default out as
-  // `VITE_PAYROLL_CONTRACTS` was the first shape and it put the same 64
-  // characters in the file twice — two names for one fact, free to disagree
-  // after any hand edit. `VITE_PAYROLL_CONTRACTS` now appears only when someone
-  // deliberately widens the list beyond that one contract.
-  const raw = String(
-    import.meta.env.VITE_PAYROLL_CONTRACTS ?? import.meta.env.VITE_PAYROLL_ADDRESS ?? ""
-  ).trim();
-  if (!raw) return null;
-
-  const allowed = new Set(
-    raw
-      .split(",")
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean)
-  );
-  return allowed.size > 0 ? allowed : null;
+function buildVersion(): string | null {
+  const value = String(import.meta.env.VITE_ZK_VERSION ?? "").trim();
+  return value || null;
 }
 
-/** Whether a payroll contract belongs to the build. True when nothing is pinned. */
-export function isPinned(contractAddress: string): boolean {
-  const allowed = pinnedContracts();
-  return !allowed || allowed.has(contractAddress.trim().toLowerCase());
+/**
+ * Whether this build can transact with a payroll contract.
+ *
+ * Unstamped records pass — see above. Exported because the deployment list is
+ * not the only place a payroll contract is offered, and a second view applying
+ * a different rule is how two screens come to disagree about which contracts
+ * exist.
+ */
+export function canTransactWith(deployment: Deployment): boolean {
+  const version = buildVersion();
+  if (!version || !deployment.contractVersion) return true;
+  return deployment.contractVersion === version;
 }
 
 function pinned(all: Deployments): Deployments {
-  const allowed = pinnedContracts();
-  if (!allowed) return all;
-
   const kept: Deployments = {};
   for (const [key, entry] of Object.entries(all)) {
-    if (entry.contractName !== "payroll") {
-      kept[key] = entry;
-    } else if (allowed.has(entry.contractAddress.toLowerCase())) {
+    if (entry.contractName !== "payroll" || canTransactWith(entry)) {
       kept[key] = entry;
     }
   }
